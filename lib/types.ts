@@ -10,6 +10,17 @@ export type AssetType = 'water' | 'sewer' | 'power' | 'metro';
 /** The four view states of the single Cesium scene. Never a page navigation. */
 export type Mode = 'city' | 'building' | 'floor' | 'unit';
 
+/**
+ * How buildings are drawn.
+ *
+ * 'schematic' is the cadastral view: our own extrusions, textured and
+ * provenance-tagged, and the only mode in which the vertical stack is real
+ * geometry. 'photoreal' drapes Google's captured mesh over the same AOI --
+ * useful for orientation, but it carries no rights information, so the
+ * schematic extrusions stay in the scene underneath it purely to be picked.
+ */
+export type BuildingStyle = 'schematic' | 'photoreal';
+
 export type LayerKey =
   | 'parcels' | 'buildings' | 'floors' | 'utilities' | 'terrain' | 'basemap';
 

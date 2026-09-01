@@ -217,7 +217,12 @@ try {
   // ------------------------------------------------------------- console
   console.log('\n[8] CONSOLE');
   const real = errors.filter(
-    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|tile\.openstreetmap|openstreetmap\.org/i.test(e),
+    // Third-party tile hosts are excluded: a transient 4xx/timeout from a
+    // basemap CDN is a network condition, not an app error, and the imagery
+    // registry already falls back to CARTO when one is genuinely down.
+    (e) =>
+      !/favicon|ERR_INTERNET_DISCONNECTED|tile\.openstreetmap|openstreetmap\.org/i.test(e)
+      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com/i.test(e),
   );
   check('no runtime errors', real.length === 0, real.slice(0, 3).join(' | '));
 

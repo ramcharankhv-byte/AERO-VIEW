@@ -5,7 +5,7 @@ import * as Cesium from 'cesium';
 import { useEffect } from 'react';
 import { useViewer } from './CesiumRoot';
 import { useViewStore } from '@/lib/store';
-import { tagOf } from '@/lib/cesium/tag';
+import { tagOf, type EntityTag } from '@/lib/cesium/tag';
 
 /**
  * Mouse -> store.
@@ -13,6 +13,38 @@ import { tagOf } from '@/lib/cesium/tag';
  * ARCHITECTURE RULE: this component and the UI controls are the ONLY writers to
  * the view store. Layers read it. Nothing here touches the camera.
  */
+
+/**
+ * How deep to drill past untagged geometry. Four is enough to clear Google's
+ * mesh plus a roof face; an unbounded drill would walk the entire ray through
+ * 384 translucent extrusions on every mouse move.
+ */
+const DRILL_LIMIT = 4;
+
+/**
+ * The tag under the cursor, seeing past geometry that carries no tag.
+ *
+ * In Photoreal mode the topmost hit is a Cesium3DTileFeature from Google's
+ * tileset, which has no tag and is opaque -- so a plain scene.pick would report
+ * nothing and selection would die the moment the tiles came on. The ghosted
+ * schematic extrusion is still right behind it, so we drill for it.
+ *
+ * The fast path is unchanged for Schematic mode: one scene.pick, and drillPick
+ * is only reached when something untagged was actually hit. An empty sky or a
+ * bare globe pick returns undefined and never drills.
+ */
+function pickTag(scene: Cesium.Scene, position: Cesium.Cartesian2): EntityTag | null {
+  const picked = scene.pick(position);
+  const tag = tagOf(picked);
+  if (tag) return tag;
+  if (picked === undefined) return null;
+
+  for (const candidate of scene.drillPick(position, DRILL_LIMIT)) {
+    const deeper = tagOf(candidate);
+    if (deeper) return deeper;
+  }
+  return null;
+}
 export default function Picker() {
   const { viewer, ready } = useViewer();
   const selectBuilding = useViewStore((s) => s.selectBuilding);
@@ -26,13 +58,13 @@ export default function Picker() {
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
     handler.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
-      const tag = tagOf(viewer.scene.pick(movement.endPosition));
+      const tag = pickTag(viewer.scene, movement.endPosition);
       setHovered(tag?.kind === 'building' ? tag.id : null);
       viewer.scene.canvas.style.cursor = tag ? 'pointer' : 'default';
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     handler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
-      const tag = tagOf(viewer.scene.pick(click.position));
+      const tag = pickTag(viewer.scene, click.position);
       if (!tag) return;   // clicking empty sky/ground is not a deselect gesture
       switch (tag.kind) {
         case 'unit':

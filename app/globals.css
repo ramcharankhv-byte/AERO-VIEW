@@ -88,7 +88,15 @@ input[type='range']::-moz-range-thumb {
 }
 input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted)); }
 
-.cesium-widget-credits, .cesium-viewer-bottom { display: none !important; }
+/* Attribution is a licence obligation (Esri, Maxar, CARTO, OSM), so the credit
+   container is never hidden. Position only -- text, colour and the ion logo are
+   left exactly as Cesium renders them; this just lifts the box clear of the
+   full-width StatusBar sitting at bottom-3. */
+.cesium-viewer-bottom {
+  bottom: 34px;
+  left: 8px;
+  z-index: 30;
+}
 
 @keyframes conflict-pulse {
   0%, 100% { opacity: 1; }

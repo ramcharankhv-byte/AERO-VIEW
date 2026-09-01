@@ -13,7 +13,9 @@
     "seed": "python scripts/01_fetch_osm.py && python scripts/02_heights.py && python scripts/03_seed_db.py && python scripts/04_utilities.py && python scripts/05_export_static.py",
     "test": "node --test lib/ulpin.test.ts",
     "verify:ui": "node scripts/verify_ui.mjs",
-    "db:schema": "docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/01_schema.sql && docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/02_functions.sql"
+    "check:basemap": "node scripts/check_basemap.mjs",
+    "db:schema": "docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/01_schema.sql && docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/02_functions.sql",
+    "check:photoreal": "node scripts/check_photoreal.mjs"
   },
   "dependencies": {
     "cesium": "1.126.0",

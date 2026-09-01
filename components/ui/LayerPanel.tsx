@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+// The catalogue, not imagery.ts: this component is prerendered, and imagery.ts
+// pulls in Cesium, which touches `window` at module scope.
+import { availableProviders, TREATMENT_LABELS } from '@/lib/cesium/imagery-catalog';
+import type { ProviderId, TreatmentId } from '@/lib/cesium/imagery-catalog';
 import { useViewStore } from '@/lib/store';
-import type { LayerKey } from '@/lib/types';
+import type { BuildingStyle, LayerKey } from '@/lib/types';
 
 /**
  * Left panel: layer visibility, explode, transparency, view mode, theme.
@@ -10,6 +14,22 @@ import type { LayerKey } from '@/lib/types';
  * A UI control, so it writes to the store. It never talks to Cesium directly --
  * the layers observe these flags and render accordingly.
  */
+
+const BUILDING_STYLES: { id: BuildingStyle; label: string; title: string }[] = [
+  {
+    id: 'schematic',
+    label: 'Schematic',
+    title: 'Our own extrusions: textured by use type, one window band per '
+      + 'storey, every height provenance-tagged.',
+  },
+  {
+    id: 'photoreal',
+    label: 'Photoreal',
+    title: 'Google Photorealistic 3D Tiles. Captured imagery for orientation — '
+      + 'it carries no rights data, and the cadastral geometry stays pickable '
+      + 'underneath it.',
+  },
+];
 
 const LAYERS: { key: LayerKey; label: string }[] = [
   { key: 'parcels', label: 'Surface parcels' },
@@ -105,6 +125,17 @@ export default function LayerPanel() {
   const theme = useViewStore((s) => s.theme);
   const toggleTheme = useViewStore((s) => s.toggleTheme);
   const mode = useViewStore((s) => s.mode);
+  const imageryProvider = useViewStore((s) => s.imageryProvider);
+  const setImageryProvider = useViewStore((s) => s.setImageryProvider);
+  const imageryTreatment = useViewStore((s) => s.imageryTreatment);
+  const setImageryTreatment = useViewStore((s) => s.setImageryTreatment);
+  const buildingStyle = useViewStore((s) => s.buildingStyle);
+  const setBuildingStyle = useViewStore((s) => s.setBuildingStyle);
+
+  // Depends only on build-time env, so the list is stable for the session.
+  const providers = useMemo(() => availableProviders(), []);
+
+  const photoreal = buildingStyle === 'photoreal';
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -124,6 +155,94 @@ export default function LayerPanel() {
         ))}
       </div>
 
+      {/* How buildings are drawn. Sits under the Buildings checkbox, which
+          stays the on/off switch for whichever style is selected here. */}
+      <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        <div className={layers.buildings ? '' : 'is-disabled'}>
+          <span className="row-label">Buildings</span>
+          <div
+            className="mt-1 grid grid-cols-2 gap-1"
+            role="radiogroup"
+            aria-label="Building style"
+          >
+            {BUILDING_STYLES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="radio"
+                aria-checked={buildingStyle === s.id}
+                title={s.title}
+                onClick={() => setBuildingStyle(s.id)}
+                className={[
+                  'rounded py-1 text-[11px] transition-colors',
+                  buildingStyle === s.id
+                    ? 'bg-[rgb(var(--accent))] text-black'
+                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                ].join(' ')}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {photoreal ? (
+            <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+              Captured mesh — no rights data. Cadastral geometry stays
+              selectable underneath.
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Basemap source and tone. Sits directly under the Basemap checkbox,
+          which stays the on/off switch for whatever is selected here. */}
+      <div className="mt-3 space-y-2.5 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        {/* Photoreal tiles carry their own imagery and hide the globe surface,
+            so the basemap underneath them is not on screen to be chosen. */}
+        <div
+          className={layers.basemap && !photoreal ? '' : 'is-disabled'}
+          title={photoreal ? 'Google 3D Tiles supply their own imagery' : undefined}
+        >
+          <span className="row-label">Imagery</span>
+          <select
+            value={imageryProvider}
+            onChange={(e) => setImageryProvider(e.target.value as ProviderId)}
+            className="mt-1 w-full rounded border border-[rgb(var(--edge))] bg-[rgb(var(--panel))] px-1.5 py-1 text-[11px] text-[rgb(var(--ink))] outline-none focus:border-[rgb(var(--accent))]"
+          >
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <span className="row-label">Tone</span>
+          {/* A segmented row rather than radio inputs: it is the house idiom
+              for a mutually-exclusive choice (see View below, and NavDock).
+              Marked up as a radiogroup so it still reads as one. */}
+          <div className="mt-1 grid grid-cols-2 gap-1" role="radiogroup" aria-label="Tone">
+            {(['natural', 'gisDark'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="radio"
+                aria-checked={imageryTreatment === t}
+                onClick={() => setImageryTreatment(t as TreatmentId)}
+                className={[
+                  'rounded py-1 text-[11px] transition-colors',
+                  imageryTreatment === t
+                    ? 'bg-[rgb(var(--accent))] text-black'
+                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                ].join(' ')}
+              >
+                {TREATMENT_LABELS[t]}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <div className="mt-3 space-y-2.5 border-t border-[rgb(var(--edge))]/50 pt-2.5">
         <Slider
           label="Explode"
@@ -132,11 +251,16 @@ export default function LayerPanel() {
           suffix="%"
           disabled={mode === 'city'}
         />
+        {/* Both sliders act on schematic geometry only -- they never touch the
+            Google tileset. Explode still bites in Photoreal because the floor
+            stack renders above the tiles; transparency does not, because the
+            extrusions it fades are already ghosted to alpha 0.01 for picking. */}
         <Slider
           label="Transparency"
           value={transparency}
           onChange={setTransparency}
           suffix="%"
+          disabled={photoreal}
         />
       </div>
 

@@ -22,10 +22,41 @@ export const USE_COLOR: Record<UseType, Cesium.Color> = {
   industrial: rgba(150, 140, 160, 1),
 };
 
+/**
+ * Tint multiplied over the window-grid facade texture in schematic mode.
+ *
+ * The raw USE_COLOR would swamp the texture -- multiplying a muted blue over
+ * an already-muted brick reads as mud. Lerping 55% toward white keeps the
+ * windows legible while the use type still comes through as a hue. Computed
+ * once per use type rather than per frame: the material callback runs on every
+ * building on every frame.
+ */
+const FACADE_TINT: Record<UseType, Cesium.Color> = (() => {
+  const out = {} as Record<UseType, Cesium.Color>;
+  for (const use of Object.keys(USE_COLOR) as UseType[]) {
+    out[use] = Cesium.Color.lerp(
+      USE_COLOR[use], Cesium.Color.WHITE, 0.55, new Cesium.Color(),
+    );
+  }
+  return out;
+})();
+
 export const MATERIALS = {
   /** City mode: a normal, unselected building. */
   buildingDefault: (use: UseType, alpha = 0.92) =>
     USE_COLOR[use].withAlpha(alpha),
+
+  /** Schematic mode: the tint over the repeating facade texture. */
+  buildingFacade: (use: UseType, alpha = 0.92) => FACADE_TINT[use].withAlpha(alpha),
+
+  /**
+   * Photoreal mode: the schematic extrusion is still there, still tagged, and
+   * still hit by scene.pick -- it is just not visible. Alpha 0.01 rather than
+   * show:false precisely because a hidden entity is not pickable, and picking
+   * is what keeps the ULPIN panel, the floor ladder and the basement conflict
+   * checks working while Google's mesh is on screen.
+   */
+  buildingGhost: Cesium.Color.WHITE.withAlpha(0.01),
 
   /** Cursor is over it. */
   buildingHover: rgba(120, 205, 255, 1),

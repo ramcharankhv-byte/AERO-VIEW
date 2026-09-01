@@ -10,6 +10,7 @@ import LayerPanel from '@/components/ui/LayerPanel';
 import Legend from '@/components/ui/Legend';
 import NavDock from '@/components/ui/NavDock';
 import ParcelInset from '@/components/ui/ParcelInset';
+import PhotorealNotice from '@/components/ui/PhotorealNotice';
 import StatusBar from '@/components/ui/StatusBar';
 import TopBar from '@/components/ui/TopBar';
 
@@ -72,7 +73,10 @@ export default function Page() {
           <StatusBar />
         </div>
 
-        <div className="absolute right-3 bottom-[46px]">
+        {/* Both notices share the corner; stacked so a photoreal failure and a
+            missing ion token can be reported at once rather than overlapping. */}
+        <div className="absolute right-3 bottom-[46px] flex flex-col items-end gap-2">
+          <PhotorealNotice />
           <IonNotice />
         </div>
       </div>

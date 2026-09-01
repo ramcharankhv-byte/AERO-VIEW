@@ -57,16 +57,39 @@ export default function ParcelsLayer() {
               false,
             ),
           ),
-          outline: true,
-          outlineColor: MATERIALS.parcelOutline,
+          // Cesium cannot outline a ground-clamped polygon -- it disables the
+          // outline and warns. The boundary is drawn as a ground polyline
+          // below instead, which is the supported path and is the only one
+          // that survives Photoreal mode.
+          outline: false,
           // Clamped to terrain so plots drape over the slope rather than
           // slicing through it.
           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-          classificationType: Cesium.ClassificationType.TERRAIN,
+          // BOTH, not TERRAIN: in Photoreal mode the globe surface is hidden
+          // and the ground the user sees is Google's 3D Tiles mesh. A
+          // TERRAIN-only classification would drape these boundaries onto a
+          // surface that is not being drawn, and the parcel edges would vanish
+          // under the tiles. BOTH is also correct with no tiles present, so
+          // this needs no photoreal-specific branch.
+          classificationType: Cesium.ClassificationType.BOTH,
           shadows: Cesium.ShadowMode.DISABLED,
         },
       });
       tagEntity(entity, { kind: 'parcel', id: pid });
+
+      // The visible boundary. A ground polyline is draped by the renderer onto
+      // whatever surface is actually being drawn, so the same entity reads
+      // correctly over terrain and over Google's mesh -- which a 16%-alpha
+      // fill does not: against dense captured imagery it disappears entirely.
+      ds.entities.add({
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArray(flat),
+          width: 2,
+          clampToGround: true,
+          classificationType: Cesium.ClassificationType.BOTH,
+          material: new Cesium.ColorMaterialProperty(MATERIALS.parcelOutline),
+        },
+      });
     }
 
     return () => {
