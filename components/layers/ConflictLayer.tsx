@@ -7,6 +7,7 @@ import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { CONFLICT_COLOR, CONFLICT_COLOR_DIM, tubeShape } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
+import { datumShift } from '@/lib/cesium/terrain';
 import type { UtilityProps } from '@/lib/types';
 
 /**
@@ -24,15 +25,7 @@ export default function ConflictLayer() {
   const underground = useViewStore((s) => s.underground);
   const showUtilities = useViewStore((s) => s.layers.utilities);
 
-  const zShift = useMemo(() => {
-    if (!buildings || buildings.features.length === 0) return 0;
-    let sum = 0;
-    for (const f of buildings.features) sum += f.properties.ground_elev;
-    const storedDatum = sum / buildings.features.length;
-    const heights = [...ground.values()];
-    if (heights.length === 0) return 0;
-    return heights.reduce((a, b) => a + b, 0) / heights.length - storedDatum;
-  }, [buildings, ground]);
+  const zShift = useMemo(() => datumShift(buildings, ground), [buildings, ground]);
 
   const conflictedIds = useMemo(
     () => new Set(conflicts.map((c) => c.utility_id)),

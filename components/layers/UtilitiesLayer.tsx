@@ -7,6 +7,7 @@ import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { UTILITY_COLOR, UTILITY_SELECTED, tubeShape } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
+import { datumShift } from '@/lib/cesium/terrain';
 import type { AssetType, UtilityProps } from '@/lib/types';
 
 /**
@@ -30,17 +31,7 @@ export default function UtilitiesLayer() {
   }, [selectedUtilityId]);
 
   /** Shift from the stored datum onto the terrain surface. */
-  const zShift = useMemo(() => {
-    if (!buildings || buildings.features.length === 0) return 0;
-    let storedSum = 0;
-    for (const f of buildings.features) storedSum += f.properties.ground_elev;
-    const storedDatum = storedSum / buildings.features.length;
-
-    const heights = [...ground.values()];
-    if (heights.length === 0) return 0;
-    const terrainMean = heights.reduce((a, b) => a + b, 0) / heights.length;
-    return terrainMean - storedDatum;
-  }, [buildings, ground]);
+  const zShift = useMemo(() => datumShift(buildings, ground), [buildings, ground]);
 
   useEffect(() => {
     if (!viewer || !ready || !utilities || viewer.isDestroyed()) return;

@@ -28,6 +28,8 @@ export interface BuildingProps {
   ground_elev: number;
   use_type: UseType;
   height_source: Provenance;
+  /** True when height_source='surveyed_plan' but the register declared itself synthetic. */
+  survey_synthetic: boolean;
   name: string | null;
   address: string | null;
   osm_id: number;

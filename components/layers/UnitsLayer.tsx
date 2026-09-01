@@ -9,6 +9,7 @@ import { MATERIALS } from '@/lib/cesium/materials';
 import { liftFor } from '@/lib/cesium/explode';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
+import { flatLonLat } from '@/lib/geo';
 
 /**
  * Unit volumes for the isolated floor.
@@ -67,8 +68,7 @@ export default function UnitsLayer() {
     for (const unit of detail.units) {
       if (unit.level_no !== isolatedFloor) continue;
       const ring = (unit.ring.coordinates as number[][][])[0];
-      const flat: number[] = [];
-      for (let i = 0; i < ring.length - 1; i++) flat.push(ring[i][0], ring[i][1]);
+      const flat = flatLonLat(ring);
       if (flat.length < 6) continue;
 
       const z0 = toSceneZ(unit.z_min, bprops.ground_elev, terrainH);

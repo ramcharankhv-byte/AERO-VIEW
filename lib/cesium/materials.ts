@@ -59,6 +59,11 @@ export const MATERIALS = {
   parcelFill: rgba(90, 170, 140, 0.16),
   parcelOutline: rgba(120, 210, 170, 0.85),
   parcelActive: rgba(150, 235, 190, 0.4),
+
+  /** Architectural model on the active building. */
+  buildingModelWall: rgba(238, 232, 220, 1),
+  buildingModelRoof: (use: UseType) => USE_COLOR[use].withAlpha(0.96),
+  buildingModelFixture: rgba(80, 84, 92, 1),
 } as const;
 
 // ---------------------------------------------------------------- utilities
