@@ -7,6 +7,7 @@ import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
+import { flatLonLat } from '@/lib/geo';
 import type { ParcelInfo } from '@/lib/types';
 
 /**
@@ -41,8 +42,7 @@ export default function ParcelsLayer() {
     for (const feature of parcels.features) {
       const props = feature.properties as ParcelInfo;
       const ring = (feature.geometry.coordinates as number[][][])[0];
-      const flat: number[] = [];
-      for (let i = 0; i < ring.length - 1; i++) flat.push(ring[i][0], ring[i][1]);
+      const flat = flatLonLat(ring);
       if (flat.length < 6) continue;
 
       const pid = props.id;

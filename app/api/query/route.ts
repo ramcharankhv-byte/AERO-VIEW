@@ -25,6 +25,12 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
+  if (lat < -90 || lat > 90) {
+    return NextResponse.json({ error: 'lat out of range' }, { status: 400 });
+  }
+  if (lon < -180 || lon > 180) {
+    return NextResponse.json({ error: 'lon out of range' }, { status: 400 });
+  }
 
   try {
     const stack = await queryPoint(lon, lat, z);

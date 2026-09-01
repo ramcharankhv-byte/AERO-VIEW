@@ -9,7 +9,7 @@
  * Usage: node scripts/verify_ui.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const OUT = process.argv[2] ?? path.join(process.cwd(), 'docs', 'shots');
@@ -19,6 +19,15 @@ const CHROME =
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 mkdirSync(OUT, { recursive: true });
+
+// The status bar only reports a count once /api/buildings has resolved and
+// the scene is live, so it doubles as the readiness signal. Read the count
+// from the same snapshot the API serves when the DB is down, so the assertion
+// stays correct after a rebuild rather than depending on a hard-coded total.
+const snapshotFC = JSON.parse(
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+);
+const BUILDING_COUNT = snapshotFC.features.length;
 
 const errors = [];
 const shot = async (page, name) => {
@@ -69,18 +78,27 @@ try {
   console.log(`navigating to ${URL}`);
   await page.goto(URL, { waitUntil: 'networkidle2', timeout: 90000 });
 
-  // The status bar only reports a count once /api/buildings has resolved and
-  // the scene is live, so it doubles as the readiness signal.
+  // The status bar only reports the real count once /api/buildings has
+  // resolved and the scene is live, so it doubles as the readiness signal.
+  // We wait for the EXACT count (not just any number) so we don't proceed
+  // while the status bar is still in its "0 3D buildings" initial state.
+  // Headless Chrome with software WebGL can take several minutes to bring
+  // the Cesium globe up; the timeout is generous on purpose.
   await page.waitForFunction(
-    () => /\d+ 3D buildings/.test(document.body.innerText),
-    { timeout: 90000 },
+    (expected) => new RegExp(`${expected} 3D buildings`).test(document.body.innerText),
+    { timeout: 300000 },
+    BUILDING_COUNT,
   );
-  await sleep(6000); // let terrain sampling + the first frames settle
+  await sleep(8000); // let terrain sampling + the first frames settle
 
   // ---------------------------------------------------------------- CITY
   console.log('\n[1] CITY');
   const status = await statusText(page);
-  check('status bar reports buildings', /384 3D buildings/.test(status), status.slice(0, 90));
+  check(
+    'status bar reports buildings',
+    new RegExp(`${BUILDING_COUNT} 3D buildings`).test(status),
+    status.slice(0, 90),
+  );
   check('AOI named', /Siripuram/.test(status));
   await shot(page, '1-city');
 

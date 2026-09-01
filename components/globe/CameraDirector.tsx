@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { useViewer } from './CesiumRoot';
 import { useActiveDetail, useDataStore, useViewStore } from '@/lib/store';
 import { toSceneZ } from '@/lib/cesium/terrain';
+import { ringCentreWithRadius } from '@/lib/geo';
 
 /**
  * ALL camera movement in the application lives here.
@@ -49,26 +50,6 @@ function poseFor(
   };
 }
 
-/** Area-weighted centre and radius of a footprint ring, in degrees/metres. */
-function ringCentre(ring: number[][]): { lon: number; lat: number; radius: number } {
-  let x = 0;
-  let y = 0;
-  const n = Math.max(1, ring.length - 1);
-  for (let i = 0; i < n; i++) {
-    x += ring[i][0];
-    y += ring[i][1];
-  }
-  const lon = x / n;
-  const lat = y / n;
-  let radius = 12;
-  for (let i = 0; i < n; i++) {
-    const dx = (ring[i][0] - lon) * 111320 * Math.cos(Cesium.Math.toRadians(lat));
-    const dy = (ring[i][1] - lat) * 110574;
-    radius = Math.max(radius, Math.hypot(dx, dy));
-  }
-  return { lon, lat, radius };
-}
-
 export default function CameraDirector() {
   const { viewer, ground, ready } = useViewer();
   const mode = useViewStore((s) => s.mode);
@@ -96,7 +77,7 @@ export default function CameraDirector() {
         if (activeBuildingId != null && buildings) {
           const f = buildings.features.find((x) => x.properties.id === activeBuildingId);
           if (f) {
-            const c = ringCentre((f.geometry.coordinates as number[][][])[0]);
+            const c = ringCentreWithRadius((f.geometry.coordinates as number[][][])[0]);
             return { lon: c.lon, lat: c.lat, height: 70 };
           }
         }
@@ -123,7 +104,7 @@ export default function CameraDirector() {
     if (!feature) return;
 
     const ring = (feature.geometry.coordinates as number[][][])[0];
-    const { lon, lat, radius } = ringCentre(ring);
+    const { lon, lat, radius } = ringCentreWithRadius(ring);
     const props = feature.properties;
     const terrainH = ground.get(props.id);
     const baseZ = toSceneZ(props.ground_elev, props.ground_elev, terrainH);
@@ -132,11 +113,11 @@ export default function CameraDirector() {
     if (mode === 'unit' && selectedUnitId != null && detail) {
       const unit = detail.units.find((u) => u.id === selectedUnitId);
       if (unit) {
-        const uc = ringCentre((unit.ring.coordinates as number[][][])[0]);
+        const uc = ringCentreWithRadius((unit.ring.coordinates as number[][][])[0]);
         const z = toSceneZ((unit.z_min + unit.z_max) / 2, props.ground_elev, terrainH);
         camera.flyTo({
           ...poseFor(uc.lon, uc.lat, z, Math.max(28, uc.radius * 2.2), -24),
-          duration: 1.1,
+          duration: FLY_MS,
         });
         return;
       }
@@ -151,7 +132,7 @@ export default function CameraDirector() {
         : baseZ;
       camera.flyTo({
         ...poseFor(lon, lat, z, Math.max(34, radius * 1.6), -16),
-        duration: 1.2,
+        duration: FLY_MS,
       });
       return;
     }

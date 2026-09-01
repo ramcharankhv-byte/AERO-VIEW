@@ -6,16 +6,22 @@ import React, {
   createContext, useContext, useEffect, useRef, useState,
 } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { sampleGroundHeights, type GroundMap } from '@/lib/cesium/terrain';
-import { SCENE_BACKGROUND } from '@/lib/cesium/materials';
-import type { BuildingProps, ConflictRow, GeoFC, ParcelInfo, UtilityProps } from '@/lib/types';
+import type { GroundMap } from '@/lib/cesium/terrain';
+import {
+  AOI, addInitialImagery, configureScene, createTerrain, fetchInitialData,
+  frameInitialCamera, hasIonToken, sampleGroundUnder,
+} from '@/lib/cesium/setup';
 
 /**
- * Viewer lifecycle, imagery, terrain and one-time data load.
+ * Viewer lifecycle and one-time data load.
  *
  * This component owns the Cesium Viewer and nothing else owns it. Layers reach
  * the viewer through useViewer(); they read the store and render, and they do
  * not move the camera -- CameraDirector does that, exclusively.
+ *
+ * Everything that can fail at construction (terrain fetch, imagery load,
+ * terrain sampling, network) lives in lib/cesium/setup.ts so this file reads
+ * as the orchestration it actually is.
  */
 
 interface ViewerCtx {
@@ -30,39 +36,23 @@ export function useViewer(): ViewerCtx {
   return useContext(Ctx);
 }
 
-const AOI = {
-  west: 83.313, south: 17.718, east: 83.3245, north: 17.728,
-};
-
 export default function CesiumRoot({ children }: { children?: React.ReactNode }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const [ctx, setCtx] = useState<ViewerCtx>({ viewer: null, ground: new Map(), ready: false });
 
   const setIonFallback = useViewStore((s) => s.setIonFallback);
-  const data = useDataStore();
+  const loading = useDataStore((s) => s.loading);
 
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
     let disposed = false;
 
     (async () => {
-      const token = process.env.NEXT_PUBLIC_CESIUM_TOKEN?.trim();
-      const hasIon = Boolean(token);
-      if (hasIon) Cesium.Ion.defaultAccessToken = token as string;
+      const hasIon = hasIonToken();
+      if (hasIon) Cesium.Ion.defaultAccessToken = process.env.NEXT_PUBLIC_CESIUM_TOKEN!.trim();
 
-      // Terrain: World Terrain with a token, ellipsoid without.
-      let terrainProvider: Cesium.TerrainProvider = new Cesium.EllipsoidTerrainProvider();
-      if (hasIon) {
-        try {
-          terrainProvider = await Cesium.createWorldTerrainAsync({
-            requestVertexNormals: true,
-          });
-        } catch {
-          terrainProvider = new Cesium.EllipsoidTerrainProvider();
-        }
-      }
-
+      const terrainProvider = await createTerrain(hasIon);
       if (disposed || !containerRef.current) return;
 
       const viewer = new Cesium.Viewer(containerRef.current, {
@@ -84,84 +74,27 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
         scene3DOnly: true,
         requestRenderMode: false,
       });
-
       viewerRef.current = viewer;
       viewer.cesiumWidget.creditContainer.setAttribute('style', 'display:none');
 
-      // Imagery: ion world imagery when licensed, OSM raster otherwise.
-      let usedFallback = true;
-      if (hasIon) {
-        try {
-          const world = await Cesium.createWorldImageryAsync({
-            style: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS,
-          });
-          viewer.imageryLayers.addImageryProvider(world);
-          usedFallback = false;
-        } catch {
-          usedFallback = true;
-        }
-      }
-      if (usedFallback) {
-        viewer.imageryLayers.addImageryProvider(
-          new Cesium.UrlTemplateImageryProvider({
-            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            credit: new Cesium.Credit('(c) OpenStreetMap contributors'),
-            maximumLevel: 19,
-          }),
-        );
-      }
+      const usedFallback = await addInitialImagery(viewer, hasIon);
       setIonFallback(usedFallback);
 
-      const scene = viewer.scene;
-      scene.globe.depthTestAgainstTerrain = true;
-      scene.globe.enableLighting = false;
-      scene.skyAtmosphere.show = true;
-      scene.fog.enabled = true;
-      scene.screenSpaceCameraController.enableCollisionDetection = false;
-      scene.backgroundColor = SCENE_BACKGROUND;
-
-      // Initial framing of the AOI. This is the one camera call outside
-      // CameraDirector: it is the scene's construction pose, not a transition.
-      viewer.camera.setView({
-        destination: Cesium.Rectangle.fromDegrees(
-          AOI.west, AOI.south, AOI.east, AOI.north,
-        ),
-      });
+      configureScene(viewer);
+      frameInitialCamera(viewer);
 
       // ---- one-time data load -------------------------------------------
       const store = useDataStore.getState();
       store.setLoading(true);
       try {
-        const [bRes, pRes, uRes, cRes] = await Promise.all([
-          fetch('/api/buildings'),
-          fetch('/api/parcels'),
-          fetch('/api/utilities'),
-          fetch('/api/conflicts'),
-        ]);
-        const buildings = (await bRes.json()) as GeoFC<BuildingProps>;
-        const parcels = (await pRes.json()) as GeoFC<ParcelInfo>;
-        const utilities = (await uRes.json()) as GeoFC<UtilityProps>;
-        const conflicts = (await cRes.json()) as ConflictRow[];
-
+        const data = await fetchInitialData();
         if (disposed) return;
-        store.setBuildings(buildings);
-        store.setParcels(parcels);
-        store.setUtilities(utilities);
-        store.setConflicts(Array.isArray(conflicts) ? conflicts : []);
+        store.setBuildings(data.buildings);
+        store.setParcels(data.parcels);
+        store.setUtilities(data.utilities);
+        store.setConflicts(data.conflicts);
 
-        // Reconcile stored ground_elev against the real terrain surface.
-        const pts = buildings.features.map((f) => {
-          const ring = (f.geometry.coordinates as number[][][])[0];
-          let x = 0;
-          let y = 0;
-          for (let i = 0; i < ring.length - 1; i++) {
-            x += ring[i][0];
-            y += ring[i][1];
-          }
-          const n = Math.max(1, ring.length - 1);
-          return { id: f.properties.id, lon: x / n, lat: y / n };
-        });
-        const ground = await sampleGroundHeights(terrainProvider, pts);
+        const ground = await sampleGroundUnder(terrainProvider, data.buildings);
         if (disposed) return;
         setCtx({ viewer, ground, ready: true });
       } catch (err) {
@@ -244,7 +177,7 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
     <Ctx.Provider value={ctx}>
       <div ref={containerRef} className="absolute inset-0" />
       {ctx.ready ? children : null}
-      {data.loading ? (
+      {loading ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
           <div className="glass rounded-lg px-4 py-2 text-sm text-slate-200">
             Loading cadastre…

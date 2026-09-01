@@ -1,5 +1,6 @@
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
+import type { BuildingProps, GeoFC } from '@/lib/types';
 
 /**
  * Ground-height reconciliation.
@@ -70,4 +71,24 @@ export function toSceneZ(
 ): number {
   if (terrainH === undefined) return storedZ;
   return terrainH + (storedZ - groundElev);
+}
+
+/**
+ * Vertical shift that aligns utilities stored against the (possibly placeholder)
+ * DB datum with the real terrain surface sampled at boot. Same formula in
+ * UtilitiesLayer and ConflictLayer — kept here so the two cannot drift.
+ */
+export function datumShift(
+  buildings: GeoFC<BuildingProps> | null,
+  ground: GroundMap,
+): number {
+  if (!buildings || buildings.features.length === 0) return 0;
+  let storedSum = 0;
+  for (const f of buildings.features) storedSum += f.properties.ground_elev;
+  const storedDatum = storedSum / buildings.features.length;
+
+  const heights = [...ground.values()];
+  if (heights.length === 0) return 0;
+  const terrainMean = heights.reduce((a, b) => a + b, 0) / heights.length;
+  return terrainMean - storedDatum;
 }
