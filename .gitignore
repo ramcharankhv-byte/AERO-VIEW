@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+public/cesium/
+.env.local
+__pycache__/
+*.pyc
+.DS_Store
+next-env.d.ts
+*.tsbuildinfo

@@ -1,0 +1,21 @@
+{
+  "_disclaimer": "SYNTHETIC DEMONSTRATION DATA - NOT A REAL SURVEY. These storey counts were fabricated to exercise the 'surveyed_plan' provenance path in the UI. They do not reflect any field survey, approved building plan, or municipal record.",
+  "_synthetic": true,
+  "_source": "synthetic demo register",
+  "storeys": {
+    "6131832": 12,
+    "1272678493": 10,
+    "6041669": 12,
+    "6041667": 12,
+    "635177274": 10,
+    "395206884": 7,
+    "389829082": 10,
+    "1336473266": 7,
+    "6041677": 12,
+    "388816182": 11,
+    "635582158": 8,
+    "396824563": 12,
+    "393927803": 11,
+    "1347455864": 7
+  }
+}

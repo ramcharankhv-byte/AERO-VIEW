@@ -1,0 +1,256 @@
+'use client';
+
+import '@/lib/cesium/base-url';
+import * as Cesium from 'cesium';
+import React, {
+  createContext, useContext, useEffect, useRef, useState,
+} from 'react';
+import { useDataStore, useViewStore } from '@/lib/store';
+import { sampleGroundHeights, type GroundMap } from '@/lib/cesium/terrain';
+import { SCENE_BACKGROUND } from '@/lib/cesium/materials';
+import type { BuildingProps, ConflictRow, GeoFC, ParcelInfo, UtilityProps } from '@/lib/types';
+
+/**
+ * Viewer lifecycle, imagery, terrain and one-time data load.
+ *
+ * This component owns the Cesium Viewer and nothing else owns it. Layers reach
+ * the viewer through useViewer(); they read the store and render, and they do
+ * not move the camera -- CameraDirector does that, exclusively.
+ */
+
+interface ViewerCtx {
+  viewer: Cesium.Viewer | null;
+  ground: GroundMap;
+  ready: boolean;
+}
+
+const Ctx = createContext<ViewerCtx>({ viewer: null, ground: new Map(), ready: false });
+
+export function useViewer(): ViewerCtx {
+  return useContext(Ctx);
+}
+
+const AOI = {
+  west: 83.313, south: 17.718, east: 83.3245, north: 17.728,
+};
+
+export default function CesiumRoot({ children }: { children?: React.ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const [ctx, setCtx] = useState<ViewerCtx>({ viewer: null, ground: new Map(), ready: false });
+
+  const setIonFallback = useViewStore((s) => s.setIonFallback);
+  const data = useDataStore();
+
+  useEffect(() => {
+    if (!containerRef.current || viewerRef.current) return;
+    let disposed = false;
+
+    (async () => {
+      const token = process.env.NEXT_PUBLIC_CESIUM_TOKEN?.trim();
+      const hasIon = Boolean(token);
+      if (hasIon) Cesium.Ion.defaultAccessToken = token as string;
+
+      // Terrain: World Terrain with a token, ellipsoid without.
+      let terrainProvider: Cesium.TerrainProvider = new Cesium.EllipsoidTerrainProvider();
+      if (hasIon) {
+        try {
+          terrainProvider = await Cesium.createWorldTerrainAsync({
+            requestVertexNormals: true,
+          });
+        } catch {
+          terrainProvider = new Cesium.EllipsoidTerrainProvider();
+        }
+      }
+
+      if (disposed || !containerRef.current) return;
+
+      const viewer = new Cesium.Viewer(containerRef.current, {
+        terrainProvider,
+        // Suppress the default ion base layer. Without this the Viewer fires a
+        // request for ion asset 2 using Cesium's built-in demo token before we
+        // ever get to swap imagery, which 401s when no token is configured.
+        baseLayer: false,
+        animation: false,
+        timeline: false,
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: false,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        fullscreenButton: false,
+        infoBox: false,
+        selectionIndicator: false,
+        scene3DOnly: true,
+        requestRenderMode: false,
+      });
+
+      viewerRef.current = viewer;
+      viewer.cesiumWidget.creditContainer.setAttribute('style', 'display:none');
+
+      // Imagery: ion world imagery when licensed, OSM raster otherwise.
+      let usedFallback = true;
+      if (hasIon) {
+        try {
+          const world = await Cesium.createWorldImageryAsync({
+            style: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS,
+          });
+          viewer.imageryLayers.addImageryProvider(world);
+          usedFallback = false;
+        } catch {
+          usedFallback = true;
+        }
+      }
+      if (usedFallback) {
+        viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            credit: new Cesium.Credit('(c) OpenStreetMap contributors'),
+            maximumLevel: 19,
+          }),
+        );
+      }
+      setIonFallback(usedFallback);
+
+      const scene = viewer.scene;
+      scene.globe.depthTestAgainstTerrain = true;
+      scene.globe.enableLighting = false;
+      scene.skyAtmosphere.show = true;
+      scene.fog.enabled = true;
+      scene.screenSpaceCameraController.enableCollisionDetection = false;
+      scene.backgroundColor = SCENE_BACKGROUND;
+
+      // Initial framing of the AOI. This is the one camera call outside
+      // CameraDirector: it is the scene's construction pose, not a transition.
+      viewer.camera.setView({
+        destination: Cesium.Rectangle.fromDegrees(
+          AOI.west, AOI.south, AOI.east, AOI.north,
+        ),
+      });
+
+      // ---- one-time data load -------------------------------------------
+      const store = useDataStore.getState();
+      store.setLoading(true);
+      try {
+        const [bRes, pRes, uRes, cRes] = await Promise.all([
+          fetch('/api/buildings'),
+          fetch('/api/parcels'),
+          fetch('/api/utilities'),
+          fetch('/api/conflicts'),
+        ]);
+        const buildings = (await bRes.json()) as GeoFC<BuildingProps>;
+        const parcels = (await pRes.json()) as GeoFC<ParcelInfo>;
+        const utilities = (await uRes.json()) as GeoFC<UtilityProps>;
+        const conflicts = (await cRes.json()) as ConflictRow[];
+
+        if (disposed) return;
+        store.setBuildings(buildings);
+        store.setParcels(parcels);
+        store.setUtilities(utilities);
+        store.setConflicts(Array.isArray(conflicts) ? conflicts : []);
+
+        // Reconcile stored ground_elev against the real terrain surface.
+        const pts = buildings.features.map((f) => {
+          const ring = (f.geometry.coordinates as number[][][])[0];
+          let x = 0;
+          let y = 0;
+          for (let i = 0; i < ring.length - 1; i++) {
+            x += ring[i][0];
+            y += ring[i][1];
+          }
+          const n = Math.max(1, ring.length - 1);
+          return { id: f.properties.id, lon: x / n, lat: y / n };
+        });
+        const ground = await sampleGroundHeights(terrainProvider, pts);
+        if (disposed) return;
+        setCtx({ viewer, ground, ready: true });
+      } catch (err) {
+        store.setError(String(err));
+        if (!disposed) setCtx({ viewer, ground: new Map(), ready: true });
+      } finally {
+        useDataStore.getState().setLoading(false);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      const v = viewerRef.current;
+      viewerRef.current = null;
+      if (v && !v.isDestroyed()) v.destroy();
+    };
+    // Intentionally mount-only: the viewer must be constructed exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ---- underground mode: globe translucency ------------------------------
+  // Scene state, not camera state, so it belongs with the viewer rather than
+  // in CameraDirector (which only handles the accompanying pitch change).
+  const underground = useViewStore((s) => s.underground);
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    const globe = viewer.scene.globe;
+
+    if (underground) {
+      globe.translucency.enabled = true;
+      globe.translucency.frontFaceAlphaByDistance = new Cesium.NearFarScalar(
+        420, 0.28, 1800, 0.85,
+      );
+      globe.depthTestAgainstTerrain = false;
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+    } else {
+      // Disabling translucency is enough; the distance ramp is reapplied on the
+      // next enable, so it is left in place rather than cleared.
+      globe.translucency.enabled = false;
+      globe.depthTestAgainstTerrain = true;
+    }
+  }, [ctx.viewer, underground]);
+
+  // ---- navigation mode ----------------------------------------------------
+  // Which mouse gestures the camera controller accepts. Scene configuration,
+  // not camera movement, so it lives here rather than in CameraDirector.
+  const navMode = useViewStore((s) => s.navMode);
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    const c = viewer.scene.screenSpaceCameraController;
+    c.enableRotate = navMode === 'orbit';
+    c.enableTilt = navMode === 'orbit';
+    c.enableTranslate = navMode === 'pan' || navMode === 'orbit';
+    c.enableZoom = true;
+    c.enableLook = navMode === 'orbit';
+  }, [ctx.viewer, navMode]);
+
+  // ---- basemap / terrain layer toggles ------------------------------------
+  const showBasemap = useViewStore((s) => s.layers.basemap);
+  const showTerrain = useViewStore((s) => s.layers.terrain);
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    for (let i = 0; i < viewer.imageryLayers.length; i++) {
+      viewer.imageryLayers.get(i).show = showBasemap;
+    }
+  }, [ctx.viewer, showBasemap]);
+
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    // Dropping to ellipsoid terrain is the honest "terrain off" state; the
+    // stacks stay put because their scene Z is reconciled, not re-sampled.
+    viewer.scene.globe.show = showTerrain || showBasemap;
+  }, [ctx.viewer, showTerrain, showBasemap]);
+
+  return (
+    <Ctx.Provider value={ctx}>
+      <div ref={containerRef} className="absolute inset-0" />
+      {ctx.ready ? children : null}
+      {data.loading ? (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center">
+          <div className="glass rounded-lg px-4 py-2 text-sm text-slate-200">
+            Loading cadastre…
+          </div>
+        </div>
+      ) : null}
+    </Ctx.Provider>
+  );
+}

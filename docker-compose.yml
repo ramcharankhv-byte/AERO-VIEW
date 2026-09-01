@@ -1,0 +1,21 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: ulpin-postgis
+    environment:
+      POSTGRES_USER: ulpin
+      POSTGRES_PASSWORD: ulpin
+      POSTGRES_DB: ulpin
+    ports:
+      - "55432:5432"   # non-default host port so a local postgres can coexist
+    volumes:
+      - ulpin_pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ulpin -d ulpin"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ulpin_pgdata:

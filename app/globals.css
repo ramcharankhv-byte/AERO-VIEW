@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark is the default: the scene is a full-bleed satellite view and light
+   chrome over it is unreadable. The light theme is a deliberate opt-in. */
+:root {
+  --panel: 12 18 28;
+  --edge: 42 56 78;
+  --ink: 226 236 248;
+  --muted: 138 158 184;
+  --accent: 92 190 255;
+}
+
+html[data-theme='light'] {
+  --panel: 246 249 253;
+  --edge: 196 210 228;
+  --ink: 18 28 42;
+  --muted: 78 98 122;
+  --accent: 24 118 210;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #05080f;
+  color: rgb(var(--ink));
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
+
+@layer components {
+  .glass {
+    background: rgb(var(--panel) / 0.82);
+    border: 1px solid rgb(var(--edge) / 0.65);
+    backdrop-filter: blur(14px) saturate(1.25);
+    box-shadow: 0 8px 30px rgb(0 0 0 / 0.45);
+  }
+  .glass-soft {
+    background: rgb(var(--panel) / 0.62);
+    border: 1px solid rgb(var(--edge) / 0.45);
+    backdrop-filter: blur(10px);
+  }
+  .chip {
+    @apply rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide;
+  }
+  .panel-title {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-[rgb(var(--muted))];
+  }
+  .row-label {
+    @apply text-[11px] text-[rgb(var(--muted))];
+  }
+  .row-value {
+    @apply text-[12px] text-[rgb(var(--ink))];
+  }
+  /* Controls the brief asks to be present but visibly disabled. */
+  .is-disabled {
+    @apply cursor-not-allowed opacity-40;
+  }
+}
+
+/* Range inputs: the explode and transparency sliders. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(var(--edge));
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgb(var(--accent));
+  border: 2px solid rgb(var(--panel));
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgb(var(--accent));
+  border: 2px solid rgb(var(--panel));
+  cursor: pointer;
+}
+input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted)); }
+
+.cesium-widget-credits, .cesium-viewer-bottom { display: none !important; }
+
+@keyframes conflict-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.pulse-conflict { animation: conflict-pulse 1.4s ease-in-out infinite; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--edge) / 0.9);
+  border-radius: 999px;
+}
