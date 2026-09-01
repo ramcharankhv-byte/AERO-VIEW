@@ -9,6 +9,7 @@ import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
 import { useEffect, useState } from 'react';
 import { ringCentroid } from '@/lib/geo';
+import { applyGisDarkScene } from './imagery';
 import { SCENE_BACKGROUND } from './materials';
 import { sampleGroundHeights, type GroundMap, type SamplePoint } from './terrain';
 import type { BuildingProps, ConflictRow, GeoFC, ParcelInfo, UtilityProps } from '@/lib/types';
@@ -35,41 +36,26 @@ export async function createTerrain(hasIon: boolean): Promise<Cesium.TerrainProv
   }
 }
 
-/** Add the first imagery layer. Returns whether the OSM fallback was used. */
-export async function addInitialImagery(
-  viewer: Cesium.Viewer,
-  hasIon: boolean,
-): Promise<boolean> {
-  if (hasIon) {
-    try {
-      const world = await Cesium.createWorldImageryAsync({
-        style: Cesium.IonWorldImageryStyle.AERIAL_WITH_LABELS,
-      });
-      viewer.imageryLayers.addImageryProvider(world);
-      return false;
-    } catch {
-      // fall through to OSM
-    }
-  }
-  viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      credit: new Cesium.Credit('(c) OpenStreetMap contributors'),
-      maximumLevel: 19,
-    }),
-  );
-  return true;
-}
-
-/** Scene config that the rest of the app assumes. */
+/**
+ * Scene config that the rest of the app assumes.
+ *
+ * Imagery is no longer set up here: it is selected at runtime from the
+ * registry in lib/cesium/imagery.ts and swapped by an effect in CesiumRoot.
+ * What remains is the scene-level half of the gisDark treatment, which is
+ * applied unconditionally -- the globe base colour and atmosphere have to
+ * match the dimmed imagery whichever provider is showing, and they are what
+ * the 'none' provider falls back to displaying.
+ */
 export function configureScene(viewer: Cesium.Viewer): void {
   const scene = viewer.scene;
   scene.globe.depthTestAgainstTerrain = true;
-  scene.globe.enableLighting = false;
   scene.skyAtmosphere.show = true;
-  scene.fog.enabled = true;
   scene.screenSpaceCameraController.enableCollisionDetection = false;
+  scene.screenSpaceCameraController.minimumZoomDistance = 40;
+  scene.screenSpaceCameraController.maximumZoomDistance = 6000;
   scene.backgroundColor = SCENE_BACKGROUND;
+  // Sets baseColor, fog, atmosphere shifts, and pins lighting and HDR off.
+  applyGisDarkScene(scene);
 }
 
 /**
@@ -79,7 +65,16 @@ export function configureScene(viewer: Cesium.Viewer): void {
  */
 export function frameInitialCamera(viewer: Cesium.Viewer): void {
   viewer.camera.setView({
-    destination: Cesium.Rectangle.fromDegrees(AOI.west, AOI.south, AOI.east, AOI.north),
+    destination: Cesium.Cartesian3.fromDegrees(
+      (AOI.west + AOI.east) / 2,
+      (AOI.south + AOI.north) / 2,
+      1200,
+    ),
+    orientation: {
+      heading: Cesium.Math.toRadians(35),
+      pitch: Cesium.Math.toRadians(-55),
+      roll: 0,
+    },
   });
 }
 

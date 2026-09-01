@@ -2,9 +2,10 @@
 
 import { useEffect } from 'react';
 import { create } from 'zustand';
+import type { ProviderId, TreatmentId } from './cesium/imagery-catalog';
 import type {
-  BuildingDetail, BuildingProps, ConflictRow, GeoFC, LayerKey, Mode,
-  ParcelInfo, UtilityProps,
+  BuildingDetail, BuildingProps, BuildingStyle, ConflictRow, GeoFC, LayerKey,
+  Mode, ParcelInfo, UtilityProps,
 } from './types';
 
 /**
@@ -30,8 +31,31 @@ export interface ViewState {
   viewMode: '3D' | '2D' | 'Split';
   autoSpin: boolean;
   navMode: 'orbit' | 'pan' | 'zoom';
-  /** Set when the scene falls back to OSM imagery because no ion token exists. */
+  /** Set when terrain falls back to the ellipsoid because no ion token exists. */
   ionFallback: boolean;
+
+  /** The basemap the user picked. Written by the UI only. */
+  imageryProvider: ProviderId;
+  imageryTreatment: TreatmentId;
+  /**
+   * The basemap actually in use, which differs from imageryProvider whenever a
+   * provider failed and fell back. Written by CesiumRoot only. Kept as its own
+   * key so reporting the fallback cannot write back into the control that
+   * triggered the swap.
+   */
+  imageryActive: ProviderId;
+
+  /**
+   * Schematic extrusions vs Google Photorealistic 3D Tiles.
+   *
+   * Unlike imagery there is no separate "active" key. A failed tileset is not
+   * a silent substitution the user can ignore in the StatusBar -- it changes
+   * what the scene means -- so the failure path writes this back to
+   * 'schematic' and raises photorealError, and the toggle tells the truth.
+   */
+  buildingStyle: BuildingStyle;
+  /** Set when Google tiles failed; drives the toast. Null when healthy. */
+  photorealError: string | null;
 
   selectBuilding: (id: number | null) => void;
   isolateFloor: (level: number | null) => void;
@@ -47,6 +71,15 @@ export interface ViewState {
   setAutoSpin: (on: boolean) => void;
   setNavMode: (m: 'orbit' | 'pan' | 'zoom') => void;
   setIonFallback: (on: boolean) => void;
+  setImageryProvider: (id: ProviderId) => void;
+  setImageryTreatment: (t: TreatmentId) => void;
+  setImageryActive: (id: ProviderId) => void;
+  setBuildingStyle: (s: BuildingStyle) => void;
+  /** Report a Google-tiles failure and fall back to Schematic in one write. */
+  failPhotoreal: (message: string) => void;
+  dismissPhotorealError: () => void;
+  /** Bulk-apply state parsed from the URL on first paint. See lib/url-state.ts. */
+  hydrate: (patch: Partial<ViewState>) => void;
   resetView: () => void;
 }
 
@@ -75,6 +108,13 @@ export const useViewStore = create<ViewState>((set) => ({
   autoSpin: false,
   navMode: 'orbit',
   ionFallback: false,
+  imageryProvider: 'esri',
+  imageryTreatment: 'gisDark',
+  imageryActive: 'esri',
+  // Schematic is the default and the fallback: it is the only mode that
+  // carries provenance, and it needs no third-party quota to draw.
+  buildingStyle: 'schematic',
+  photorealError: null,
 
   selectBuilding: (id) =>
     set((s) =>
@@ -124,6 +164,18 @@ export const useViewStore = create<ViewState>((set) => ({
   setAutoSpin: (on) => set({ autoSpin: on }),
   setNavMode: (m) => set({ navMode: m }),
   setIonFallback: (on) => set({ ionFallback: on }),
+  setImageryProvider: (id) => set({ imageryProvider: id }),
+  setImageryTreatment: (t) => set({ imageryTreatment: t }),
+  setImageryActive: (id) => set({ imageryActive: id }),
+
+  // Switching style by hand clears any previous failure, so retrying Photoreal
+  // after a transient network blip is just clicking the toggle again.
+  setBuildingStyle: (s) => set({ buildingStyle: s, photorealError: null }),
+  failPhotoreal: (message) =>
+    set({ buildingStyle: 'schematic', photorealError: message }),
+  dismissPhotorealError: () => set({ photorealError: null }),
+
+  hydrate: (patch) => set(patch),
 
   resetView: () =>
     set({

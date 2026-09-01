@@ -6,9 +6,10 @@ import { useViewStore } from '@/lib/store';
 /**
  * Dismissible notice shown when no Cesium ion token is configured.
  *
- * The app still works -- it falls back to OSM raster imagery on an ellipsoid --
- * but satellite imagery and World Terrain are genuinely absent, and silently
- * showing a flat grey globe would look like a bug rather than a missing key.
+ * Since the basemap moved to Esri, imagery no longer needs a token at all --
+ * only terrain does. So this says exactly one thing: the ground is flat.
+ * Silently rendering an ellipsoid in a hilly AOI would look like a bug rather
+ * than a missing key.
  */
 export default function IonNotice() {
   const ionFallback = useViewStore((s) => s.ionFallback);
@@ -25,12 +26,13 @@ export default function IonNotice() {
             No Cesium ion token
           </div>
           <p className="mt-0.5 text-[10px] leading-snug text-[rgb(var(--muted))]">
-            Falling back to OpenStreetMap raster imagery on an ellipsoid. Set{' '}
+            Terrain is flat (ellipsoid). Esri imagery still loads — the basemap
+            is unaffected. Set{' '}
             <code className="font-mono text-[9px] text-[rgb(var(--ink))]">
               NEXT_PUBLIC_CESIUM_TOKEN
             </code>{' '}
             in <code className="font-mono text-[9px]">.env.local</code> for
-            satellite imagery and World Terrain.
+            Cesium World Terrain.
           </p>
         </div>
         <button

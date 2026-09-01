@@ -32,16 +32,53 @@ and fall back to the committed snapshots in `data/api/`, so `npm run dev` alone
 renders the full app. Every response carries an `x-ulpin-backend:
 postgis|snapshot` header saying which path served it.
 
+### Basemap imagery
+
+The basemap is **Esri World Imagery** and needs no key. It is dimmed by a
+colour treatment applied to the imagery layer so it reads as context beneath
+the buildings rather than competing with them; the buildings themselves are
+never dimmed, and the contrast between the two is the point.
+
+Both controls live in the Layers panel under the Basemap checkbox:
+
+| Imagery | Notes |
+|---|---|
+| Esri World Imagery | Default. No token. |
+| Esri Wayback (archive) | Historical mosaics. Needs `WAYBACK_RELEASE` (below). |
+| Mapbox Satellite | Hidden unless `NEXT_PUBLIC_MAPBOX_TOKEN` is set. |
+| Dark vector (no imagery) | CARTO `dark_all`. Non-photographic, and the fallback. |
+| None | No layer at all; bare `#0d1219` globe. Underground mode, clean captures. |
+
+**Tone** switches between `GIS dark` (default) and `Natural` (raw imagery, for
+when a reviewer asks to see the source). Switching either control swaps layer 0
+in place — the viewer is not rebuilt and the camera does not move.
+
+If a provider fails to load, the app logs a warning and falls back to CARTO;
+the StatusBar then shows the effective basemap marked `(fallback)`, so a
+degraded map is never silent. The globe is never left untextured.
+
+**Wayback releases** are global snapshots and there is no API for "the best one
+over Siripuram". Pick one by hand from the
+[Wayback app](https://livingatlas.arcgis.com/wayback) over the AOI and set
+`WAYBACK_RELEASE` in `lib/cesium/imagery.ts`. Left `null` (the default), the
+Wayback option resolves to current Esri imagery.
+
+Attribution is a licence obligation — Esri, Maxar, CARTO and OSM credits render
+bottom-left and must not be hidden. Esri's World Imagery service also carries
+its own [terms of use](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9)
+for heavy or commercial use.
+
 ### Cesium ion token (optional)
 
-Put a token in `.env.local` for satellite imagery and Cesium World Terrain:
+A token affects **terrain only** — imagery does not use ion:
 
 ```
 NEXT_PUBLIC_CESIUM_TOKEN=your_token_here
 ```
 
-Without one the app falls back to OpenStreetMap raster imagery on an ellipsoid
-and says so in a dismissible notice — the app is fully usable either way.
+Without one the globe falls back to a flat ellipsoid and says so in a
+dismissible notice. The basemap is unaffected, and the app is fully usable
+either way.
 
 ---
 

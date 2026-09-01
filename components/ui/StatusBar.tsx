@@ -2,6 +2,7 @@
 
 import { useDataStore, useViewStore } from '@/lib/store';
 import { useViewer } from '../globe/CesiumRoot';
+import { PROVIDER_LABELS } from '@/lib/cesium/imagery-catalog';
 import { useCameraHeight } from '@/lib/cesium/setup';
 
 /** Bottom bar: coordinate system, scale, accuracy and the real building count. */
@@ -11,6 +12,9 @@ export default function StatusBar() {
   const mode = useViewStore((s) => s.mode);
   const underground = useViewStore((s) => s.underground);
   const ionFallback = useViewStore((s) => s.ionFallback);
+  const imageryProvider = useViewStore((s) => s.imageryProvider);
+  const imageryActive = useViewStore((s) => s.imageryActive);
+  const buildingStyle = useViewStore((s) => s.buildingStyle);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const detail = useDataStore((s) => s.detail);
 
@@ -54,10 +58,32 @@ export default function StatusBar() {
       ) : null}
       <span className="ml-auto flex items-center gap-3">
         <ScaleBar heightM={camHeight} />
-        {ionFallback ? (
-          <span className="text-amber-300/90">OSM basemap · no terrain</span>
+        {/* Terrain and basemap are independent now: imagery needs no ion
+            token, and the basemap can differ from the one picked if a
+            provider failed over. Report both rather than conflating them. */}
+        {/* Photoreal supplies both surfaces itself: the globe is hidden and
+            World Terrain is off while it is up, so naming the basemap and
+            terrain underneath it would credit two sources that are not on
+            screen. */}
+        {buildingStyle === 'photoreal' ? (
+          <>
+            <span>Google Photorealistic 3D Tiles</span>
+            <Sep />
+            <span>Terrain from tiles</span>
+          </>
         ) : (
-          <span>Cesium World Terrain</span>
+          <>
+            <span className={imageryActive !== imageryProvider ? 'text-amber-300/90' : ''}>
+              {PROVIDER_LABELS[imageryActive]}
+              {imageryActive !== imageryProvider ? ' (fallback)' : ''}
+            </span>
+            <Sep />
+            {ionFallback ? (
+              <span className="text-amber-300/90">Ellipsoid · no terrain</span>
+            ) : (
+              <span>Cesium World Terrain</span>
+            )}
+          </>
         )}
         <Sep />
         <span className="uppercase tracking-wide text-[rgb(var(--ink))]">

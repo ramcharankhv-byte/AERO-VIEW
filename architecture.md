@@ -33,6 +33,8 @@ StatusBar.tsx ← "714 3D buildings · Siripuram 500 m · WGS 84"
 
 lib/
 ulpin.ts ← generate + parse the identifier
+cesium/imagery.ts ← basemap provider registry + colour treatment
+cesium/imagery-catalog.ts ← the same ids/labels, Cesium-free, for the UI
 cesium/materials.ts ← the 6 material states, one place
 cesium/explode.ts ← the lift animation
 store.ts ← zustand

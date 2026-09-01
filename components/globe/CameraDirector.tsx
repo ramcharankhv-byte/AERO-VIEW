@@ -93,7 +93,9 @@ export default function CameraDirector() {
     // ---- CITY ------------------------------------------------------------
     if (mode === 'city' || activeBuildingId == null) {
       camera.flyTo({
-        ...poseFor(AOI_CENTRE.lon, AOI_CENTRE.lat, 0, 1250, -55),
+        // Matches frameInitialCamera's height/heading/pitch, so Reset returns
+        // to the pose the scene opened on rather than a subtly different one.
+        ...poseFor(AOI_CENTRE.lon, AOI_CENTRE.lat, 0, 1200, -55, 35),
         duration: FLY_MS,
       });
       return;
