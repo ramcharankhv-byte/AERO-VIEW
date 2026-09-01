@@ -9,6 +9,7 @@ import { MATERIALS } from '@/lib/cesium/materials';
 import { liftFor } from '@/lib/cesium/explode';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
+import { flatLonLat } from '@/lib/geo';
 
 /**
  * The active building's floor stack: one translucent slab per level, basements
@@ -44,7 +45,11 @@ export default function FloorStackLayer() {
   useEffect(() => {
     stateRef.current.explodeT = explodeT;
     stateRef.current.isolated = isolatedFloor;
-    stateRef.current.visible = showFloors && mode !== 'city';
+    // The floor stack is only shown when a level is exploded or isolated
+    // (FLOOR or UNIT mode). In BUILDING mode the architectural model is the
+    // focus and it carries its own floor bands, so we do not draw the slabs
+    // on top of the textured wall.
+    stateRef.current.visible = showFloors && (mode === 'floor' || mode === 'unit');
   }, [explodeT, isolatedFloor, showFloors, mode]);
 
   useEffect(() => {
@@ -65,8 +70,7 @@ export default function FloorStackLayer() {
 
     floors.forEach((fl, index) => {
       const ring = (fl.ring.coordinates as number[][][])[0];
-      const flat: number[] = [];
-      for (let i = 0; i < ring.length - 1; i++) flat.push(ring[i][0], ring[i][1]);
+      const flat = flatLonLat(ring);
       if (flat.length < 6) return;
 
       const z0 = toSceneZ(fl.z_min, bprops.ground_elev, terrainH);

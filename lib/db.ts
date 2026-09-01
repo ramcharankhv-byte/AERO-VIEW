@@ -1,7 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
-import type { BuildingDetail, ConflictRow, StackHit } from './types';
+import type {
+  BuildingDetail, BuildingProps, ConflictRow, GeoFC,
+  ParcelInfo, StackHit, UtilityProps,
+} from './types';
 
 /**
  * Data access with two backends.
@@ -192,19 +195,25 @@ const QUERY_SQL = `
   ORDER BY CASE s.level WHEN 'parcel' THEN 1 WHEN 'building' THEN 2
                         WHEN 'floor' THEN 3 ELSE 4 END, s.id`;
 
-export async function getBuildings(): Promise<unknown> {
-  if (await usingDb()) return (await q<{ fc: unknown }>(BUILDINGS_SQL))[0].fc;
-  return snapshot('buildings.json');
+export async function getBuildings(): Promise<GeoFC<BuildingProps>> {
+  if (await usingDb()) {
+    return (await q<{ fc: GeoFC<BuildingProps> }>(BUILDINGS_SQL))[0].fc;
+  }
+  return snapshot<GeoFC<BuildingProps>>('buildings.json');
 }
 
-export async function getParcels(): Promise<unknown> {
-  if (await usingDb()) return (await q<{ fc: unknown }>(PARCELS_SQL))[0].fc;
-  return snapshot('parcels.json');
+export async function getParcels(): Promise<GeoFC<ParcelInfo>> {
+  if (await usingDb()) {
+    return (await q<{ fc: GeoFC<ParcelInfo> }>(PARCELS_SQL))[0].fc;
+  }
+  return snapshot<GeoFC<ParcelInfo>>('parcels.json');
 }
 
-export async function getUtilities(): Promise<unknown> {
-  if (await usingDb()) return (await q<{ fc: unknown }>(UTILITIES_SQL))[0].fc;
-  return snapshot('utilities.json');
+export async function getUtilities(): Promise<GeoFC<UtilityProps>> {
+  if (await usingDb()) {
+    return (await q<{ fc: GeoFC<UtilityProps> }>(UTILITIES_SQL))[0].fc;
+  }
+  return snapshot<GeoFC<UtilityProps>>('utilities.json');
 }
 
 export async function getConflicts(): Promise<ConflictRow[]> {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useDataStore, useEnsureDetail, useViewStore } from '@/lib/store';
+import { useDataStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
 import { UTILITY_LABEL } from '@/lib/cesium/materials';
 import { levelLabel, parentOf } from '@/lib/ulpin';
+import { orientedDims } from '@/lib/geo';
 import type { AssetType, Provenance, UtilityProps } from '@/lib/types';
 import UlpinCard from './UlpinCard';
 import { DERIVED_PARCEL_NOTE, ProvenanceRow } from './Provenance';
@@ -24,21 +25,41 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+      <div className="panel-title">{title}</div>
+      <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
 const m2 = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²`;
 const m = (v: number) => `${v.toFixed(1)} m`;
 
 export default function DetailPanel() {
+  // All hooks at the top, before any conditional return. Adding a hook
+  // below an early return breaks the Rules of Hooks and React will throw
+  // a render-order error as soon as the component takes a different path.
   const mode = useViewStore((s) => s.mode);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const isolatedFloor = useViewStore((s) => s.isolatedFloor);
   const selectedUnitId = useViewStore((s) => s.selectedUnitId);
   const selectedUtilityId = useViewStore((s) => s.selectedUtilityId);
   const underground = useViewStore((s) => s.underground);
+  const selectBuilding = useViewStore((s) => s.selectBuilding);
+  const selectUtility = useViewStore((s) => s.selectUtility);
 
   const buildings = useDataStore((s) => s.buildings);
   const utilities = useDataStore((s) => s.utilities);
   const conflicts = useDataStore((s) => s.conflicts);
   const detail = useEnsureDetail(activeBuildingId);
+
+  // Derived context selectors -- also called unconditionally, even when
+  // they return an empty array (no active selection).
+  const siblings = useParcelSiblings(activeBuildingId);
+  const buildingConflicts = useBuildingConflicts(activeBuildingId);
+  const neighbours = useBuildingNeighbours(activeBuildingId, 50);
 
   // ---- utility -----------------------------------------------------------
   if (selectedUtilityId !== null) {
@@ -109,9 +130,7 @@ export default function DetailPanel() {
     );
   }
 
-  const synthetic = Boolean(
-    (bprops as unknown as { survey_synthetic?: boolean }).survey_synthetic,
-  );
+  const synthetic = Boolean(bprops.survey_synthetic);
 
   // ---- unit --------------------------------------------------------------
   if (selectedUnitId !== null && detail) {
@@ -198,6 +217,39 @@ export default function DetailPanel() {
 
   // ---- building ----------------------------------------------------------
   const totalUnits = detail?.units.length ?? 0;
+  // Footprint dimensions: oriented bbox in metres.
+  const dims = (() => {
+    try {
+      const ring = (bprops as { footprint?: { coordinates: number[][][] } }).footprint?.coordinates?.[0];
+      if (!ring) return null;
+      return orientedDims(ring);
+    } catch { return null; }
+  })();
+  // Floor area breakdown: total + above-ground vs basement.
+  const areaBreakdown = (() => {
+    if (!detail) return null;
+    let total = 0, above = 0, below = 0, aboveCount = 0, belowCount = 0;
+    for (const u of detail.units) {
+      total += u.built_m2;
+      if (u.level_no >= 0) { above += u.built_m2; aboveCount++; }
+      else { below += u.built_m2; belowCount++; }
+    }
+    return { total, above, below, aboveCount, belowCount };
+  })();
+  // Encumbrance breakdown by category.
+  const encBreakdown = (() => {
+    if (!detail) return null;
+    const counts: Record<string, number> = { None: 0, Mortgage: 0, Lien: 0, Disputed: 0 };
+    for (const u of detail.units) {
+      const e = u.encumbrance;
+      if (e === 'None') counts.None++;
+      else if (e.startsWith('Mortgage')) counts.Mortgage++;
+      else if (e.startsWith('Lien')) counts.Lien++;
+      else if (e.startsWith('Disputed')) counts.Disputed++;
+    }
+    return counts;
+  })();
+
   return (
     <Panel
       title={bprops.name ?? `${bprops.use_type} building`}
@@ -223,6 +275,131 @@ export default function DetailPanel() {
           <Row label="Parcel area" value={m2(detail.parcel.area_m2)} />
         ) : null}
       </div>
+
+      {/* --- footprint dimensions ----------------------------------------- */}
+      {dims ? (
+        <Section title="Footprint">
+          <Row
+            label="Dimensions"
+            value={
+              <span>
+                {dims.lengthM.toFixed(1)} × {dims.widthM.toFixed(1)} m
+                <span className="ml-1 text-[rgb(var(--muted))]">
+                  · {Math.round(dims.longAxisDeg)}° long axis
+                </span>
+              </span>
+            }
+          />
+          <Row
+            label="Footprint area"
+            value={m2(dims.lengthM * dims.widthM)}
+          />
+        </Section>
+      ) : null}
+
+      {/* --- floor area breakdown ---------------------------------------- */}
+      {areaBreakdown && totalUnits > 0 ? (
+        <Section title="Floor area">
+          <Row label="Total built-up" value={m2(areaBreakdown.total)} />
+          <Row
+            label="Above ground"
+            value={`${m2(areaBreakdown.above)} · ${areaBreakdown.aboveCount} units`}
+          />
+          {areaBreakdown.below > 0 ? (
+            <Row
+              label="Basement"
+              value={`${m2(areaBreakdown.below)} · ${areaBreakdown.belowCount} units`}
+            />
+          ) : null}
+        </Section>
+      ) : null}
+
+      {/* --- encumbrance breakdown --------------------------------------- */}
+      {encBreakdown && totalUnits > 0 ? (
+        <Section title="Encumbrance">
+          <Row label="Clear (None)" value={encBreakdown.None} />
+          <Row
+            label="Mortgaged"
+            value={<span className={encBreakdown.Mortgage ? 'text-amber-300' : ''}>{encBreakdown.Mortgage}</span>}
+          />
+          <Row
+            label="Lien"
+            value={<span className={encBreakdown.Lien ? 'text-amber-300' : ''}>{encBreakdown.Lien}</span>}
+          />
+          <Row
+            label="Disputed"
+            value={<span className={encBreakdown.Disputed ? 'text-red-400' : ''}>{encBreakdown.Disputed}</span>}
+          />
+        </Section>
+      ) : null}
+
+      {/* --- parcel siblings --------------------------------------------- */}
+      {siblings.length > 0 ? (
+        <Section title="On the same parcel">
+          {siblings.map((sib) => (
+            <button
+              key={sib.id}
+              type="button"
+              onClick={() => selectBuilding(sib.id)}
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+            >
+              <span className="row-label">building {sib.id}</span>
+              <span className="row-value font-mono text-[10px]">{sib.ulpin}</span>
+            </button>
+          ))}
+        </Section>
+      ) : null}
+
+      {/* --- conflicts touching this building ----------------------------- */}
+      <Section title="Encroachments">
+        {buildingConflicts.length === 0 ? (
+          <p className="text-[10px] text-[rgb(var(--muted))]">no encroachments</p>
+        ) : (
+          buildingConflicts.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => selectUtility(c.utility_id)}
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+            >
+              <span className="row-value text-left">
+                {UTILITY_LABEL[c.asset_type as AssetType]}
+                <span className="ml-1 text-[rgb(var(--muted))]">
+                  · {c.authority} · level {c.level_no}
+                </span>
+              </span>
+              <span className={`text-[10px] ${c.status === 'operational' ? 'text-red-400' : 'text-red-300'}`}>
+                {c.status}
+              </span>
+            </button>
+          ))
+        )}
+      </Section>
+
+      {/* --- neighbours within 50 m -------------------------------------- */}
+      {neighbours.length > 0 ? (
+        <Section title="Neighbours within 50 m">
+          {neighbours.map(({ b, distanceM }) => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => selectBuilding(b.id)}
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+            >
+              <span className="row-value text-left font-mono text-[10px]">
+                {b.ulpin}
+                <span className="ml-1 text-[rgb(var(--muted))]">
+                  · {b.use_type}
+                </span>
+              </span>
+              <span className="text-[10px] text-[rgb(var(--muted))]">
+                {distanceM.toFixed(1)} m
+              </span>
+            </button>
+          ))}
+        </Section>
+      ) : null}
+
       <ProvenanceRow source={bprops.height_source} synthetic={synthetic} />
       <p className="mt-2 text-[9px] leading-snug text-[rgb(var(--muted))]">
         {DERIVED_PARCEL_NOTE} Owner names are synthetic placeholders.

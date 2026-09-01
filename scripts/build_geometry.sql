@@ -231,25 +231,7 @@ WHERE make_prism(b.footprint, b.ground_elev + lvl * 3.2, b.ground_elev + lvl * 3
 -- 6. unit rows -- grid subdivision of the footprint, above-ground levels only
 --    (basements are parking/plant, not separately titled units)
 -- ---------------------------------------------------------------------------
-INSERT INTO unit (id, floor_id, ulpin, unit_no, geom_3d, z_min, z_max,
-                  carpet_m2, built_m2, tenure, encumbrance)
-SELECT row_number() OVER (ORDER BY g.floor_id, g.idx)::int,
-       g.floor_id,
-       ulpin_fmt(g.pid, g.bno, g.level_no, g.idx),
-       chr(65 + ((g.level_no)::int % 26)) || lpad(g.idx::text, 2, '0'),
-       make_prism(ST_Transform(g.cell, 4326), g.z_min + 0.15, g.z_max - 0.35),
-       g.z_min + 0.15,
-       g.z_max - 0.35,
-       round((ST_Area(g.cell) * 0.78)::numeric, 2),
-       round(ST_Area(g.cell)::numeric, 2),
-       (ARRAY['Freehold','Freehold','Freehold','Leasehold','Rented','Co-operative'])
-         [1 + floor(h01('ten' || g.floor_id || '-' || g.idx) * 6)::int],
-       CASE WHEN h01('enc' || g.floor_id || '-' || g.idx) > 0.82
-            THEN (ARRAY['Mortgage - SBI','Mortgage - HDFC Ltd','Lien - municipal dues',
-                        'Disputed - civil suit pending'])
-                   [1 + floor(h01('enk' || g.floor_id || '-' || g.idx) * 4)::int]
-            ELSE 'None' END
-FROM (
+WITH g AS (
   SELECT f.id AS floor_id, f.level_no, f.z_min, f.z_max,
          b.parcel_id AS pid, bs.bno,
          (row_number() OVER (PARTITION BY f.id))::int AS idx,
@@ -262,8 +244,32 @@ FROM (
         CASE WHEN b.use_type = 'residential' THEN 2 ELSE 3 END,
         CASE WHEN b.use_type = 'residential' THEN 2 ELSE 1 END) AS c(cell)
   WHERE f.level_no >= 0
-) g
-WHERE make_prism(ST_Transform(g.cell, 4326), g.z_min + 0.15, g.z_max - 0.35) IS NOT NULL;
+),
+g_prism AS (
+  SELECT g.*,
+         make_prism(ST_Transform(g.cell, 4326), g.z_min + 0.15, g.z_max - 0.35) AS geom_3d
+  FROM g
+)
+INSERT INTO unit (id, floor_id, ulpin, unit_no, geom_3d, z_min, z_max,
+                  carpet_m2, built_m2, tenure, encumbrance)
+SELECT row_number() OVER (ORDER BY g.floor_id, g.idx)::int,
+       g.floor_id,
+       ulpin_fmt(g.pid, g.bno, g.level_no, g.idx),
+       chr(65 + ((g.level_no)::int % 26)) || lpad(g.idx::text, 2, '0'),
+       g.geom_3d,
+       g.z_min + 0.15,
+       g.z_max - 0.35,
+       round((ST_Area(g.cell) * 0.78)::numeric, 2),
+       round(ST_Area(g.cell)::numeric, 2),
+       (ARRAY['Freehold','Freehold','Freehold','Leasehold','Rented','Co-operative'])
+         [1 + floor(h01('ten' || g.floor_id || '-' || g.idx) * 6)::int],
+       CASE WHEN h01('enc' || g.floor_id || '-' || g.idx) > 0.82
+            THEN (ARRAY['Mortgage - SBI','Mortgage - HDFC Ltd','Lien - municipal dues',
+                        'Disputed - civil suit pending'])
+                   [1 + floor(h01('enk' || g.floor_id || '-' || g.idx) * 4)::int]
+            ELSE 'None' END
+FROM g_prism g
+WHERE g.geom_3d IS NOT NULL;
 
 COMMIT;
 
