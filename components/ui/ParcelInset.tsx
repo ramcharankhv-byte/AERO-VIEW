@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
+import { ringCentroid } from '@/lib/geo';
 
 /**
  * 2D parcel-context inset: the selected plot highlighted among its neighbours.
@@ -32,15 +33,7 @@ export default function ParcelInset() {
 
     // Centre on the selected parcel.
     const ring = (target.geometry.coordinates as number[][][])[0];
-    let cx = 0;
-    let cy = 0;
-    const n = Math.max(1, ring.length - 1);
-    for (let i = 0; i < n; i++) {
-      cx += ring[i][0];
-      cy += ring[i][1];
-    }
-    cx /= n;
-    cy /= n;
+    const { lon: cx, lat: cy } = ringCentroid(ring);
 
     const mPerDegLat = 110574;
     const mPerDegLon = 111320 * Math.cos((cy * Math.PI) / 180);

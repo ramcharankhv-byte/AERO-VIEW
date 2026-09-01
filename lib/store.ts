@@ -77,12 +77,16 @@ export const useViewStore = create<ViewState>((set) => ({
   ionFallback: false,
 
   selectBuilding: (id) =>
-    set(() =>
+    set((s) =>
       id === null
         ? { mode: 'city', activeBuildingId: null, isolatedFloor: null,
             selectedUnitId: null, selectedUtilityId: null, explodeT: 0 }
         : { mode: 'building', activeBuildingId: id, isolatedFloor: null,
-            selectedUnitId: null, selectedUtilityId: null }),
+            selectedUnitId: null, selectedUtilityId: null,
+            // Auto-enable the parcels layer on selection so the user can see
+            // the lot their selection is in without having to discover the
+            // toggle. They can still turn it off and it will stay off.
+            layers: { ...s.layers, parcels: true } }),
 
   isolateFloor: (level) =>
     set((s) =>
@@ -174,6 +178,69 @@ export function useActiveDetail(): BuildingDetail | null {
   const id = useViewStore((s) => s.activeBuildingId);
   const detail = useDataStore((s) => s.detail);
   return id === null ? null : detail[id] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Reactive context selectors for the DetailPanel.
+//
+// These hooks read the data store and return derived views over the active
+// building. They are pure: they do not write to the view store, do not fetch,
+// and memoise on the input id plus the arrays they depend on.
+// ---------------------------------------------------------------------------
+
+/** Other buildings on the same parcel as the active one. */
+export function useParcelSiblings(activeBuildingId: number | null): BuildingProps[] {
+  const buildings = useDataStore((s) => s.buildings);
+  if (!buildings || activeBuildingId === null) return [];
+  const me = buildings.features.find((f) => f.properties.id === activeBuildingId)?.properties;
+  if (!me) return [];
+  return buildings.features
+    .map((f) => f.properties)
+    .filter((p) => p.parcel_id === me.parcel_id && p.id !== me.id);
+}
+
+/** Conflicts whose building matches the active selection. */
+export function useBuildingConflicts(activeBuildingId: number | null): ConflictRow[] {
+  const conflicts = useDataStore((s) => s.conflicts);
+  if (activeBuildingId === null) return [];
+  return conflicts.filter((c) => c.building_id === activeBuildingId);
+}
+
+/** Other buildings within `radiusM` of the active centroid, sorted nearest first. */
+export function useBuildingNeighbours(
+  activeBuildingId: number | null,
+  radiusM = 50,
+): Array<{ b: BuildingProps; distanceM: number }> {
+  const buildings = useDataStore((s) => s.buildings);
+  if (!buildings || activeBuildingId === null) return [];
+  const me = buildings.features.find((f) => f.properties.id === activeBuildingId);
+  if (!me) return [];
+  const myRing = (me.geometry.coordinates as number[][][])[0];
+  const { lon: mLon, lat: mLat } = (() => {
+    const n = Math.max(1, myRing.length - 1);
+    let x = 0, y = 0;
+    for (let i = 0; i < n; i++) { x += myRing[i][0]; y += myRing[i][1]; }
+    return { lon: x / n, lat: y / n };
+  })();
+  const out: Array<{ b: BuildingProps; distanceM: number }> = [];
+  for (const f of buildings.features) {
+    if (f.properties.id === activeBuildingId) continue;
+    const ring = (f.geometry.coordinates as number[][][])[0];
+    const n = Math.max(1, ring.length - 1);
+    let x = 0, y = 0;
+    for (let i = 0; i < n; i++) { x += ring[i][0]; y += ring[i][1]; }
+    const lon = x / n, lat = y / n;
+    const R = 6371008.8;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(lat - mLat);
+    const dLon = toRad(lon - mLon);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(mLat)) * Math.cos(toRad(lat)) * Math.sin(dLon / 2) ** 2;
+    const d = 2 * R * Math.asin(Math.sqrt(a));
+    if (d <= radiusM) out.push({ b: f.properties, distanceM: d });
+  }
+  out.sort((a, b) => a.distanceM - b.distanceM);
+  return out.slice(0, 5);
 }
 
 export type { UtilityProps };

@@ -8,6 +8,7 @@ import { useDataStore, useEnsureDetail, useViewStore } from '@/lib/store';
 import { liftFor } from '@/lib/cesium/explode';
 import { levelLabel } from '@/lib/ulpin';
 import { toSceneZ } from '@/lib/cesium/terrain';
+import { ringCentroid } from '@/lib/geo';
 
 /**
  * DOM elevation ruler pinned to the active building.
@@ -73,18 +74,13 @@ export default function ElevationRuler() {
     // Anchor the ruler at one corner of the footprint so it does not sit on
     // top of the stack it is measuring.
     const ring = (feature.geometry.coordinates as number[][][])[0];
-    let lon = 0;
-    let lat = 0;
+    const { lon: cLon, lat: cLat } = ringCentroid(ring);
     const n = Math.max(1, ring.length - 1);
-    for (let i = 0; i < n; i++) {
-      lon += ring[i][0];
-      lat += ring[i][1];
-    }
-    lon /= n;
-    lat /= n;
     let minLon = ring[0][0];
     for (let i = 0; i < n; i++) minLon = Math.min(minLon, ring[i][0]);
-    const anchorLon = minLon - (lon - minLon) * 0.25;
+    const anchorLon = minLon - (cLon - minLon) * 0.25;
+    const lon = cLon;
+    const lat = cLat;
 
     const terrainH = ground.get(activeBuildingId);
     const floors = [...detail.floors].sort((a, b) => a.level_no - b.level_no);
