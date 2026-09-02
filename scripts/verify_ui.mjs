@@ -129,10 +129,11 @@ try {
 
   // ------------------------------------------------------------- EXPLODE
   console.log('\n[3] EXPLODE');
+  // Selected by label, not by index: the panel holds several range inputs and
+  // an index would silently start driving a different one if the order changed.
   const moved = await page.evaluate(() => {
-    const inputs = [...document.querySelectorAll('input[type=range]')];
-    if (inputs.length === 0) return false;
-    const el = inputs[0];
+    const el = document.querySelector('input[type=range][aria-label="Explode"]');
+    if (!el) return false;
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, 'value').set;
     setter.call(el, '70');
@@ -205,8 +206,138 @@ try {
   check('ST_3DIntersects credited', /ST_3DIntersects/i.test(body));
   await shot(page, '6-underground');
 
+  // ------------------------------------------------------------ POLISH PACK
+  // The five surfaces added by the polish pack. Back to city view first: the
+  // tooltip, the provenance key and the stats panel are all city-view things,
+  // and the walk above finished underground with a unit selected.
+  console.log('\n[7] POLISH PACK');
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.innerText.trim() === 'Reset view',
+    );
+    if (b) b.click();
+  });
+  await sleep(4000);
+
+  // -- provenance legend ---------------------------------------------------
+  const cityText = await panelText(page);
+  check('provenance key present', /Provenance key/i.test(cityText));
+  check(
+    'provenance key names its sources',
+    /OSM tag \(mapped\)/i.test(cityText) && /Estimated/i.test(cityText),
+  );
+  await shot(page, '7-provenance-legend');
+
+  // -- hover tooltip -------------------------------------------------------
+  // A footprint's screen position is not fixed, so sweep candidates the way the
+  // unit pick above does rather than assuming one point lands on a building.
+  const hoverPoints = [
+    [840, 470], [760, 430], [920, 510], [700, 470], [980, 430],
+    [840, 380], [640, 520], [1040, 470],
+  ];
+  let tipOk = false;
+  let tipText = '';
+  for (const [x, y] of hoverPoints) {
+    await page.mouse.move(x, y);
+    await sleep(450);
+    const t = await panelText(page);
+    if (/storeys \u00b7/.test(t)) {
+      tipOk = true;
+      tipText = (t.match(/.{0,40}storeys \u00b7.{0,30}/) ?? [''])[0];
+      break;
+    }
+  }
+  check('hover tooltip appears', tipOk, tipOk ? tipText : 'no tooltip on any probe');
+  await shot(page, '8-tooltip');
+
+  // -- stats panel ---------------------------------------------------------
+  const statsClicked = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.innerText.trim() === 'Stats',
+    );
+    if (b) b.click();
+    return Boolean(b);
+  });
+  check('stats toggle present', statsClicked);
+  await sleep(700);
+  const statsText = await panelText(page);
+  check('stats panel opens with all three charts',
+    /Building heights \(m\)/i.test(statsText)
+    && /Buildings by use type/i.test(statsText)
+    && /Conflicts by authority/i.test(statsText));
+  // The caption must carry real percentages, not a placeholder.
+  check('chart caption reports computed provenance',
+    /Heights: \d+% OSM-tagged, \d+% estimated, \d+% plan/i.test(statsText),
+    (statsText.match(/Heights:[^.]*/) ?? ['none'])[0]);
+  await shot(page, '9-stats');
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.innerText.trim() === 'Stats',
+    );
+    if (b) b.click();
+  });
+
+  // -- sun slider ----------------------------------------------------------
+  const sunMoved = await page.evaluate(() => {
+    const el = document.querySelector('input[type=range][aria-label="Sun"]');
+    if (!el) return false;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '8');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  });
+  check('sun slider exists and moves', sunMoved);
+  await sleep(2500);
+  const sunText = await panelText(page);
+  // Untouched the read-out says "off"; once moved it reports a clock time, and
+  // that is also the signal that shadows have been switched on.
+  check('sun reports a time of day', /08:00/.test(sunText));
+  await shot(page, '10-sun');
+
+  // -- skeleton on a slow detail fetch -------------------------------------
+  // Throttle only /api/building/:id so the in-flight window is long enough to
+  // observe; everything else is left at full speed.
+  const slowDetail = (req) => {
+    if (/\/api\/building\/\d+/.test(req.url())) {
+      setTimeout(() => req.continue(), 1500);
+      return;
+    }
+    req.continue();
+  };
+  await page.setRequestInterception(true);
+  page.on('request', slowDetail);
+
+  await page.click('input[placeholder*="Search"]');
+  await page.type('input[placeholder*="Search"]', 'AP-VSP-3D26-0002');
+  await sleep(900);
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      /AP-VSP-3D26-0002/.test(b.innerText),
+    );
+    if (btn) btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await sleep(700);
+  const skeletonUp = await page.evaluate(
+    () => document.querySelectorAll('.skeleton').length,
+  );
+  check('skeleton rows render while detail is in flight', skeletonUp > 0,
+    `${skeletonUp} placeholder(s)`);
+  await shot(page, '11-skeleton');
+
+  await sleep(3000);
+  const settled = await page.evaluate(() => ({
+    skeletons: document.querySelectorAll('.skeleton').length,
+    text: document.body.innerText.replace(/\s+/g, ' '),
+  }));
+  check('skeleton is replaced by real content',
+    settled.skeletons === 0 && /Registered owner/.test(settled.text));
+
+  page.off('request', slowDetail);
+  await page.setRequestInterception(false);
+
   // -------------------------------------------------------- disabled controls
-  console.log('\n[7] DISABLED CONTROLS');
+  console.log('\n[8] DISABLED CONTROLS');
   const disabled = await page.evaluate(() =>
     [...document.querySelectorAll('button[disabled]')].map((b) => b.innerText.trim()),
   );
@@ -215,7 +346,7 @@ try {
   }
 
   // ------------------------------------------------------------- console
-  console.log('\n[8] CONSOLE');
+  console.log('\n[9] CONSOLE');
   const real = errors.filter(
     // Third-party tile hosts are excluded: a transient 4xx/timeout from a
     // basemap CDN is a network condition, not an app error, and the imagery

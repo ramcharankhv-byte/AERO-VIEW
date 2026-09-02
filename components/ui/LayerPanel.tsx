@@ -6,6 +6,9 @@ import { useEffect, useMemo } from 'react';
 import { availableProviders, TREATMENT_LABELS } from '@/lib/cesium/imagery-catalog';
 import type { ProviderId, TreatmentId } from '@/lib/cesium/imagery-catalog';
 import { useViewStore } from '@/lib/store';
+import {
+  SUN_MAX_HOUR, SUN_MIN_HOUR, SUN_NOON_HOUR, SUN_STEP_HOURS, formatSunHour,
+} from '@/lib/sun';
 import type { BuildingStyle, LayerKey } from '@/lib/types';
 
 /**
@@ -84,26 +87,36 @@ function Slider({
   onChange,
   suffix,
   disabled,
+  min = 0,
+  max = 100,
+  step = 1,
+  /** Overrides `value + suffix` where the read-out is not a plain number. */
+  display,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   suffix: string;
   disabled?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  display?: string;
 }) {
   return (
     <div className={disabled ? 'is-disabled' : ''}>
       <div className="flex items-center justify-between">
         <span className="row-label">{label}</span>
         <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
-          {value}
-          {suffix}
+          {display ?? `${value}${suffix}`}
         </span>
       </div>
       <input
         type="range"
-        min={0}
-        max={100}
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -116,6 +129,8 @@ function Slider({
 export default function LayerPanel() {
   const layers = useViewStore((s) => s.layers);
   const toggleLayer = useViewStore((s) => s.toggleLayer);
+  const sunHour = useViewStore((s) => s.sunHour);
+  const setSunHour = useViewStore((s) => s.setSunHour);
   const explodeT = useViewStore((s) => s.explodeT);
   const setExplode = useViewStore((s) => s.setExplode);
   const transparency = useViewStore((s) => s.transparency);
@@ -240,6 +255,36 @@ export default function LayerPanel() {
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* --- sun ---------------------------------------------------------- */}
+      <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        <Slider
+          label="Sun"
+          value={sunHour ?? SUN_NOON_HOUR}
+          onChange={setSunHour}
+          suffix=""
+          min={SUN_MIN_HOUR}
+          max={SUN_MAX_HOUR}
+          step={SUN_STEP_HOURS}
+          display={sunHour === null ? 'off' : formatSunHour(sunHour)}
+        />
+        <div className="mt-1 flex items-center justify-between gap-2">
+          {/* Shadows are the expensive half and stay off until the slider is
+              touched, so the untouched default is byte-for-byte the old scene. */}
+          <span className="text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {sunHour === null
+              ? 'Lighting and shadows off'
+              : 'Shadows on · buildings only'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSunHour(SUN_NOON_HOUR)}
+            className="shrink-0 rounded bg-white/5 px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] transition-colors hover:bg-white/15"
+          >
+            Noon
+          </button>
         </div>
       </div>
 

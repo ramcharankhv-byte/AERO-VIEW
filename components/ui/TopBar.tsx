@@ -25,6 +25,8 @@ export default function TopBar() {
   const buildings = useDataStore((s) => s.buildings);
   const parcels = useDataStore((s) => s.parcels);
   const selectBuilding = useViewStore((s) => s.selectBuilding);
+  const statsOpen = useViewStore((s) => s.statsOpen);
+  const setStatsOpen = useViewStore((s) => s.setStatsOpen);
 
   const hits = useMemo<Hit[]>(() => {
     const term = query.trim().toLowerCase();
@@ -117,6 +119,22 @@ export default function TopBar() {
       <div className="ml-auto flex items-center gap-1">
         <MenuButton label="Layers" hint="Use the panel on the left" />
         <MenuButton label="Tools" hint="Use the dock at the bottom" />
+        {/* MenuButton has no pressed state, so this uses the active idiom from
+            ActionBar and NavDock rather than inventing a third one. */}
+        <button
+          type="button"
+          onClick={() => setStatsOpen(!statsOpen)}
+          aria-pressed={statsOpen}
+          title="Area statistics"
+          className={[
+            'rounded px-2 py-1 text-[11px] transition-colors',
+            statsOpen
+              ? 'bg-[rgb(var(--accent))] text-black'
+              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+          ].join(' ')}
+        >
+          Stats
+        </button>
         <MenuButton label="Measurements" disabled />
         <MenuButton label="Share" disabled />
       </div>

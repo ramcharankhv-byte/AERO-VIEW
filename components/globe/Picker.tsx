@@ -22,6 +22,17 @@ import { tagOf, type EntityTag } from '@/lib/cesium/tag';
 const DRILL_LIMIT = 4;
 
 /**
+ * Minimum gap between hover picks.
+ *
+ * A pointer emits move events far faster than the hover state can usefully
+ * change, and each one costs a scene.pick plus a possible four-deep drillPick.
+ * ~30 ms is under one frame at 30 fps, so the tooltip still tracks the cursor
+ * while the picking cost stops scaling with mouse speed. Clicks are never
+ * throttled -- a dropped click is a bug, a dropped hover sample is not.
+ */
+const HOVER_THROTTLE_MS = 30;
+
+/**
  * The tag under the cursor, seeing past geometry that carries no tag.
  *
  * In Photoreal mode the topmost hit is a Cesium3DTileFeature from Google's
@@ -57,7 +68,11 @@ export default function Picker() {
     if (!viewer || !ready || viewer.isDestroyed()) return;
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
+    let lastPick = 0;
     handler.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
+      const now = performance.now();
+      if (now - lastPick < HOVER_THROTTLE_MS) return;
+      lastPick = now;
       const tag = pickTag(viewer.scene, movement.endPosition);
       setHovered(tag?.kind === 'building' ? tag.id : null);
       viewer.scene.canvas.style.cursor = tag ? 'pointer' : 'default';

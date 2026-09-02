@@ -54,11 +54,23 @@ export default function BuildingsLayer() {
   const underground = useViewStore((s) => s.underground);
   const showBuildings = useViewStore((s) => s.layers.buildings);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
+  // Shadows are scoped to the buildings: they are what reads as massing under a
+  // low sun, and every extra casting layer is another depth pass per frame.
+  const sunHour = useViewStore((s) => s.sunHour);
 
   const stateRef = useRef<LayerState>({
     activeId: null, hoveredId: null, fade: 1, fadeTarget: 1,
     visible: true, hideActive: false, style: 'schematic',
   });
+  /**
+   * Shadow mode, shared by every building entity.
+   *
+   * One mutable ConstantProperty rather than a CallbackProperty per entity: a
+   * non-constant shadows property pushes the geometry onto Cesium's dynamic
+   * updater path, which rebuilds 384 extrusions every frame. setValue() fires
+   * definitionChanged once and the static path is kept.
+   */
+  const shadowsRef = useRef(new Cesium.ConstantProperty(Cesium.ShadowMode.DISABLED));
   const dsRef = useRef<Cesium.CustomDataSource | null>(null);
 
   // ---- build entities once -------------------------------------------------
@@ -118,7 +130,7 @@ export default function BuildingsLayer() {
           extrudedHeight: base + Math.max(2, props.height_m),
           material: facade,
           outline: false,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
             if (!s.visible) return false;
@@ -153,7 +165,7 @@ export default function BuildingsLayer() {
             }, false),
           ),
           outline: false,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
             if (!s.visible) return false;
@@ -186,6 +198,14 @@ export default function BuildingsLayer() {
       underground ? 0.15 : activeBuildingId === null ? 1 : transparency / 100;
   }, [activeBuildingId, hoveredBuildingId, showBuildings, mode, transparency,
       underground, buildingStyle]);
+
+  // Shadows follow the sun slider. Off until it is touched.
+  useEffect(() => {
+    shadowsRef.current.setValue(
+      sunHour === null ? Cesium.ShadowMode.DISABLED : Cesium.ShadowMode.ENABLED,
+    );
+    if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender();
+  }, [sunHour, viewer]);
 
   // ---- one animation driver for the whole layer ---------------------------
   useEffect(() => {
