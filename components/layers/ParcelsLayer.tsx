@@ -7,7 +7,8 @@ import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
-import { flatLonLat } from '@/lib/geo';
+import { plotHatch } from '@/lib/cesium/textures';
+import { flatLonLat, orientedDims } from '@/lib/geo';
 import type { ParcelInfo } from '@/lib/types';
 
 /**
@@ -62,9 +63,10 @@ export default function ParcelsLayer() {
           // below instead, which is the supported path and is the only one
           // that survives Photoreal mode.
           outline: false,
-          // Clamped to terrain so plots drape over the slope rather than
-          // slicing through it.
-          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          // No `height`: an undefined height is what drapes the polygon on the
+          // ground (the GroundPrimitive path). heightReference must NOT be set
+          // here -- Cesium ignores it without a defined height and logs a
+          // warning every frame.
           // BOTH, not TERRAIN: in Photoreal mode the globe surface is hidden
           // and the ground the user sees is Google's 3D Tiles mesh. A
           // TERRAIN-only classification would drape these boundaries onto a
@@ -88,6 +90,24 @@ export default function ParcelsLayer() {
           clampToGround: true,
           classificationType: Cesium.ClassificationType.BOTH,
           material: new Cesium.ColorMaterialProperty(MATERIALS.parcelOutline),
+        },
+      });
+
+      // Plot texture: a hatched subdivision fill inside the plot so the flat
+      // map reads as cadastre rather than as translucent paint. Repeats the
+      // small hatch canvas across the polygon.
+      const dims = orientedDims(ring);
+      const hatch = plotHatch(pid, dims.longAxisDeg);
+      ds.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
+          material: new Cesium.ImageMaterialProperty({
+            image: hatch,
+            transparent: true,
+          }),
+          classificationType: Cesium.ClassificationType.BOTH,
+          outline: false,
+          shadows: Cesium.ShadowMode.DISABLED,
         },
       });
     }

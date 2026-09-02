@@ -105,7 +105,12 @@ export default function FloorStackLayer() {
             }, false),
           ),
           outline: true,
-          outlineColor: MATERIALS.floorOutline,
+          outlineColor: new Cesium.CallbackProperty(
+            () => (stateRef.current.isolated === level && !isBasement
+              ? MATERIALS.floorActiveOutline
+              : MATERIALS.floorOutline),
+            false,
+          ) as unknown as Cesium.Color,
           shadows: Cesium.ShadowMode.DISABLED,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
@@ -117,6 +122,37 @@ export default function FloorStackLayer() {
         },
       });
       tagEntity(entity, { kind: 'floor', id: fl.id, level });
+
+      // Isolated-floor rim: a bright polyline around the slab's top edge so
+      // the highlight survives viewing angles where the translucent fill and
+      // the outline are nearly edge-on. Rides the explode lift like the slab.
+      const rim: number[] = [];
+      for (let i = 0; i < flat.length; i += 2) rim.push(flat[i], flat[i + 1], 0);
+      ds.entities.add({
+        polyline: {
+          positions: new Cesium.CallbackProperty(() => {
+            const l = lift();
+            const z = (stateRef.current.isolated === level && !isBasement
+              ? z1 + l + 0.03
+              : -1e6); // hidden below ground when not the active level
+            const out: number[] = [];
+            for (let v = 0; v < rim.length; v += 3) {
+              out.push(rim[v], rim[v + 1], z);
+            }
+            return Cesium.Cartesian3.fromDegreesArrayHeights(out);
+          }, false) as unknown as Cesium.PositionProperty,
+          width: 3,
+          material: new Cesium.ColorMaterialProperty(
+            new Cesium.CallbackProperty(
+              () => (stateRef.current.isolated === level && !isBasement
+                ? MATERIALS.floorActiveOutline
+                : Cesium.Color.TRANSPARENT),
+              false,
+            ),
+          ),
+          clampToGround: false,
+        },
+      });
     });
 
     return () => {
