@@ -11,6 +11,7 @@ import UnitsLayer from '../layers/UnitsLayer';
 import UtilitiesLayer from '../layers/UtilitiesLayer';
 import ConflictLayer from '../layers/ConflictLayer';
 import ElevationRuler from '../ui/ElevationRuler';
+import BuildingTooltip from './BuildingTooltip';
 
 /**
  * The single Cesium scene. Every view mode is a state of this one scene --
@@ -36,8 +37,9 @@ export default function Scene() {
       <UtilitiesLayer />
       <ConflictLayer />
 
-      {/* DOM overlay that tracks world positions, so it lives inside the scene. */}
+      {/* DOM overlays that track the scene rather than the page layout. */}
       <ElevationRuler />
+      <BuildingTooltip />
     </CesiumRoot>
   );
 }

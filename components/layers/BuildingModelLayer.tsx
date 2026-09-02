@@ -48,13 +48,23 @@ export default function BuildingModelLayer() {
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const mode = useViewStore((s) => s.mode);
   const explodeT = useViewStore((s) => s.explodeT);
+  const sunHour = useViewStore((s) => s.sunHour);
 
   const stateRef = useRef<ModelState>({ explodeT: 0 });
+  /** Shared shadow mode -- see the note in BuildingsLayer. */
+  const shadowsRef = useRef(new Cesium.ConstantProperty(Cesium.ShadowMode.DISABLED));
   const dsRef = useRef<Cesium.CustomDataSource | null>(null);
 
   useEffect(() => {
     stateRef.current.explodeT = explodeT;
   }, [explodeT]);
+
+  useEffect(() => {
+    shadowsRef.current.setValue(
+      sunHour === null ? Cesium.ShadowMode.DISABLED : Cesium.ShadowMode.ENABLED,
+    );
+    if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender();
+  }, [sunHour, viewer]);
 
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
@@ -135,7 +145,7 @@ export default function BuildingModelLayer() {
           material: i === 0 ? groundTexture : wallTexture,
           outline: true,
           outlineColor: MATERIALS.buildingModelRoofLine,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
         },
       });
       // Slab cap riding the same lift: a hair above the storey top, thin
@@ -153,7 +163,7 @@ export default function BuildingModelLayer() {
           ),
           material: MATERIALS.buildingModelSlabCap,
           outline: false,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
         },
       });
     }
@@ -168,7 +178,7 @@ export default function BuildingModelLayer() {
           // when the above-ground storeys lift.
           material: MATERIALS.basementSlab,
           outline: false,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
         },
       });
     }
@@ -238,7 +248,7 @@ export default function BuildingModelLayer() {
           extrudedHeight: base,
           material: MATERIALS.buildingModelPlinth,
           outline: false,
-          shadows: Cesium.ShadowMode.DISABLED,
+          shadows: shadowsRef.current,
         },
       });
     }
@@ -271,7 +281,7 @@ export default function BuildingModelLayer() {
             perPositionHeight: true,
             material: roofColor,
             outline: false,
-            shadows: Cesium.ShadowMode.DISABLED,
+            shadows: shadowsRef.current,
           },
         });
         roofEntities.push(e);
@@ -289,7 +299,7 @@ export default function BuildingModelLayer() {
             perPositionHeight: true,
             material: wallColor,
             outline: false,
-            shadows: Cesium.ShadowMode.DISABLED,
+            shadows: shadowsRef.current,
           },
         });
         roofEntities.push(e);

@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { ProviderId, TreatmentId } from './cesium/imagery-catalog';
+import { SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type {
   BuildingDetail, BuildingProps, BuildingStyle, ConflictRow, GeoFC, LayerKey,
   Mode, ParcelInfo, UtilityProps,
@@ -57,6 +58,18 @@ export interface ViewState {
   /** Set when Google tiles failed; drives the toast. Null when healthy. */
   photorealError: string | null;
 
+  /** The mini-dashboard panel. */
+  statsOpen: boolean;
+
+  /**
+   * Time of day for the sun, 6-18 local, or null while the slider is untouched.
+   *
+   * Null is not "noon" -- it is "the user has not asked for a sun", which is
+   * what keeps globe lighting and shadows off by default. Encoding untouched
+   * as null rather than carrying a second boolean keeps this to one field.
+   */
+  sunHour: number | null;
+
   selectBuilding: (id: number | null) => void;
   isolateFloor: (level: number | null) => void;
   selectUnit: (id: number | null) => void;
@@ -78,6 +91,8 @@ export interface ViewState {
   /** Report a Google-tiles failure and fall back to Schematic in one write. */
   failPhotoreal: (message: string) => void;
   dismissPhotorealError: () => void;
+  setStatsOpen: (on: boolean) => void;
+  setSunHour: (h: number | null) => void;
   /** Bulk-apply state parsed from the URL on first paint. See lib/url-state.ts. */
   hydrate: (patch: Partial<ViewState>) => void;
   resetView: () => void;
@@ -115,6 +130,8 @@ export const useViewStore = create<ViewState>((set) => ({
   // carries provenance, and it needs no third-party quota to draw.
   buildingStyle: 'schematic',
   photorealError: null,
+  statsOpen: false,
+  sunHour: null,
 
   selectBuilding: (id) =>
     set((s) =>
@@ -175,6 +192,10 @@ export const useViewStore = create<ViewState>((set) => ({
     set({ buildingStyle: 'schematic', photorealError: message }),
   dismissPhotorealError: () => set({ photorealError: null }),
 
+  setStatsOpen: (on) => set({ statsOpen: on }),
+  setSunHour: (h) =>
+    set({ sunHour: h === null ? null : Math.max(SUN_MIN_HOUR, Math.min(SUN_MAX_HOUR, h)) }),
+
   hydrate: (patch) => set(patch),
 
   resetView: () =>
@@ -195,6 +216,15 @@ export interface DataState {
   utilities: GeoFC<UtilityProps> | null;
   conflicts: ConflictRow[];
   detail: Record<number, BuildingDetail>;
+  /**
+   * Building ids whose detail fetch is in flight.
+   *
+   * `detail[id]` being absent cannot distinguish "still loading" from "failed",
+   * and the DetailPanel needs that distinction to decide between a skeleton and
+   * the em-dash fallback. It also dedupes: five components call useEnsureDetail
+   * with the same id, and without this each one fetched the same document.
+   */
+  pendingDetail: Record<number, true>;
   loading: boolean;
   error: string | null;
 
@@ -203,6 +233,8 @@ export interface DataState {
   setUtilities: (fc: GeoFC<UtilityProps>) => void;
   setConflicts: (rows: ConflictRow[]) => void;
   putDetail: (id: number, d: BuildingDetail) => void;
+  beginDetail: (id: number) => void;
+  endDetail: (id: number) => void;
   setLoading: (b: boolean) => void;
   setError: (e: string | null) => void;
 }
@@ -213,6 +245,7 @@ export const useDataStore = create<DataState>((set) => ({
   utilities: null,
   conflicts: [],
   detail: {},
+  pendingDetail: {},
   loading: false,
   error: null,
 
@@ -221,6 +254,14 @@ export const useDataStore = create<DataState>((set) => ({
   setUtilities: (fc) => set({ utilities: fc }),
   setConflicts: (rows) => set({ conflicts: rows }),
   putDetail: (id, d) => set((s) => ({ detail: { ...s.detail, [id]: d } })),
+  beginDetail: (id) => set((s) => ({ pendingDetail: { ...s.pendingDetail, [id]: true } })),
+  endDetail: (id) =>
+    set((s) => {
+      if (!s.pendingDetail[id]) return s;
+      const next = { ...s.pendingDetail };
+      delete next[id];
+      return { pendingDetail: next };
+    }),
   setLoading: (b) => set({ loading: b }),
   setError: (e) => set({ error: e }),
 }));
@@ -305,25 +346,37 @@ export type { UtilityProps };
  */
 export function useEnsureDetail(id: number | null): BuildingDetail | null {
   const detail = useDataStore((s) => s.detail);
-  const putDetail = useDataStore((s) => s.putDetail);
 
   useEffect(() => {
     if (id === null || detail[id]) return;
-    let cancelled = false;
+    // pendingDetail is read imperatively rather than subscribed to: making it a
+    // dependency would re-run this effect the moment the fetch is registered.
+    // Five components call this hook with the same id, so the guard is what
+    // turns five identical requests into one.
+    if (useDataStore.getState().pendingDetail[id]) return;
+    useDataStore.getState().beginDetail(id);
     (async () => {
       try {
         const res = await fetch(`/api/building/${id}`);
         if (!res.ok) return;
         const doc = (await res.json()) as BuildingDetail;
-        if (!cancelled) putDetail(id, doc);
+        // No cancellation guard: the result lands in a shared cache, not in
+        // component state, so a caller unmounting mid-flight is not a reason to
+        // throw the document away.
+        useDataStore.getState().putDetail(id, doc);
       } catch {
         /* transient; the layer simply renders nothing until it succeeds */
+      } finally {
+        useDataStore.getState().endDetail(id);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [id, detail, putDetail]);
+  }, [id, detail]);
 
   return id === null ? null : detail[id] ?? null;
+}
+
+/** True while `/api/building/:id` is in flight. Distinct from "failed". */
+export function useDetailPending(id: number | null): boolean {
+  const pending = useDataStore((s) => s.pendingDetail);
+  return id === null ? false : Boolean(pending[id]);
 }
