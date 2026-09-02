@@ -217,10 +217,12 @@ export default function DetailPanel() {
 
   // ---- building ----------------------------------------------------------
   const totalUnits = detail?.units.length ?? 0;
-  // Footprint dimensions: oriented bbox in metres.
+  // Footprint dimensions: oriented bbox in metres. The buildings
+  // FeatureCollection carries no footprint property -- only the per-building
+  // detail document does -- so read the ring from there, not from bprops.
   const dims = (() => {
     try {
-      const ring = (bprops as { footprint?: { coordinates: number[][][] } }).footprint?.coordinates?.[0];
+      const ring = detail?.building.footprint.coordinates?.[0];
       if (!ring) return null;
       return orientedDims(ring);
     } catch { return null; }

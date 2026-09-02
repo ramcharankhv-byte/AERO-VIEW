@@ -123,21 +123,37 @@ export async function fetchInitialData(): Promise<{
  * camera in real time. We read the value off the live Cesium.Viewer rather
  * than driving it from the React tree, because the camera is owned by
  * CameraDirector and the React tree is read-only here.
+ *
+ * The viewer runs in requestRenderMode, so postRender only fires on frames
+ * that actually render -- which is exactly when the camera can have moved.
+ * The camera-move event below covers flights; the preRender listener covers
+ * user orbit/zoom gestures, which move the camera without a store change.
  */
 export function useCameraHeight(viewer: Cesium.Viewer | null): number {
   const [height, setHeight] = useState(0);
   useEffect(() => {
     if (!viewer || viewer.isDestroyed()) return;
     const scene = viewer.scene;
+    let raf = 0;
     const handler = () => {
       const carto = scene.camera.positionCartographic;
       if (!carto) return;
       setHeight(carto.height);
     };
-    // Seed once so the bar renders before the first postRender fires.
+    // Camera moves, including gestures, request a render; reading the height
+    // on the following preRender keeps the bar live without a render loop of
+    // its own.
+    const onChange = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(handler);
+    };
+    scene.camera.changed.addEventListener(onChange);
+    // Seed once so the bar renders before the first camera event.
     handler();
     scene.postRender.addEventListener(handler);
     return () => {
+      cancelAnimationFrame(raf);
+      scene.camera.changed.removeEventListener(onChange);
       if (!scene.isDestroyed()) scene.postRender.removeEventListener(handler);
     };
   }, [viewer]);

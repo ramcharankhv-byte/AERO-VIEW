@@ -16,10 +16,19 @@ import type { BuildingProps, UseType } from '@/lib/types';
 /**
  * The architectural model of the active building.
  *
- * Replaces the simple extruded prism with:
- *   - a wall extrusion carrying a per-use-type window-grid texture,
- *   - a use-type-appropriate roof (gabled / flat+parapet / hipped / sawtooth),
+ * Replaces the simple extruded prism with a per-storey stack of:
+ *   - wall extrusions carrying a per-use-type window-grid texture (the ground
+ *     storey takes a variant with an entry door),
+ *   - a flat slab cap closing every storey's top,
+ *   - floor bands at every slab line,
+ *   - a flat parapet roof,
  *   - rooftop fixtures (water tank, AC units, flagpole, cowls).
+ *
+ * Explode: each storey is its OWN entity whose height/extrudedHeight are
+ * CallbackProperties reading a shared mutable ref. Dragging the slider
+ * separates the storeys at frame rate without rebuilding any geometry --
+ * one animation driver for the whole model. The roof and fixtures ride on
+ * whichever storey is currently topmost.
  *
  * Only one building is ever modelled. On deselect, the layer tears itself
  * down and the city view reverts to the 384 prisms drawn by BuildingsLayer.
@@ -27,18 +36,33 @@ import type { BuildingProps, UseType } from '@/lib/types';
  * is up, so the two layers never overlap on screen.
  */
 
+const FLOOR_H = 3.2;
+
+interface ModelState {
+  explodeT: number;
+}
+
 export default function BuildingModelLayer() {
   const { viewer, ground, ready } = useViewer();
   const buildings = useDataStore((s) => s.buildings);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const mode = useViewStore((s) => s.mode);
+  const explodeT = useViewStore((s) => s.explodeT);
 
+  const stateRef = useRef<ModelState>({ explodeT: 0 });
   const dsRef = useRef<Cesium.CustomDataSource | null>(null);
 
   useEffect(() => {
+    stateRef.current.explodeT = explodeT;
+  }, [explodeT]);
+
+  useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
-    if (!buildings || activeBuildingId === null || mode === 'city') {
-      // Deselect: tear down if we still have a model up.
+    if (!buildings || activeBuildingId === null || mode !== 'building') {
+      // Deselect, or the user drilled into a floor/unit: the slab stack drawn
+      // by FloorStackLayer takes over, and this model would sit on top of it
+      // occluding the isolated-floor highlight. Tear down if we still have a
+      // model up.
       if (dsRef.current && !viewer.isDestroyed()) {
         viewer.dataSources.remove(dsRef.current, true);
         dsRef.current = null;
@@ -50,7 +74,7 @@ export default function BuildingModelLayer() {
       (f) => f.properties.id === activeBuildingId,
     );
     if (!feat) return;
-    const props = feat.properties as BuildingProps & { footprint?: { coordinates: number[][][] } };
+    const props = feat.properties as BuildingProps;
     const ring = (feat.geometry.coordinates as number[][][])[0];
     if (ring.length < 4) return;
 
@@ -60,149 +84,304 @@ export default function BuildingModelLayer() {
 
     const terrainH = ground.get(activeBuildingId);
     const base = toSceneZ(props.ground_elev, props.ground_elev, terrainH);
-    const top = base + Math.max(2, props.height_m);
+    const fullTop = base + Math.max(2, props.height_m);
+
+    // Explode lift for an above-ground storey (0-indexed). Matches
+    // FloorStackLayer's easing so the model and the slab view agree.
+    const liftFor = (storeyIndex: number): number => {
+      const t = Math.min(1, Math.max(0, stateRef.current.explodeT / 100));
+      if (t <= 0) return 0;
+      const eased = 1 - Math.pow(1 - t, 3);
+      return storeyIndex * 3.4 * eased;
+    };
 
     // Build a fresh data source so previous selections are fully released.
     const ds = new Cesium.CustomDataSource('building-model');
     viewer.dataSources.add(ds);
     dsRef.current = ds;
 
-    // ---- walls: a single extruded polygon with a window-grid texture ----
-    const wallCanvas = windowGrid(use);
+    // ---- walls: one extruded, textured storey per level ------------------
+    // A narrower wall tile (one bay per 3 m, not 4) so the model reads with
+    // finer fenestration rhythm than the city-scale extrusions. Storey 0
+    // takes a ground-floor variant whose bay carries an entry door.
+    const wallCanvas = windowGrid(use, 3, FLOOR_H);
     const wallTexture = new Cesium.ImageMaterialProperty({
       image: wallCanvas,
       color: Cesium.Color.WHITE,
     });
-    ds.entities.add({
-      polygon: {
-        hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
-        height: base,
-        extrudedHeight: top,
-        material: wallTexture,
-        outline: true,
-        outlineColor: MATERIALS.buildingModelRoof(use),
-        shadows: Cesium.ShadowMode.DISABLED,
-        classificationType: Cesium.ClassificationType.BOTH,
-      },
+    const groundCanvas = windowGrid(use, 3, FLOOR_H, true);
+    const groundTexture = new Cesium.ImageMaterialProperty({
+      image: groundCanvas,
+      color: Cesium.Color.WHITE,
     });
 
-    // ---- roof: one or more polygons above the wall top ------------------
-    const roof = buildRoof(use, ring, base, props.height_m);
-    const roofColor = new Cesium.ColorMaterialProperty(MATERIALS.buildingModelRoof(use));
-    for (const face of roof.faces) {
+    // Above-ground storeys 0..floors-1, then any basements as a solid grey
+    // mass below grade. Each storey lifts by its own index when exploded.
+    // A flat slab cap closes each storey's top: the extruded polygon carries
+    // its texture on ALL faces including the top, so an exploded stack
+    // otherwise prints the window grid on every separated block (the same
+    // defect BuildingsLayer's roof cap fixes at city scale).
+    const storeyCount = Math.max(1, props.floors);
+    for (let i = 0; i < storeyCount; i++) {
+      const z0 = base + i * FLOOR_H;
       ds.entities.add({
         polygon: {
-          hierarchy: face,
-          // Roof sits a hair above the wall so it does not z-fight the cap.
-          height: roof.baseZ + 0.01,
-          material: roofColor,
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
+          height: new Cesium.CallbackProperty(() => z0 + liftFor(i), false),
+          extrudedHeight: new Cesium.CallbackProperty(
+            () => z0 + FLOOR_H + liftFor(i),
+            false,
+          ),
+          material: i === 0 ? groundTexture : wallTexture,
           outline: true,
-          outlineColor: MATERIALS.buildingModelFixture,
+          outlineColor: MATERIALS.buildingModelRoofLine,
+          shadows: Cesium.ShadowMode.DISABLED,
+        },
+      });
+      // Slab cap riding the same lift: a hair above the storey top, thin
+      // enough not to z-fight, light enough to read as a floor plate.
+      ds.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
+          height: new Cesium.CallbackProperty(
+            () => z0 + FLOOR_H + liftFor(i) - 0.1,
+            false,
+          ),
+          extrudedHeight: new Cesium.CallbackProperty(
+            () => z0 + FLOOR_H + liftFor(i) + 0.02,
+            false,
+          ),
+          material: MATERIALS.buildingModelSlabCap,
+          outline: false,
+          shadows: Cesium.ShadowMode.DISABLED,
+        },
+      });
+    }
+    for (let b = 1; b <= props.basements; b++) {
+      const z0 = base - b * FLOOR_H;
+      ds.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
+          height: z0,
+          extrudedHeight: z0 + FLOOR_H,
+          // Basements are below grade: solid grey mass, and they stay put
+          // when the above-ground storeys lift.
+          material: MATERIALS.basementSlab,
+          outline: false,
           shadows: Cesium.ShadowMode.DISABLED,
         },
       });
     }
 
-    // ---- floor bands: a horizontal line at every floor level -----------
-    // One tile of the window texture is 3.2 m tall (one storey), so a line
-    // at every 3.2 m reads as a floor division on the wall. The lines wrap
-    // the whole ring; on a closed polygon they sit exactly on the wall
-    // surface, so no z-fighting against the textured extrusion.
-    const FLOOR_H = 3.2;
-    const bandPositionsCache: number[] = [];
-    for (let i = 0; i < flat.length; i += 2) {
-      bandPositionsCache.push(flat[i], flat[i + 1]);
-    }
+    // ---- floor bands: a horizontal line at every slab line ---------------
+    // Drawn at the SEAM between storeys (i.e. at each storey's top minus a
+    // hair) rather than at fixed heights, so they ride with the storeys and
+    // always sit on a wall, never floating over an exploded gap.
     const bandMat = new Cesium.ColorMaterialProperty(MATERIALS.buildingModelFixture);
-    // A band for every level including the floor above the top (a cornice)
-    // and the floor below ground (the ground line).
-    for (let lvl = -props.basements; lvl <= props.floors; lvl++) {
-      const z = base + lvl * FLOOR_H;
-      if (z < base - 0.05 || z > top + 0.05) continue;
-      const isCornice = lvl === props.floors;
+    const ringFlat: number[] = [];
+    for (let i = 0; i < flat.length; i += 2) {
+      ringFlat.push(flat[i], flat[i + 1]);
+    }
+    for (let i = 1; i < storeyCount; i++) {
       const positions: number[] = [];
-      for (let i = 0; i < bandPositionsCache.length; i += 2) {
-        positions.push(bandPositionsCache[i], bandPositionsCache[i + 1], z);
+      for (let v = 0; v < ringFlat.length; v += 2) {
+        positions.push(ringFlat[v], ringFlat[v + 1], 0);
       }
       ds.entities.add({
         polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(positions),
-          width: isCornice ? 2 : 1.2,
+          positions: new Cesium.CallbackProperty(() => {
+            const lift = liftFor(i);
+            const out: number[] = [];
+            for (let v = 0; v < positions.length; v += 3) {
+              out.push(positions[v], positions[v + 1], z0ForBand(i) + lift);
+            }
+            return Cesium.Cartesian3.fromDegreesArrayHeights(out);
+          }, false) as unknown as Cesium.PositionProperty,
+          width: 1.2,
           material: bandMat,
           clampToGround: false,
         },
       });
     }
+    // Bands sit at the top of storey i-1: base + i*FLOOR_H.
+    function z0ForBand(i: number): number {
+      return base + i * FLOOR_H;
+    }
 
-    // ---- a slim cornice strip just under the roof so the parapet reads
-    // Ring centroid + per-vertex inset (0.3 m shrink).
-    const { lon: cLon, lat: cLat } = (() => {
+    // ---- ground plinth: a 0.3 m apron around the footprint ---------------
+    // Grounds the model against the parcel surface so it stops reading as a
+    // cake topper. Static (never lifts) — it is the one part that stays.
+    {
+      const n = Math.max(1, ring.length - 1);
+      let cx = 0, cy = 0;
+      for (let i = 0; i < n; i++) { cx += ring[i][0]; cy += ring[i][1]; }
+      cx /= n; cy /= n;
+      const mPerDegLat = 110574;
+      const mPerDegLon = 111320 * Math.cos((cy * Math.PI) / 180);
+      const apron: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const lon = ring[i][0];
+        const lat = ring[i][1];
+        const dx = (lon - cx) * mPerDegLon;
+        const dy = (lat - cy) * mPerDegLat;
+        const d = Math.hypot(dx, dy);
+        if (d < 0.4) {
+          apron.push(lon, lat);
+        } else {
+          apron.push(cx + ((lon - cx) * (d + 1.2)) / d, cy + ((lat - cy) * (d + 1.2)) / d);
+        }
+      }
+      ds.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(apron)),
+          height: base - 0.25,
+          extrudedHeight: base,
+          material: MATERIALS.buildingModelPlinth,
+          outline: false,
+          shadows: Cesium.ShadowMode.DISABLED,
+        },
+      });
+    }
+
+    // ---- roof + fixtures: rebuilt when the top storey changes ------------
+    // A gabled/hipped roof is baked geometry; translating it with the top
+    // storey would need per-frame vertex rewrites, which Cesium entities do
+    // not support cheaply. So the roof is positioned by the lift the model
+    // has RIGHT NOW and rebuilt if the explode slider moves far enough to
+    // change the top storey's offset. In practice the explode gesture is
+    // short, and rebuilding a handful of polygons is cheap.
+    const roofAnchor = { lift: liftFor(storeyCount - 1) };
+    let roofEntities: Cesium.Entity[] = [];
+    let fixtures: Cesium.Entity[] = [];
+
+    const addRoofAndFixtures = (topLift: number) => {
+      const roof = buildRoof(use, ring, base + topLift, props.height_m);
+      const roofColor = new Cesium.ColorMaterialProperty(MATERIALS.buildingModelRoof(use));
+      const wallColor = new Cesium.ColorMaterialProperty(MATERIALS.buildingModelWall);
+      for (const face of roof.faces) {
+        // Per-position heights are essential here: a pitched profile baked
+        // into a constant-height polygon flattens to a plate.
+        const flatH: number[] = [];
+        for (const [lon, lat, z] of face) flatH.push(lon, lat, z);
+        const e = ds.entities.add({
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(
+              Cesium.Cartesian3.fromDegreesArrayHeights(flatH),
+            ),
+            perPositionHeight: true,
+            material: roofColor,
+            outline: false,
+            shadows: Cesium.ShadowMode.DISABLED,
+          },
+        });
+        roofEntities.push(e);
+      }
+      // Gable ends are wall, not roof -- drawing them in the roof colour made
+      // every residential roof read as if it had been painted on.
+      for (const face of roof.wallFaces) {
+        const flatH: number[] = [];
+        for (const [lon, lat, z] of face) flatH.push(lon, lat, z);
+        const e = ds.entities.add({
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(
+              Cesium.Cartesian3.fromDegreesArrayHeights(flatH),
+            ),
+            perPositionHeight: true,
+            material: wallColor,
+            outline: false,
+            shadows: Cesium.ShadowMode.DISABLED,
+          },
+        });
+        roofEntities.push(e);
+      }
+
+      const fs = fixturesFor(use, ring, base + topLift, props.height_m);
+      for (const f of fs) {
+        ds.entities.add(f);
+        fixtures.push(f);
+      }
+    };
+
+    addRoofAndFixtures(roofAnchor.lift);
+
+    // Re-emit roof/fixtures when the top storey's lift has drifted far
+    // enough from where the current roof was baked.
+    const stopRoofSync = watchRefValue(
+      () => liftFor(storeyCount - 1),
+      roofAnchor,
+      () => {
+        for (const e of roofEntities) ds.entities.remove(e);
+        for (const f of fixtures) ds.entities.remove(f);
+        roofEntities = [];
+        fixtures = [];
+        addRoofAndFixtures(roofAnchor.lift);
+      },
+      viewer,
+    );
+
+    // ---- cornice + parapet: thin ring at the top of the walls ------------
+    // Follows the top storey's lift via CallbackProperty (constant profile,
+    // so a callback CAN drive it).
+    const inset: number[] = (() => {
       const n = Math.max(1, ring.length - 1);
       let x = 0, y = 0;
       for (let i = 0; i < n; i++) { x += ring[i][0]; y += ring[i][1]; }
-      return { lon: x / n, lat: y / n };
-    })();
-    const mPerDegLat = 110574;
-    const mPerDegLon = 111320 * Math.cos((cLat * Math.PI) / 180);
-    const inset: number[] = [];
-    for (let i = 0; i < ring.length - 1; i++) {
-      const lon = ring[i][0];
-      const lat = ring[i][1];
-      const dx = (lon - cLon) * mPerDegLon;
-      const dy = (lat - cLat) * mPerDegLat;
-      const d = Math.hypot(dx, dy);
-      if (d < 0.4) {
-        inset.push(lon, lat);
-      } else {
-        inset.push(
-          cLon + ((lon - cLon) * (d - 0.3)) / d,
-          cLat + ((lat - cLat) * (d - 0.3)) / d,
-        );
+      const cLon = x / n, cLat = y / n;
+      const mPerDegLat = 110574;
+      const mPerDegLon = 111320 * Math.cos((cLat * Math.PI) / 180);
+      const out: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const lon = ring[i][0];
+        const lat = ring[i][1];
+        const dx = (lon - cLon) * mPerDegLon;
+        const dy = (lat - cLat) * mPerDegLat;
+        const d = Math.hypot(dx, dy);
+        if (d < 0.4) {
+          out.push(lon, lat);
+        } else {
+          out.push(
+            cLon + ((lon - cLon) * (d - 0.3)) / d,
+            cLat + ((lat - cLat) * (d - 0.3)) / d,
+          );
+        }
       }
-    }
-    // Cornice band: a thin extrusion at the top of the wall, 0.4 m thick.
-    ds.entities.add({
-      polygon: {
-        hierarchy: new Cesium.PolygonHierarchy(
-          Cesium.Cartesian3.fromDegreesArray(inset),
-        ),
-        height: top - 0.4,
-        extrudedHeight: top,
-        material: bandMat,
-        outline: false,
-        shadows: Cesium.ShadowMode.DISABLED,
-      },
-    });
+      return out;
+    })();
 
-    // ---- parapet: a short wall that closes the top of the building -----
-    // 1 m high ring at the slightly inset perimeter, sitting on the cornice.
-    ds.entities.add({
-      polygon: {
-        hierarchy: new Cesium.PolygonHierarchy(
-          Cesium.Cartesian3.fromDegreesArray(inset),
-        ),
-        height: top,
-        extrudedHeight: top + 1.0,
-        material: bandMat,
-        outline: false,
-        shadows: Cesium.ShadowMode.DISABLED,
-      },
-    });
-    void mPerDegLat;
-
-    // ---- fixtures: cylinders, boxes on the roof ------------------------
-    const fixtures = fixturesFor(use, ring, base, props.height_m);
-    for (const f of fixtures) ds.entities.add(f);
-
-    // ---- selection highlight: a polyline along the top of the wall ----
-    // Stays visible even when the floor stack is occluding the walls.
-    const topFlat: number[] = [];
-    for (let i = 0; i < flat.length; i += 2) {
-      topFlat.push(flat[i], flat[i + 1], top + 0.05);
-    }
+    // A storey whose height is driven by callbacks can't take a separate
+    // "cornice extrusion" without z-fighting the wall; a band polyline at
+    // the cornice line reads the same at this scale and rides the lift.
+    const topIndex = storeyCount - 1;
+    const topPos: number[] = [];
+    for (let v = 0; v < inset.length; v += 2) topPos.push(inset[v], inset[v + 1], 0);
     ds.entities.add({
       polyline: {
-        positions: Cesium.Cartesian3.fromDegreesArrayHeights(topFlat),
+        positions: new Cesium.CallbackProperty(() => {
+          const lift = liftFor(topIndex);
+          const out: number[] = [];
+          for (let v = 0; v < topPos.length; v += 3) {
+            out.push(topPos[v], topPos[v + 1], fullTop + lift);
+          }
+          return Cesium.Cartesian3.fromDegreesArrayHeights(out);
+        }, false) as unknown as Cesium.PositionProperty,
+        width: 2,
+        material: bandMat,
+        clampToGround: false,
+      },
+    });
+
+    // ---- selection highlight: polyline along the top of the wall ---------
+    // Stays visible even when the floor stack is occluding the walls.
+    ds.entities.add({
+      polyline: {
+        positions: new Cesium.CallbackProperty(() => {
+          const lift = liftFor(topIndex);
+          const out: number[] = [];
+          for (let i = 0; i < flat.length; i += 2) {
+            out.push(flat[i], flat[i + 1], fullTop + lift + 0.05);
+          }
+          return Cesium.Cartesian3.fromDegreesArrayHeights(out);
+        }, false) as unknown as Cesium.PositionProperty,
         width: 2,
         material: MATERIALS.unitOutline,
         clampToGround: false,
@@ -210,10 +389,36 @@ export default function BuildingModelLayer() {
     });
 
     return () => {
+      stopRoofSync();
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
       dsRef.current = null;
     };
   }, [viewer, ready, ground, buildings, activeBuildingId, mode]);
 
   return null;
+}
+/**
+ * Poll a ref-driven value on each frame and invoke `onChange` when it has
+ * moved more than `tol` from the last baked value. Used to re-bake the roof
+ * when the explode slider moves the top storey. A postRender listener keeps
+ * this tied to the scene's frame budget rather than an independent rAF.
+ */
+function watchRefValue(
+  read: () => number,
+  anchor: { lift: number },
+  onChange: () => void,
+  viewer: Cesium.Viewer,
+): () => void {
+  const onFrame = () => {
+    if (viewer.isDestroyed()) return;
+    const v = read();
+    if (Math.abs(v - anchor.lift) > 0.35) {
+      anchor.lift = v;
+      onChange();
+    }
+  };
+  viewer.scene.postRender.addEventListener(onFrame);
+  return () => {
+    if (!viewer.isDestroyed()) viewer.scene.postRender.removeEventListener(onFrame);
+  };
 }

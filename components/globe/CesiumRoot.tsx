@@ -12,9 +12,12 @@ import {
   applyPhotorealTranslucency, createPhotorealTileset, photorealFailureMessage,
 } from '@/lib/cesium/photoreal';
 import {
-  configureScene, createTerrain, fetchInitialData,
-  frameInitialCamera, hasIonToken, sampleGroundUnder,
+  configureScene, createTerrain, fetchInitialData, frameInitialCamera,
+  hasIonToken, sampleGroundUnder,
 } from '@/lib/cesium/setup';
+import {
+  applyPerformanceProfile, attachAdaptiveResolution, detectWeakGpu,
+} from '@/lib/cesium/perf';
 import { useUrlState } from '@/lib/url-state';
 
 /**
@@ -53,6 +56,8 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
    * when the user switches back.
    */
   const baseTerrainRef = useRef<Cesium.TerrainProvider | null>(null);
+  /** Disposer for the adaptive-resolution watchdog started in the mount effect. */
+  const stopAdaptiveRef = useRef<(() => void) | null>(null);
 
   const setIonFallback = useViewStore((s) => s.setIonFallback);
   const loading = useDataStore((s) => s.loading);
@@ -91,9 +96,25 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
         infoBox: false,
         selectionIndicator: false,
         scene3DOnly: true,
-        requestRenderMode: false,
+        // Continuous rendering burns battery and crowds out the compositor on
+        // integrated GPUs. With on-demand rendering the scene re-renders only
+        // when something actually changes (camera, data, an animation
+        // callback); CameraDirector's flights and the explode slider both
+        // trigger renders through Cesium's own requestRender paths. Auto-spin
+        // drives camera.rotate on clock ticks, which also re-renders.
+        requestRenderMode: true,
+        // A long idle gap followed by a camera move used to show a stale
+        // frame briefly; this bounds the wait so interactions still feel live.
+        maximumRenderTimeChange: 2.0,
       });
       viewerRef.current = viewer;
+
+      // GPU profile: probe once, configure once. The adaptive-resolution
+      // watchdog only re-renders when it changes the scale, so in
+      // requestRenderMode it costs nothing while the scene is idle.
+      const profile = { lowEnd: detectWeakGpu() };
+      applyPerformanceProfile(viewer, profile);
+      stopAdaptiveRef.current = attachAdaptiveResolution(viewer);
 
       // Test seam for scripts/check_photoreal.mjs. Scene state such as
       // globe.show, the live terrain provider and the tileset primitive has no
@@ -114,6 +135,10 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
       setIonFallback(!hasIon || terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
 
       configureScene(viewer);
+      // The on-demand render loop must know what counts as "changed". 0.5
+      // degrees of heading/pitch and ~1% of height cover both orbit gestures
+      // and the tail of a camera flight, so every real move requests a frame.
+      viewer.scene.camera.percentageChanged = 0.01;
       frameInitialCamera(viewer);
 
       // ---- one-time data load -------------------------------------------
@@ -137,9 +162,9 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
         useDataStore.getState().setLoading(false);
       }
     })();
-
     return () => {
       disposed = true;
+      stopAdaptiveRef.current?.();
       const v = viewerRef.current;
       viewerRef.current = null;
       if (v && !v.isDestroyed()) v.destroy();

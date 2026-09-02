@@ -9,7 +9,7 @@ import { MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
 import { windowGrid } from '@/lib/cesium/textures';
-import { flatLonLat } from '@/lib/geo';
+import { flatLonLat, orientedDims } from '@/lib/geo';
 import type { BuildingStyle, UseType } from '@/lib/types';
 
 /**
@@ -86,11 +86,16 @@ export default function BuildingsLayer() {
       // storeys the DetailPanel reports. The storey count is the existing
       // inference from scripts/02_heights.py -- this reads it, it does not
       // re-derive it, so the +/-1 provenance caveat still describes the number
-      // the user is looking at.
+      // the user is looking at. Horizontally the repeat is derived from the
+      // footprint's oriented width so the bay rhythm is metric everywhere,
+      // including on the curved/irregular rings where a single tile used to
+      // stretch into wide stripes.
       const storeys = Math.max(1, props.floors);
+      const dims = orientedDims(ring);
+      const baysX = Math.max(1, Math.round(dims.widthM / 4));
       const facade = new Cesium.ImageMaterialProperty({
         image: windowGrid(use),
-        repeat: new Cesium.Cartesian2(1, storeys),
+        repeat: new Cesium.Cartesian2(baysX, storeys),
         // Alpha varies (fade, hover, the photoreal ghost), and Cesium routes a
         // material to the opaque pass unless it is told otherwise.
         transparent: true,
@@ -125,6 +130,38 @@ export default function BuildingsLayer() {
         },
       });
       tagEntity(entity, { kind: 'building', id });
+
+      // Roof cap. Cesium stretches a polygon material over the whole extrusion
+      // -- walls AND top -- so without this the facade's window grid prints on
+      // every roof. A flat cap 0.05 m above the wall top in a muted roof tone
+      // hides the printed face; the faded callback keeps the whole building
+      // (walls + cap) dissolving together.
+      const capTop = base + Math.max(2, props.height_m) + 0.05;
+      ds.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
+          height: capTop - 0.1,
+          extrudedHeight: capTop,
+          material: new Cesium.ColorMaterialProperty(
+            new Cesium.CallbackProperty(() => {
+              const s = stateRef.current;
+              if (s.style === 'photoreal') return MATERIALS.buildingGhost;
+              if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.95);
+              if (s.activeId === null) return MATERIALS.buildingRoofCap(use);
+              if (s.activeId === id) return MATERIALS.buildingRoofCap(use);
+              return MATERIALS.buildingRoofCap(use, s.fade);
+            }, false),
+          ),
+          outline: false,
+          shadows: Cesium.ShadowMode.DISABLED,
+          show: new Cesium.CallbackProperty(() => {
+            const s = stateRef.current;
+            if (!s.visible) return false;
+            if (s.hideActive && s.activeId === id) return false;
+            return true;
+          }, false),
+        },
+      });
     }
 
     return () => {
