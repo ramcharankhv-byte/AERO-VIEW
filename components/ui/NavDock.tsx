@@ -43,7 +43,7 @@ export default function NavDock() {
         onClick={resetView}
         className="rounded px-2.5 py-1 text-[11px] text-[rgb(var(--ink))] hover:bg-white/10"
       >
-        Reset view
+        Reset
       </button>
       <button
         type="button"
@@ -55,16 +55,16 @@ export default function NavDock() {
             : 'text-[rgb(var(--ink))] hover:bg-white/10',
         ].join(' ')}
       >
-        Auto-spin
+        Spin
       </button>
 
-      <span className="mx-1 h-4 w-px bg-[rgb(var(--edge))]" />
+      <span className="mx-1 hidden h-4 w-px bg-[rgb(var(--edge))] sm:block" />
 
       <button
         type="button"
         disabled
         title="Slice — not implemented"
-        className="is-disabled rounded px-2.5 py-1 text-[11px] text-[rgb(var(--muted))]"
+        className="is-disabled hidden rounded px-2.5 py-1 text-[11px] text-[rgb(var(--muted))] sm:block"
       >
         Slice
       </button>

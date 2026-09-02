@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useViewStore } from '@/lib/store';
 import ActionBar from '@/components/ui/ActionBar';
 import ConflictBanner from '@/components/ui/ConflictBanner';
 import DetailPanel from '@/components/ui/DetailPanel';
@@ -15,10 +16,16 @@ import StatusBar from '@/components/ui/StatusBar';
 import TopBar from '@/components/ui/TopBar';
 
 /**
- * Composes the scene and the chrome. No logic lives here.
+ * Composes the scene and the chrome. No logic lives here beyond the panel
+ * visibility flag from the store.
  *
  * The whole Cesium tree is client-only: Cesium touches `window` at module
  * evaluation time, so server rendering it is not merely wasteful, it throws.
+ *
+ * Responsive: breakpoints collapse the chrome rather than letting it overlap.
+ * Below `lg` the right column narrows and the parcel inset drops; below `md`
+ * the layer panel is toggled from the TopBar, the floor ladder moves up clear
+ * of the NavDock, and the secondary status items hide.
  */
 const Scene = dynamic(() => import('@/components/globe/Scene'), {
   ssr: false,
@@ -30,6 +37,8 @@ const Scene = dynamic(() => import('@/components/globe/Scene'), {
 });
 
 export default function Page() {
+  const leftPanelOpen = useViewStore((s) => s.leftPanelOpen);
+
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       <Scene />
@@ -41,27 +50,35 @@ export default function Page() {
           <TopBar />
         </div>
 
-        <div className="absolute left-3 top-[68px]">
-          <LayerPanel />
-        </div>
+        {/* Layer panel: store-toggled so small screens can reclaim the left
+            edge; hidden entirely below md, where the map wants every pixel. */}
+        {leftPanelOpen ? (
+          <div className="absolute left-3 top-[68px] hidden md:block">
+            <LayerPanel />
+          </div>
+        ) : null}
 
-        <div className="absolute left-[228px] top-1/2 -translate-y-1/2">
+        {/* Floor ladder: vertically centred at md+, but raised above the dock
+            on small screens so the two never overlap. */}
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 md:left-[228px]">
           <FloorLadder />
         </div>
 
-        <div className="absolute left-3 bottom-[70px]">
+        <div className="absolute bottom-[70px] left-3 hidden lg:block">
           <Legend />
         </div>
 
-        <div className="absolute right-3 top-[68px] flex w-[318px] flex-col gap-2">
+        <div className="absolute right-3 top-[68px] flex w-[318px] max-w-[calc(100vw-24px)] flex-col gap-2 lg:w-[318px] md:w-[280px] max-md:w-[calc(100vw-24px)]">
           <ActionBar />
-          <div className="max-h-[calc(100vh-210px)] overflow-y-auto pr-0.5">
+          <div className="max-h-[calc(100vh-210px)] overflow-y-auto pr-0.5 max-md:max-h-[calc(100vh-320px)]">
             <DetailPanel />
           </div>
-          <ParcelInset />
+          <div className="hidden lg:block">
+            <ParcelInset />
+          </div>
         </div>
 
-        <div className="absolute left-1/2 top-[68px] -translate-x-1/2">
+        <div className="absolute left-1/2 top-[68px] -translate-x-1/2 max-md:w-[calc(100vw-24px)] max-md:px-1">
           <ConflictBanner />
         </div>
 
@@ -74,8 +91,10 @@ export default function Page() {
         </div>
 
         {/* Both notices share the corner; stacked so a photoreal failure and a
-            missing ion token can be reported at once rather than overlapping. */}
-        <div className="absolute right-3 bottom-[46px] flex flex-col items-end gap-2">
+            missing ion token can be reported at once rather than overlapping.
+            Hidden on small screens, where the StatusBar's right cluster already
+            reports fallback state. */}
+        <div className="absolute right-3 bottom-[46px] hidden flex-col items-end gap-2 lg:flex">
           <PhotorealNotice />
           <IonNotice />
         </div>

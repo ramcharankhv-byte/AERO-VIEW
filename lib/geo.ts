@@ -47,6 +47,21 @@ export function flatLonLat(ring: number[][]): number[] {
   return flat;
 }
 
+/** Metre perimeter of a closed linear ring. Skips the trailing duplicate vertex. */
+export function ringPerimeterM(ring: number[][]): number {
+  const mPerDegLat = 110574;
+  const cLat = ringCentroid(ring).lat;
+  const mPerDegLon = 111320 * Math.cos((cLat * Math.PI) / 180);
+  const n = Math.max(1, ring.length - 1);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    total += Math.hypot((b[0] - a[0]) * mPerDegLon, (b[1] - a[1]) * mPerDegLat);
+  }
+  return total;
+}
+
 /**
  * Oriented bounding box of a footprint ring, in metres.
  *

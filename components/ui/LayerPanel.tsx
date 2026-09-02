@@ -142,7 +142,7 @@ export default function LayerPanel() {
   }, [theme]);
 
   return (
-    <div className="glass pointer-events-auto w-[210px] rounded-lg p-3">
+    <div className="glass pointer-events-auto max-h-[calc(100vh-96px)] w-[210px] overflow-y-auto rounded-lg p-3">
       <div className="panel-title">Layers</div>
       <div className="mt-1.5">
         {LAYERS.map((l) => (

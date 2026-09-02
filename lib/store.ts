@@ -31,6 +31,11 @@ export interface ViewState {
   viewMode: '3D' | '2D' | 'Split';
   autoSpin: boolean;
   navMode: 'orbit' | 'pan' | 'zoom';
+  /**
+   * Left layers panel visibility. Pure chrome: never serialised to the URL and
+   * never read by a layer -- only the TopBar toggle and the panel itself care.
+   */
+  leftPanelOpen: boolean;
   /** Set when terrain falls back to the ellipsoid because no ion token exists. */
   ionFallback: boolean;
 
@@ -70,6 +75,7 @@ export interface ViewState {
   setViewMode: (m: '3D' | '2D' | 'Split') => void;
   setAutoSpin: (on: boolean) => void;
   setNavMode: (m: 'orbit' | 'pan' | 'zoom') => void;
+  setLeftPanelOpen: (open: boolean) => void;
   setIonFallback: (on: boolean) => void;
   setImageryProvider: (id: ProviderId) => void;
   setImageryTreatment: (t: TreatmentId) => void;
@@ -107,6 +113,7 @@ export const useViewStore = create<ViewState>((set) => ({
   viewMode: '3D',
   autoSpin: false,
   navMode: 'orbit',
+  leftPanelOpen: true,
   ionFallback: false,
   imageryProvider: 'esri',
   imageryTreatment: 'gisDark',
@@ -163,6 +170,7 @@ export const useViewStore = create<ViewState>((set) => ({
   setViewMode: (m) => set({ viewMode: m }),
   setAutoSpin: (on) => set({ autoSpin: on }),
   setNavMode: (m) => set({ navMode: m }),
+  setLeftPanelOpen: (open) => set({ leftPanelOpen: open }),
   setIonFallback: (on) => set({ ionFallback: on }),
   setImageryProvider: (id) => set({ imageryProvider: id }),
   setImageryTreatment: (t) => set({ imageryTreatment: t }),

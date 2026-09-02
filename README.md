@@ -241,8 +241,9 @@ Both suites were run against **PostGIS and the snapshot backend**, and the
 
 ### Not implemented
 
-**Measurements, Share, Split view and Slice** are rendered visibly disabled
-rather than hidden, so their absence is explicit rather than implied.
+**Measure, Split view and Slice** are rendered visibly disabled
+rather than hidden, so their absence is explicit rather than implied. Share
+copies a link to the exact view — the URL tracks the full scene state.
 
 ---
 

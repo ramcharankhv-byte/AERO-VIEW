@@ -9,7 +9,7 @@ import { MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
 import { windowGrid } from '@/lib/cesium/textures';
-import { flatLonLat, orientedDims } from '@/lib/geo';
+import { flatLonLat, ringPerimeterM } from '@/lib/geo';
 import type { BuildingStyle, UseType } from '@/lib/types';
 
 /**
@@ -86,13 +86,18 @@ export default function BuildingsLayer() {
       // storeys the DetailPanel reports. The storey count is the existing
       // inference from scripts/02_heights.py -- this reads it, it does not
       // re-derive it, so the +/-1 provenance caveat still describes the number
-      // the user is looking at. Horizontally the repeat is derived from the
-      // footprint's oriented width so the bay rhythm is metric everywhere,
-      // including on the curved/irregular rings where a single tile used to
-      // stretch into wide stripes.
+      // the user is looking at.
+      //
+      // The facade is a WALL entity, not an extruded polygon. Cesium sizes an
+      // extruded polygon's wall ST from the footprint's whole bounding
+      // rectangle, so every wall samples the tile across the full extent and
+      // the bays stretch unevenly -- the vertical stripes this layer used to
+      // print. A wall's u is the normalised cumulative arc length along the
+      // ring instead, so repeating the tile `perimeter / bayWidth` times makes
+      // the bay rhythm metric on every wall of any ring shape.
       const storeys = Math.max(1, props.floors);
-      const dims = orientedDims(ring);
-      const baysX = Math.max(1, Math.round(dims.widthM / 4));
+      const topH = Math.max(2, props.height_m);
+      const baysX = Math.max(1, Math.round(ringPerimeterM(ring) / 4));
       const facade = new Cesium.ImageMaterialProperty({
         image: windowGrid(use),
         repeat: new Cesium.Cartesian2(baysX, storeys),
@@ -111,13 +116,19 @@ export default function BuildingsLayer() {
         }, false),
       });
 
+      // Wall heights are constant arrays, so geometry is built once, exactly
+      // like the extrusion it replaces. A wall has no top face, so the tile
+      // never prints on the roof (the cap below hides it, and backstops it).
+      const flatH: number[] = [];
+      for (let i = 0; i < flat.length; i += 2) flatH.push(flat[i], flat[i + 1], base);
+      const minHeights = flatH.filter((_, i) => i % 3 === 2);
+      const maxHeights = minHeights.map(() => base + topH);
       const entity = ds.entities.add({
-        polygon: {
-          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
-          height: base,
-          extrudedHeight: base + Math.max(2, props.height_m),
+        wall: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flatH),
+          minimumHeights: minHeights,
+          maximumHeights: maxHeights,
           material: facade,
-          outline: false,
           shadows: Cesium.ShadowMode.DISABLED,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
@@ -136,7 +147,7 @@ export default function BuildingsLayer() {
       // every roof. A flat cap 0.05 m above the wall top in a muted roof tone
       // hides the printed face; the faded callback keeps the whole building
       // (walls + cap) dissolving together.
-      const capTop = base + Math.max(2, props.height_m) + 0.05;
+      const capTop = base + topH + 0.05;
       ds.entities.add({
         polygon: {
           hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
