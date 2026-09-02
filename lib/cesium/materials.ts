@@ -67,8 +67,10 @@ export const MATERIALS = {
   /** An above-ground floor slab in the exploded stack. */
   floorSlab: rgba(150, 190, 230, 0.34),
 
-  /** The floor currently isolated. */
-  floorActive: rgba(140, 215, 255, 0.55),
+  /** The floor currently isolated -- bright enough to read through the stack. */
+  floorActive: rgba(110, 216, 255, 0.72),
+  /** Edge of the isolated floor: near-white so the highlight has a crisp rim. */
+  floorActiveOutline: rgba(200, 242, 255, 1),
 
   /** Basements are solid grey -- they read as mass, not as habitable volume. */
   basementSlab: rgba(120, 124, 132, 0.95),
@@ -93,9 +95,43 @@ export const MATERIALS = {
 
   /** Architectural model on the active building. */
   buildingModelWall: rgba(238, 232, 220, 1),
-  buildingModelRoof: (use: UseType) => USE_COLOR[use].withAlpha(0.96),
+  buildingModelRoof: (use: UseType) => ROOF_COLOR[use],
+  /**
+   * Flat cap over the city-scale extrusions. The extruded polygon carries the
+   * facade texture on ALL faces including its top, which printed a grid of
+   * window boxes on every roof; this cap is drawn just above it in a muted
+   * roof tone so the top reads as a roof.
+   */
+  buildingRoofCap: (use: UseType, alpha = 1) => ROOF_COLOR[use].withAlpha(alpha),
+  /**
+   * Roof edge line. A quiet darkening of the roof tone rather than the dark
+   * fixture colour -- full-contrast outlines around every roof face were
+   * half of the "printed" look on the old model.
+   */
+  buildingModelRoofLine: rgba(28, 32, 38, 0.45),
   buildingModelFixture: rgba(80, 84, 92, 1),
+  /** Ground apron at the model's foot. */
+  buildingModelPlinth: rgba(96, 98, 102, 1),
+  /**
+   * Flat concrete cap closing the top of each per-storey prism in the
+   * exploded model. Without it the extruded wall texture prints its window
+   * grid on every storey's top face; this light slab tone also reads as the
+   * floor-plate edge, which is the detailing the explode view wants.
+   */
+  buildingModelSlabCap: rgba(196, 190, 180, 1),
 } as const;
+
+/**
+ * Muted concrete roof palette. All roofs in this AOI are flat slabs, so every
+ * tone is a neutral deck/membrane grey -- keeping roofs near-neutral is what
+ * lets the textured walls stay the visual subject.
+ */
+const ROOF_COLOR: Record<UseType, Cesium.Color> = {
+  residential: rgba(176, 172, 164, 1),   // concrete deck
+  commercial: rgba(112, 116, 122, 1),    // gravel + membrane
+  institutional: rgba(150, 156, 150, 1), // weathered screed
+  industrial: rgba(100, 104, 110, 1),    // coated metal sheet
+};
 
 // ---------------------------------------------------------------- utilities
 export const UTILITY_COLOR: Record<AssetType, Cesium.Color> = {
