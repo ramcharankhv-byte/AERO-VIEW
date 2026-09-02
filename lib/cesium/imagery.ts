@@ -194,12 +194,14 @@ interface Treatment {
 export const TREATMENTS: Record<TreatmentId, Treatment> = {
   // Default. Pushes the imagery back so it reads as context beneath the
   // building geometry: dark, largely desaturated, contrast lifted just enough
-  // that roads and plot edges survive the dimming.
+  // that roads and plot edges survive the dimming. Gamma < 1 keeps shadow
+  // detail -- pure darkening at this level used to crush the AOI's lane
+  // pattern into a flat wash.
   gisDark: {
-    brightness: 0.55,
-    saturation: 0.35,
-    contrast: 1.15,
-    gamma: 1.0,
+    brightness: 0.62,
+    saturation: 0.42,
+    contrast: 1.22,
+    gamma: 0.92,
     hue: 0.0,
   },
   // Raw imagery, for when a reviewer asks to see what the source looks like.

@@ -32,18 +32,23 @@ const tagFixture = (e: Cesium.Entity) => {
 };
 
 const fixtureMaterial = new Cesium.ColorMaterialProperty(MATERIALS.buildingModelFixture);
+/** Slightly lighter tone for secondary fixtures so rows don't read as one blob. */
+const fixtureMaterialLight = new Cesium.ColorMaterialProperty(
+  MATERIALS.buildingModelFixture.withAlpha(0.8),
+);
 
 function box(
   lon: number, lat: number,
   baseZ: number, topZ: number,
   halfW: number, halfD: number,
+  material: Cesium.MaterialProperty = fixtureMaterial,
 ): Cesium.Entity {
   // Cesium's box takes centre + full dimensions, so width = 2*halfW.
   return new Cesium.Entity({
     position: Cesium.Cartesian3.fromDegrees(lon, lat, (baseZ + topZ) / 2),
     box: {
       dimensions: new Cesium.Cartesian3(halfW * 2, halfD * 2, topZ - baseZ),
-      material: fixtureMaterial,
+      material,
       outline: false,
     },
   });
@@ -53,12 +58,13 @@ function cylinder(
   lon: number, lat: number,
   baseZ: number, topZ: number,
   radius: number,
+  topRadius = radius,
 ): Cesium.Entity {
   return new Cesium.Entity({
     position: Cesium.Cartesian3.fromDegrees(lon, lat, (baseZ + topZ) / 2),
     cylinder: {
       length: topZ - baseZ,
-      topRadius: radius,
+      topRadius,
       bottomRadius: radius,
       material: fixtureMaterial,
       outline: false,
@@ -67,51 +73,72 @@ function cylinder(
 }
 
 function residentialFixtures({ lon, lat, baseZ, radiusM }: MakeOpts): Cesium.Entity[] {
-  // Water tank + stairhead, placed slightly off-centre so the roof is not
-  // perfectly symmetrical.
-  const tank = cylinder(lon + 0.000012, lat - 0.000009, baseZ, baseZ + 1.5, 0.7);
-  const stair = box(lon - 0.000014, lat + 0.000010, baseZ, baseZ + 2.0,
-    0.75, 0.75);
-  [tank, stair].forEach(tagFixture);
+  // Black tank on a stand (the standard Indian rooftop setup), a stairhead,
+  // and a small laundry/drying line offset into a corner.
+  const stand = cylinder(lon + 0.000012, lat - 0.000009, baseZ, baseZ + 0.5, 0.55, 0.45);
+  const tank = cylinder(lon + 0.000012, lat - 0.000009, baseZ + 0.5, baseZ + 1.7, 0.75);
+  const stair = box(lon - 0.000014, lat + 0.000010, baseZ, baseZ + 2.2, 0.8, 0.7);
+  const line = box(lon + 0.000020, lat + 0.000018, baseZ, baseZ + 0.06, 1.2, 0.04,
+    fixtureMaterialLight);
+  [stand, tank, stair, line].forEach(tagFixture);
   void radiusM;
-  return [tank, stair];
+  return [stand, tank, stair, line];
 }
 
 function commercialFixtures({ lon, lat, baseZ, radiusM }: MakeOpts): Cesium.Entity[] {
-  // Row of 4 AC units along the short axis, plus a lift overrun at one end.
-  const rowZ = baseZ + 0.4;
+  // Two rows of 3 AC condensers on plinths, a lift overrun at one end, and a
+  // rooftop signboard slab along one edge.
+  const rowZ = baseZ + 0.35;
   const acs: Cesium.Entity[] = [];
-  const rowLenM = Math.min(4, radiusM * 1.2);
-  for (let i = 0; i < 4; i++) {
-    const dx = ((i - 1.5) / 1.5) * (rowLenM / 2) * 0.00001; // tiny step in lon
-    acs.push(box(lon + dx, lat + 0.000015, rowZ, rowZ + 0.8, 0.4, 0.3));
+  const rowLenM = Math.min(5, radiusM * 1.2);
+  for (let i = 0; i < 3; i++) {
+    const dx = ((i - 1) / 1) * (rowLenM / 2) * 0.00001; // tiny step in lon
+    acs.push(box(lon + dx, lat + 0.000015, rowZ, rowZ + 0.85, 0.42, 0.32,
+      fixtureMaterialLight));
   }
-  const overrun = box(lon - 0.000018, lat - 0.000015,
-    baseZ, baseZ + 1.5, 1.0, 1.0);
-  [...acs, overrun].forEach(tagFixture);
+  for (let i = 0; i < 3; i++) {
+    const dx = ((i - 1) / 1) * (rowLenM / 2) * 0.00001;
+    acs.push(box(lon + dx, lat - 0.000013, rowZ, rowZ + 0.85, 0.42, 0.32,
+      fixtureMaterialLight));
+  }
+  const overrun = box(lon - 0.000018, lat - 0.000002,
+    baseZ, baseZ + 1.6, 1.0, 1.0);
+  const sign = box(lon + 0.000004, lat - Math.min(0.000028, radiusM * 0.000016),
+    baseZ, baseZ + 1.2, Math.min(1.6, radiusM * 0.5), 0.08,
+    fixtureMaterialLight);
+  [...acs, overrun, sign].forEach(tagFixture);
   void radiusM;
-  return [...acs, overrun];
+  return [...acs, overrun, sign];
 }
 
 function institutionalFixtures({ lon, lat, baseZ, radiusM }: MakeOpts): Cesium.Entity[] {
-  // A slim flagpole rising from a small base block.
-  const base = box(lon, lat, baseZ, baseZ + 0.3, 0.4, 0.4);
-  const pole = cylinder(lon, lat, baseZ + 0.3, baseZ + 4.3, 0.06);
-  [base, pole].forEach(tagFixture);
+  // Flagpole on a stepped base, plus two rooftop canteen vents.
+  const base = box(lon, lat, baseZ, baseZ + 0.3, 0.45, 0.45);
+  const base2 = box(lon, lat, baseZ + 0.3, baseZ + 0.55, 0.32, 0.32);
+  const pole = cylinder(lon, lat, baseZ + 0.55, baseZ + 4.8, 0.055);
+  const v1 = cylinder(lon + 0.000016, lat + 0.000012, baseZ, baseZ + 0.8, 0.3);
+  const v2 = cylinder(lon - 0.000014, lat + 0.000014, baseZ, baseZ + 0.8, 0.3);
+  [base, base2, pole, v1, v2].forEach(tagFixture);
   void radiusM;
-  return [base, pole];
+  return [base, base2, pole, v1, v2];
 }
 
 function industrialFixtures({ lon, lat, baseZ, radiusM }: MakeOpts): Cesium.Entity[] {
-  // 4 ventilation cowls in a 2x2 grid, sitting on the flat parts of the
-  // sawtooth roof.
+  // 6 ventilation cowls in a 2x3 grid on the flat parts of the sawtooth
+  // roof, plus one skylight strip per sawtooth is implied by the roof glass
+  // colour, so fixtures stay mechanical.
   const cowls: Cesium.Entity[] = [];
   const step = Math.min(0.00002, radiusM * 0.00002);
-  for (const [dx, dy] of [[-step, -step], [step, -step], [-step, step], [step, step]] as const) {
-    cowls.push(cylinder(lon + dx, lat + dy, baseZ, baseZ + 0.7, 0.4));
+  for (const dx of [-step, 0, step]) {
+    for (const dy of [-step, step]) {
+      cowls.push(cylinder(lon + dx, lat + dy, baseZ, baseZ + 0.75, 0.4));
+    }
   }
-  cowls.forEach(tagFixture);
-  return cowls;
+  // Rooftop access hut.
+  const hut = box(lon - 0.000022, lat - 0.000018, baseZ, baseZ + 1.1, 0.7, 0.6,
+    fixtureMaterialLight);
+  [...cowls, hut].forEach(tagFixture);
+  return [...cowls, hut];
 }
 
 /** Pick the equipment factory for the given use type. */
@@ -122,8 +149,9 @@ export function fixturesFor(
   heightM: number,
 ): Cesium.Entity[] {
   const { lon, lat } = ringCentroid(ring);
-  // The roof base sits above the wall top, so the fixtures live there.
-  const baseZ = groundZ + Math.max(2, heightM);
+  // The deck sits 0.15 m below the wall top (flatWithParapet), so fixtures
+  // rest on the deck rather than floating at parapet height.
+  const baseZ = groundZ + Math.max(2, heightM) - 0.15;
   // A safe in-radius in metres: 70% of the greatest centroid->vertex distance.
   const mPerDegLat = 110574;
   const mPerDegLon = 111320 * Math.cos((lat * Math.PI) / 180);
