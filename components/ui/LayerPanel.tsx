@@ -6,7 +6,10 @@ import { useEffect, useMemo } from 'react';
 import { availableProviders, TREATMENT_LABELS } from '@/lib/cesium/imagery-catalog';
 import type { ProviderId, TreatmentId } from '@/lib/cesium/imagery-catalog';
 import { useViewStore } from '@/lib/store';
-import type { BuildingStyle, LayerKey } from '@/lib/types';
+import {
+  SUN_MAX_HOUR, SUN_MIN_HOUR, SUN_NOON_HOUR, SUN_STEP_HOURS, formatSunHour,
+} from '@/lib/sun';
+import type { BuildingStyle, LayerKey, SliceState } from '@/lib/types';
 
 /**
  * Left panel: layer visibility, explode, transparency, view mode, theme.
@@ -28,6 +31,19 @@ const BUILDING_STYLES: { id: BuildingStyle; label: string; title: string }[] = [
     title: 'Google Photorealistic 3D Tiles. Captured imagery for orientation — '
       + 'it carries no rights data, and the cadastral geometry stays pickable '
       + 'underneath it.',
+  },
+];
+
+const SLICE_AXES: { id: SliceState['axis']; label: string; title: string }[] = [
+  {
+    id: 'ew',
+    label: 'E–W',
+    title: 'Cut along a north–south line and look at the east–west section.',
+  },
+  {
+    id: 'ns',
+    label: 'N–S',
+    title: 'Cut along an east–west line and look at the north–south section.',
   },
 ];
 
@@ -84,26 +100,36 @@ function Slider({
   onChange,
   suffix,
   disabled,
+  min = 0,
+  max = 100,
+  step = 1,
+  /** Overrides `value + suffix` where the read-out is not a plain number. */
+  display,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   suffix: string;
   disabled?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  display?: string;
 }) {
   return (
     <div className={disabled ? 'is-disabled' : ''}>
       <div className="flex items-center justify-between">
         <span className="row-label">{label}</span>
         <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
-          {value}
-          {suffix}
+          {display ?? `${value}${suffix}`}
         </span>
       </div>
       <input
         type="range"
-        min={0}
-        max={100}
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -116,6 +142,8 @@ function Slider({
 export default function LayerPanel() {
   const layers = useViewStore((s) => s.layers);
   const toggleLayer = useViewStore((s) => s.toggleLayer);
+  const sunHour = useViewStore((s) => s.sunHour);
+  const setSunHour = useViewStore((s) => s.setSunHour);
   const explodeT = useViewStore((s) => s.explodeT);
   const setExplode = useViewStore((s) => s.setExplode);
   const transparency = useViewStore((s) => s.transparency);
@@ -131,6 +159,10 @@ export default function LayerPanel() {
   const setImageryTreatment = useViewStore((s) => s.setImageryTreatment);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const setBuildingStyle = useViewStore((s) => s.setBuildingStyle);
+  const slice = useViewStore((s) => s.slice);
+  const setSlice = useViewStore((s) => s.setSlice);
+  const activeBuildingId = useViewStore((s) => s.activeBuildingId);
+  const canSlice = activeBuildingId !== null;
 
   // Depends only on build-time env, so the list is stable for the session.
   const providers = useMemo(() => availableProviders(), []);
@@ -243,6 +275,36 @@ export default function LayerPanel() {
         </div>
       </div>
 
+      {/* --- sun ---------------------------------------------------------- */}
+      <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        <Slider
+          label="Sun"
+          value={sunHour ?? SUN_NOON_HOUR}
+          onChange={setSunHour}
+          suffix=""
+          min={SUN_MIN_HOUR}
+          max={SUN_MAX_HOUR}
+          step={SUN_STEP_HOURS}
+          display={sunHour === null ? 'off' : formatSunHour(sunHour)}
+        />
+        <div className="mt-1 flex items-center justify-between gap-2">
+          {/* Shadows are the expensive half and stay off until the slider is
+              touched, so the untouched default is byte-for-byte the old scene. */}
+          <span className="text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {sunHour === null
+              ? 'Lighting and shadows off'
+              : 'Shadows on · buildings only'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSunHour(SUN_NOON_HOUR)}
+            className="shrink-0 rounded bg-white/5 px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] transition-colors hover:bg-white/15"
+          >
+            Noon
+          </button>
+        </div>
+      </div>
+
       <div className="mt-3 space-y-2.5 border-t border-[rgb(var(--edge))]/50 pt-2.5">
         <Slider
           label="Explode"
@@ -262,6 +324,74 @@ export default function LayerPanel() {
           suffix="%"
           disabled={photoreal}
         />
+      </div>
+
+      {/* --- section cut --------------------------------------------------
+          Sits with Explode because the two are mutually exclusive: the store
+          switches whichever one is on off when the other is reached for, so
+          the control never has to disable its neighbour. Cutting needs a
+          building to cut, hence the city-mode gate. */}
+      <div className="mt-3 space-y-2 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        <div className={canSlice ? '' : 'is-disabled'}>
+          <div className="flex items-center justify-between">
+            <span className="row-label">Slice</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={slice.enabled}
+              aria-label="Slice"
+              disabled={!canSlice}
+              onClick={() => setSlice({ enabled: !slice.enabled })}
+              className={[
+                'rounded px-2 py-0.5 text-[10px] transition-colors',
+                slice.enabled
+                  ? 'bg-[rgb(var(--accent))] text-black'
+                  : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+              ].join(' ')}
+            >
+              {slice.enabled ? 'on' : 'off'}
+            </button>
+          </div>
+          <div
+            className="mt-1 grid grid-cols-2 gap-1"
+            role="radiogroup"
+            aria-label="Slice axis"
+          >
+            {SLICE_AXES.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="radio"
+                aria-checked={slice.axis === a.id}
+                disabled={!canSlice}
+                title={a.title}
+                onClick={() => setSlice({ axis: a.id, enabled: true })}
+                className={[
+                  'rounded py-1 text-[11px] transition-colors',
+                  slice.axis === a.id
+                    ? 'bg-[rgb(var(--accent))] text-black'
+                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                ].join(' ')}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Slider
+          label="Slice position"
+          value={slice.offset}
+          onChange={(v) => setSlice({ offset: v })}
+          suffix="%"
+          min={-100}
+          max={100}
+          disabled={!canSlice || !slice.enabled}
+        />
+        <p className="text-[9px] leading-snug text-[rgb(var(--muted))]">
+          {slice.enabled
+            ? 'Cuts floor plates, height shells and every flat on them.'
+            : 'Section the active building. Turns Explode off.'}
+        </p>
       </div>
 
       <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">

@@ -1,11 +1,12 @@
 'use client';
 
-import { useDataStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
+import { useDataStore, useDetailPending, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
 import { UTILITY_LABEL } from '@/lib/cesium/materials';
 import { levelLabel, parentOf } from '@/lib/ulpin';
 import { orientedDims } from '@/lib/geo';
 import type { AssetType, Provenance, UseType, UtilityProps } from '@/lib/types';
 import UlpinCard from './UlpinCard';
+import CountUp from './CountUp';
 import { DERIVED_PARCEL_NOTE, ProvenanceRow } from './Provenance';
 
 /**
@@ -32,6 +33,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="mt-1">{children}</div>
     </div>
   );
+}
+
+/**
+ * Placeholder for a value that is still in flight.
+ *
+ * Sized in a way that cannot move the row: the label beside it is 11px text
+ * with a taller line box than this 10px bar, so the row height is governed by
+ * the label either way and the swap to real content shifts nothing.
+ */
+function SkeletonBar({ w = 'w-20' }: { w?: string }) {
+  return <span className={`skeleton inline-block h-[10px] rounded align-middle ${w}`} />;
 }
 
 const m2 = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²`;
@@ -61,7 +73,9 @@ export default function DetailPanel() {
   const buildings = useDataStore((s) => s.buildings);
   const utilities = useDataStore((s) => s.utilities);
   const conflicts = useDataStore((s) => s.conflicts);
+  const loading = useDataStore((s) => s.loading);
   const detail = useEnsureDetail(activeBuildingId);
+  const detailPending = useDetailPending(activeBuildingId);
 
   // Derived context selectors -- also called unconditionally, even when
   // they return an empty array (no active selection).
@@ -122,12 +136,29 @@ export default function DetailPanel() {
   // In underground mode with no corridor picked, the surface stack is not the
   // subject any more -- showing the previously selected unit here would be
   // stale context, so fall back to the area summary.
+  // The boot fetch writes buildings, parcels, utilities and conflicts as four
+  // separate stores, then clears `loading` -- so `loading` is the only signal
+  // that all four have landed.
+  const aoiReady = !loading && buildings !== null;
+
   if (!bprops || mode === 'city' || (underground && selectedUtilityId === null)) {
     return (
       <Panel title="Siripuram, Visakhapatnam" kicker="Area of interest">
-        <Row label="Buildings" value={buildings?.features.length ?? '—'} />
-        <Row label="Utility runs" value={utilities?.features.length ?? '—'} />
-        <Row label="Flagged conflicts" value={conflicts.length} />
+        {/* All three figures wait on the same boot fetch, so they are gated
+            together: counting conflicts up to zero while that array is still
+            unset would animate a number that is not yet true. */}
+        <Row
+          label="Buildings"
+          value={aoiReady ? <CountUp value={buildings.features.length} /> : '—'}
+        />
+        <Row
+          label="Utility runs"
+          value={aoiReady ? <CountUp value={utilities?.features.length ?? 0} /> : '—'}
+        />
+        <Row
+          label="Flagged conflicts"
+          value={aoiReady ? <CountUp value={conflicts.length} /> : '—'}
+        />
         <Row label="CRS" value="EPSG:4326 · Z in metres" />
         <p className="mt-3 text-[11px] leading-snug text-[rgb(var(--muted))]">
           {underground
@@ -283,21 +314,44 @@ export default function DetailPanel() {
         <Row label="Storeys" value={`${bprops.floors} above ground`} />
         <Row label="Basements" value={bprops.basements} />
         <Row label="Ground elevation" value={m(bprops.ground_elev)} />
-        <Row label="Units" value={totalUnits || '—'} />
-        <Row
-          label="Parent parcel"
-          value={
-            <span className="font-mono text-[11px]">{detail?.parcel?.ulpin ?? '—'}</span>
-          }
-        />
-        <Row label="Registered owner" value={detail?.parcel?.owner ?? '—'} />
-        {detail?.parcel ? (
-          <Row label="Parcel area" value={m2(detail.parcel.area_m2)} />
-        ) : null}
+        {/* Everything above comes from the buildings FeatureCollection, which
+            is already in hand the moment the building is picked. Only the rows
+            below wait on /api/building/:id, so only they shimmer -- blanking
+            out facts we already hold would be a worse answer than a slow one. */}
+        {detailPending ? (
+          <>
+            <Row label="Units" value={<SkeletonBar w="w-8" />} />
+            <Row label="Parent parcel" value={<SkeletonBar w="w-28" />} />
+            <Row label="Registered owner" value={<SkeletonBar w="w-24" />} />
+            <Row label="Parcel area" value={<SkeletonBar w="w-16" />} />
+          </>
+        ) : (
+          <>
+            <Row label="Units" value={totalUnits || '—'} />
+            <Row
+              label="Parent parcel"
+              value={
+                <span className="font-mono text-[11px]">{detail?.parcel?.ulpin ?? '—'}</span>
+              }
+            />
+            <Row label="Registered owner" value={detail?.parcel?.owner ?? '—'} />
+            {detail?.parcel ? (
+              <Row label="Parcel area" value={m2(detail.parcel.area_m2)} />
+            ) : null}
+          </>
+        )}
       </div>
 
       {/* --- footprint dimensions ----------------------------------------- */}
-      {dims ? (
+      {/* Reserved while pending: this section pops into existence when the
+          detail lands, and reserving its height is what stops the panel below
+          it from jumping. */}
+      {detailPending ? (
+        <Section title="Footprint">
+          <Row label="Dimensions" value={<SkeletonBar w="w-32" />} />
+          <Row label="Footprint area" value={<SkeletonBar w="w-16" />} />
+        </Section>
+      ) : dims ? (
         <Section title="Footprint">
           <Row
             label="Dimensions"

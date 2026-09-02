@@ -15,6 +15,7 @@ import {
   configureScene, createTerrain, fetchInitialData, frameInitialCamera,
   hasIonToken, sampleGroundUnder,
 } from '@/lib/cesium/setup';
+import { applySun } from '@/lib/cesium/sun';
 import {
   applyPerformanceProfile, attachAdaptiveResolution, detectWeakGpu,
 } from '@/lib/cesium/perf';
@@ -58,6 +59,8 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
   const baseTerrainRef = useRef<Cesium.TerrainProvider | null>(null);
   /** Disposer for the adaptive-resolution watchdog started in the mount effect. */
   const stopAdaptiveRef = useRef<(() => void) | null>(null);
+  /** Set at boot; sizes the shadow map when the sun is switched on. */
+  const weakGpuRef = useRef(false);
 
   const setIonFallback = useViewStore((s) => s.setIonFallback);
   const loading = useDataStore((s) => s.loading);
@@ -113,6 +116,7 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
       // watchdog only re-renders when it changes the scale, so in
       // requestRenderMode it costs nothing while the scene is idle.
       const profile = { lowEnd: detectWeakGpu() };
+      weakGpuRef.current = profile.lowEnd;
       applyPerformanceProfile(viewer, profile);
       stopAdaptiveRef.current = attachAdaptiveResolution(viewer);
 
@@ -196,6 +200,17 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
       globe.depthTestAgainstTerrain = true;
     }
   }, [ctx.viewer, underground]);
+
+  // ---- sun / time of day --------------------------------------------------
+  // Scene state like the two effects around it. applyGisDarkScene() pins globe
+  // lighting off at boot and is only called from configureScene(), so this runs
+  // after it once and is never undone by a later tone or provider switch.
+  const sunHour = useViewStore((s) => s.sunHour);
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    applySun(viewer, sunHour, weakGpuRef.current);
+  }, [ctx.viewer, sunHour]);
 
   // ---- navigation mode ----------------------------------------------------
   // Which mouse gestures the camera controller accepts. Scene configuration,

@@ -33,6 +33,8 @@ export default function TopBar() {
   const setLeftPanelOpen = useViewStore((s) => s.setLeftPanelOpen);
   const mode = useViewStore((s) => s.mode);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
+  const statsOpen = useViewStore((s) => s.statsOpen);
+  const setStatsOpen = useViewStore((s) => s.setStatsOpen);
 
   // The area name tracks the selection so the header always answers "where am
   // I": AOI at city level, the selected building's address/name deeper in.
@@ -172,6 +174,22 @@ export default function TopBar() {
           className="hidden rounded px-2 py-1 text-[11px] text-[rgb(var(--ink))] transition-colors hover:bg-white/10 sm:block"
         >
           Tools
+        </button>
+        {/* MenuButton has no pressed state, so this uses the active idiom from
+            ActionBar and NavDock rather than inventing a third one. */}
+        <button
+          type="button"
+          onClick={() => setStatsOpen(!statsOpen)}
+          aria-pressed={statsOpen}
+          title="Area statistics"
+          className={[
+            'rounded px-2 py-1 text-[11px] transition-colors',
+            statsOpen
+              ? 'bg-[rgb(var(--accent))] text-black'
+              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+          ].join(' ')}
+        >
+          Stats
         </button>
         <MenuButton label="Measurements" disabled />
         <MenuButton

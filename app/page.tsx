@@ -13,6 +13,7 @@ import NavDock from '@/components/ui/NavDock';
 import ParcelInset from '@/components/ui/ParcelInset';
 import PhotorealNotice from '@/components/ui/PhotorealNotice';
 import StatusBar from '@/components/ui/StatusBar';
+import StatsPanel from '@/components/ui/StatsPanel';
 import TopBar from '@/components/ui/TopBar';
 
 /**
@@ -76,6 +77,12 @@ export default function Page() {
           <div className="hidden lg:block">
             <ParcelInset />
           </div>
+        </div>
+
+        {/* Beside the right-hand column, not inside it: stacking it there
+            would reflow the DetailPanel's scroll cap every time Stats opens. */}
+        <div className="absolute right-[330px] top-[68px] max-lg:hidden">
+          <StatsPanel />
         </div>
 
         <div className="absolute left-1/2 top-[68px] -translate-x-1/2 max-md:w-[calc(100vw-24px)] max-md:px-1">

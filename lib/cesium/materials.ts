@@ -13,6 +13,54 @@ import type { AssetType, Provenance, UseType } from '@/lib/types';
 const rgba = (r: number, g: number, b: number, a: number) =>
   Cesium.Color.fromBytes(r, g, b, Math.round(a * 255));
 
+// -------------------------------------------------------------- floor view
+/**
+ * Every dimension and threshold the floor/unit view is tuned by, in one block.
+ *
+ * ARCHITECTURE RULE, same spirit as the colours below: no layer invents its own
+ * plate thickness, inset or fade threshold. FloorStackLayer and UnitsLayer have
+ * to agree about where the plate top is or the flats float; putting the numbers
+ * anywhere but here is what lets them drift apart.
+ */
+export const FLOOR_VIEW = {
+  /** Thickness of the isolated level's base plate, metres. */
+  PLATE_THICKNESS_M: 0.3,
+  /** Seam between stacked slabs in the exploded stack, metres. */
+  SLAB_GAP_M: 0.35,
+  /** Alpha of the full-height shell drawn around the isolated level. */
+  SHELL_ALPHA: 0.08,
+
+  /**
+   * How far each unit is pulled in from its stored footprint, metres.
+   *
+   * Units are a grid subdivision, so neighbours literally share wall lines.
+   * Drawn as stored they z-fight along every shared face; inset, each flat is
+   * its own box with a 2 x this gap to the next one -- which is also what makes
+   * a section cut read as separate flats rather than one merged slab.
+   */
+  UNIT_INSET_M: 0.12,
+  /** How far a unit's base sits above the plate's top face, metres. */
+  UNIT_LIFT_M: 0.1,
+  /** Floor for a unit box's rendered height once the plate and lift are taken. */
+  UNIT_MIN_HEIGHT_M: 0.6,
+
+  /** Opacity of a unit volume at rest. */
+  UNIT_ALPHA: 0.82,
+  /** Opacity of the units NOT selected. Dimmed, never hidden. */
+  UNIT_DIM_ALPHA: 0.45,
+
+  /** Unit code labels are decluttered beyond this camera distance, metres. */
+  LABEL_MAX_DISTANCE_M: 250,
+
+  /**
+   * Explode fractions (0-1 of the slider) between which units fade in on the
+   * exploded stack. Below the first the storeys have not separated enough for a
+   * flat to be visible on top of one; above the second they are fully up.
+   */
+  EXPLODE_UNITS_IN: 0.6,
+  EXPLODE_UNITS_FULL: 0.8,
+} as const;
+
 // ---------------------------------------------------------------- buildings
 /** Base fill by use type -- muted, so highlights read clearly against them. */
 export const USE_COLOR: Record<UseType, Cesium.Color> = {
@@ -67,8 +115,25 @@ export const MATERIALS = {
   /** An above-ground floor slab in the exploded stack. */
   floorSlab: rgba(150, 190, 230, 0.34),
 
-  /** The floor currently isolated -- bright enough to read through the stack. */
-  floorActive: rgba(110, 216, 255, 0.72),
+  /**
+   * The isolated level's base plate. Solid enough to read as a floor the flats
+   * stand on, and it is the surface a click resolves to as "the floor" when no
+   * unit is under the cursor -- corridors, lobbies, the level's own space.
+   */
+  floorPlate: rgba(120, 168, 214, 0.82),
+
+  /**
+   * The isolated level's height envelope, drawn as a full-Z-extent shell so the
+   * level still reads as a volume rather than a sheet of paper.
+   *
+   * The alpha is the whole point: at anything approaching opacity this is the
+   * exact geometry that used to swallow its own unit volumes. At 0.08 the flats
+   * inside are plainly visible, and Picker's drill-to-unit rule keeps the shell
+   * from swallowing the pick ray as well.
+   */
+  floorShell: rgba(150, 198, 240, FLOOR_VIEW.SHELL_ALPHA),
+  floorShellOutline: rgba(176, 220, 255, 0.55),
+
   /** Edge of the isolated floor: near-white so the highlight has a crisp rim. */
   floorActiveOutline: rgba(200, 242, 255, 1),
 
@@ -78,15 +143,31 @@ export const MATERIALS = {
   /** Edge of a floor slab in the stack. */
   floorOutline: rgba(143, 180, 216, 0.5),
 
-  /** A unit volume on the isolated floor. */
-  unitDefault: rgba(196, 214, 236, 0.42),
+  /**
+   * A unit volume on the isolated floor.
+   *
+   * `alpha` is supplied by the caller because the units layer eases it: they
+   * fade in as the exploded stack opens, and they dim (never vanish) while a
+   * sibling is selected.
+   */
+  unitDefault: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
+    rgba(196, 214, 236, 1).withAlpha(alpha),
+
+  /** Cursor is over it. Same blue the buildings use for hover, so the gesture
+   *  means one thing at every level of the hierarchy. */
+  unitHover: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
+    rgba(120, 205, 255, 1).withAlpha(Math.max(alpha, 0.7)),
 
   /** Edge of an unselected unit. */
   unitOutlineIdle: rgba(159, 182, 207, 0.45),
 
   /** The selected unit: gold, with a silhouette outline. */
-  unitSelected: rgba(240, 190, 72, 0.88),
+  unitSelected: (alpha = 0.88) => rgba(240, 190, 72, 1).withAlpha(alpha),
   unitOutline: rgba(255, 226, 140, 1),
+
+  /** Unit code label on the isolated floor. */
+  unitLabelFill: rgba(238, 246, 255, 1),
+  unitLabelOutline: rgba(8, 14, 24, 1),
 
   /** Surface parcel polygons, clamped to ground. */
   parcelFill: rgba(90, 170, 140, 0.16),

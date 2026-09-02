@@ -9,7 +9,9 @@ import { useViewStore } from '@/lib/store';
  * in CesiumRoot). Reset and Auto-spin write store state that CameraDirector
  * acts on. Nothing here calls a camera method directly.
  *
- * Slice is present but disabled, as specified.
+ * Slice toggles the section cut through the active building. It needs one to
+ * cut, so it is disabled in city view; the axis and the plane position live in
+ * the LayerPanel next to the Explode slider the two are exclusive with.
  */
 export default function NavDock() {
   const navMode = useViewStore((s) => s.navMode);
@@ -17,6 +19,10 @@ export default function NavDock() {
   const autoSpin = useViewStore((s) => s.autoSpin);
   const setAutoSpin = useViewStore((s) => s.setAutoSpin);
   const resetView = useViewStore((s) => s.resetView);
+  const slice = useViewStore((s) => s.slice);
+  const setSlice = useViewStore((s) => s.setSlice);
+  const activeBuildingId = useViewStore((s) => s.activeBuildingId);
+  const canSlice = activeBuildingId !== null;
 
   return (
     <div className="glass pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 py-1">
@@ -62,9 +68,22 @@ export default function NavDock() {
 
       <button
         type="button"
-        disabled
-        title="Slice — not implemented"
-        className="is-disabled hidden rounded px-2.5 py-1 text-[11px] text-[rgb(var(--muted))] sm:block"
+        disabled={!canSlice}
+        aria-pressed={slice.enabled}
+        onClick={() => setSlice({ enabled: !slice.enabled })}
+        title={
+          canSlice
+            ? 'Section cut through the active building'
+            : 'Slice — select a building first'
+        }
+        className={[
+          'rounded px-2.5 py-1 text-[11px] transition-colors',
+          !canSlice
+            ? 'is-disabled text-[rgb(var(--muted))]'
+            : slice.enabled
+              ? 'bg-[rgb(var(--accent))] text-black'
+              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+        ].join(' ')}
       >
         Slice
       </button>

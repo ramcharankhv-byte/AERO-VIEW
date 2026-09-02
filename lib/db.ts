@@ -32,7 +32,7 @@ function getPool(): Pool {
     pool = new Pool({
       connectionString:
         process.env.DATABASE_URL ?? 'postgresql://ulpin:ulpin@localhost:55432/ulpin',
-      max: 4,
+      max: 10,
       connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
       idleTimeoutMillis: 10000,
     });
@@ -54,6 +54,31 @@ async function usingDb(): Promise<boolean> {
     dbUsable = false;
   }
   return dbUsable;
+}
+
+/**
+ * Run a PostGIS query, or report that the snapshot should serve instead.
+ *
+ * A failed QUERY is treated exactly like a failed probe. The pool is small and
+ * deliberately short-timeouted so a missing database is detected fast, which
+ * also means a burst of concurrent requests can exhaust it and time out while
+ * Postgres is perfectly healthy. The documented contract is that the committed
+ * snapshot serves whenever PostGIS cannot -- not that the request 500s -- so a
+ * starved pool degrades to the snapshot rather than to an error.
+ *
+ * The result is wrapped rather than returned as `T | null` because
+ * getBuildingDetail legitimately resolves to null for an unknown id, and that
+ * must not be confused with "the database could not answer".
+ */
+async function viaDb<T>(
+  run: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false }> {
+  if (!(await usingDb())) return { ok: false };
+  try {
+    return { ok: true, value: await run() };
+  } catch {
+    return { ok: false };
+  }
 }
 
 async function q<T = Record<string, unknown>>(
@@ -196,38 +221,39 @@ const QUERY_SQL = `
                         WHEN 'floor' THEN 3 ELSE 4 END, s.id`;
 
 export async function getBuildings(): Promise<GeoFC<BuildingProps>> {
-  if (await usingDb()) {
-    return (await q<{ fc: GeoFC<BuildingProps> }>(BUILDINGS_SQL))[0].fc;
-  }
+  const r = await viaDb(async () =>
+    (await q<{ fc: GeoFC<BuildingProps> }>(BUILDINGS_SQL))[0].fc);
+  if (r.ok) return r.value;
   return snapshot<GeoFC<BuildingProps>>('buildings.json');
 }
 
 export async function getParcels(): Promise<GeoFC<ParcelInfo>> {
-  if (await usingDb()) {
-    return (await q<{ fc: GeoFC<ParcelInfo> }>(PARCELS_SQL))[0].fc;
-  }
+  const r = await viaDb(async () =>
+    (await q<{ fc: GeoFC<ParcelInfo> }>(PARCELS_SQL))[0].fc);
+  if (r.ok) return r.value;
   return snapshot<GeoFC<ParcelInfo>>('parcels.json');
 }
 
 export async function getUtilities(): Promise<GeoFC<UtilityProps>> {
-  if (await usingDb()) {
-    return (await q<{ fc: GeoFC<UtilityProps> }>(UTILITIES_SQL))[0].fc;
-  }
+  const r = await viaDb(async () =>
+    (await q<{ fc: GeoFC<UtilityProps> }>(UTILITIES_SQL))[0].fc);
+  if (r.ok) return r.value;
   return snapshot<GeoFC<UtilityProps>>('utilities.json');
 }
 
 export async function getConflicts(): Promise<ConflictRow[]> {
-  if (await usingDb()) {
-    return (await q<{ rows: ConflictRow[] }>(CONFLICTS_SQL))[0].rows;
-  }
+  const r = await viaDb(async () =>
+    (await q<{ rows: ConflictRow[] }>(CONFLICTS_SQL))[0].rows);
+  if (r.ok) return r.value;
   return snapshot<ConflictRow[]>('conflicts.json');
 }
 
 export async function getBuildingDetail(id: number): Promise<BuildingDetail | null> {
-  if (await usingDb()) {
+  const r = await viaDb(async () => {
     const rows = await q<{ doc: BuildingDetail }>(DETAIL_SQL, [id]);
     return rows[0]?.doc ?? null;
-  }
+  });
+  if (r.ok) return r.value;
   const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
   return all[String(id)] ?? null;
 }

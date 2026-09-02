@@ -179,9 +179,38 @@ a DEM). Siripuram is hilly, so the viewer samples real terrain under every
 building once at load and shifts each stack by the difference. The schema is
 untouched; only rendering is reconciled.
 
-**An isolated floor collapses to a thin plate.** At full slab thickness it
-encloses its own unit volumes, which makes them invisible *and* unpickable — the
-slab wins both the depth test and the pick ray.
+**An isolated floor shows the level and its flats together.** The level is drawn
+as a thin base plate at its base Z plus a translucent shell over its full height,
+and every unit on it stands on that plate as its own solid box — co-visible and
+co-pickable, not a drill-down level below.
+
+Two things keep the flats visible, and both are load-bearing. The shell is drawn
+at `FLOOR_VIEW.SHELL_ALPHA`, because at full slab thickness a level's volume
+*encloses* its own units and wins the depth test. And `Picker` drill-picks and
+takes the topmost **unit** if the ray found one, because otherwise the shell in
+front of the flats wins the pick ray instead. The plate or shell resolves as the
+floor only when no unit is under the cursor — the level's own space, i.e.
+corridors and common areas.
+
+Each flat is inset `FLOOR_VIEW.UNIT_INSET_M` from its stored footprint and lifted
+`FLOOR_VIEW.UNIT_LIFT_M` off the plate, at render time only. Units are a grid
+subdivision, so neighbours share wall lines in the DB; drawn as stored they
+z-fight, and in section they merge into one slab. The DB geometry, the API and
+the stored ULPINs are untouched. Every distance, alpha and threshold behind this
+lives in `FLOOR_VIEW` in `lib/cesium/materials.ts`.
+
+**Slice cuts the rings, not the framebuffer.** Cesium exposes
+`ClippingPlaneCollection` on a `Globe`, a `Model` and a `Cesium3DTileset` only —
+an entity's `PolygonGraphics` draws through a `Primitive`, which has no
+`clippingPlanes` property at all, and every sliceable surface here (plates,
+shells, unit volumes, slabs) is entity geometry. So `lib/geo.ts` defines the
+half-plane once and `lib/cesium/section.ts` clips the rings against it on the
+CPU, feeding the result back through the same `CallbackProperty` mechanism the
+rest of the scene animates with. The clip re-runs when the plane moves, not per
+frame. Slicing a whole building collapses every level to its plate for the same
+reason the isolated floor does, and the architectural model steps aside because
+its opaque walls would hide the cut. Slice and Explode are mutually exclusive,
+enforced in the store rather than in the two controls.
 
 ---
 
@@ -237,7 +266,7 @@ Both suites were run against **PostGIS and the snapshot backend**, and the
 ### Current state
 
 - 384 buildings · 325 parcels · 1,810 floors · 6,438 units · 301 utility runs · 12 conflicts
-- `npm run build` clean, `tsc --noEmit` clean, 8/8 unit tests, 24/24 UI checks
+- `npm run build` clean, `tsc --noEmit` clean, 21/21 unit tests, 46/46 UI checks
 
 ### Not implemented
 
