@@ -10,6 +10,7 @@ import { toSceneZ } from '@/lib/cesium/terrain';
 import { flatLonLat } from '@/lib/geo';
 import { buildRoof } from '@/lib/cesium/roofs';
 import { fixturesFor } from '@/lib/cesium/equipment';
+import { ringPerimeterM } from '@/lib/geo';
 import { windowGrid } from '@/lib/cesium/textures';
 import type { BuildingProps, UseType } from '@/lib/types';
 
@@ -121,38 +122,53 @@ export default function BuildingModelLayer() {
     // A narrower wall tile (one bay per 3 m, not 4) so the model reads with
     // finer fenestration rhythm than the city-scale extrusions. Storey 0
     // takes a ground-floor variant whose bay carries an entry door.
-    const wallCanvas = windowGrid(use, 3, FLOOR_H);
+    //
+    // Without an explicit repeat an ImageMaterialProperty tiles (1,1): one
+    // 3 m bay stretched around the whole perimeter per storey, which read as
+    // a plain block. The walls are WallGraphics (like the city layer) whose
+    // u is the ring's cumulative arc length, so repeating the tile
+    // perimeter/3 times lays one real bay per 3 m on every wall. v spans
+    // exactly one storey -- the tile is drawn for one -- so repeat.y stays 1.
+    const baysPerimeter = Math.max(1, Math.round(ringPerimeterM(ring) / 3));
     const wallTexture = new Cesium.ImageMaterialProperty({
-      image: wallCanvas,
+      image: windowGrid(use, 3, FLOOR_H),
+      repeat: new Cesium.Cartesian2(baysPerimeter, 1),
       color: Cesium.Color.WHITE,
     });
-    const groundCanvas = windowGrid(use, 3, FLOOR_H, true);
     const groundTexture = new Cesium.ImageMaterialProperty({
-      image: groundCanvas,
+      image: windowGrid(use, 3, FLOOR_H, true),
+      repeat: new Cesium.Cartesian2(baysPerimeter, 1),
       color: Cesium.Color.WHITE,
     });
 
     // Above-ground storeys 0..floors-1, then any basements as a solid grey
-    // mass below grade. Each storey lifts by its own index when exploded.
-    // A flat slab cap closes each storey's top: the extruded polygon carries
-    // its texture on ALL faces including the top, so an exploded stack
-    // otherwise prints the window grid on every separated block (the same
-    // defect BuildingsLayer's roof cap fixes at city scale).
+    // mass below grade. Each storey lifts by its own index when exploded --
+    // via callback-driven minimum/maximumHeights, the same dynamic-geometry
+    // path the old extruded polygons used. A flat slab cap closes each
+    // storey's top: a wall has no top face, but an exploded stack would
+    // otherwise show straight through between storeys, so the caps read as
+    // the floor plates.
     const storeyCount = Math.max(1, props.floors);
     for (let i = 0; i < storeyCount; i++) {
       const z0 = base + i * FLOOR_H;
+      const positions = Cesium.Cartesian3.fromDegreesArrayHeights(
+        flat.flatMap((v, idx) => (idx % 2 === 0 ? [v, flat[idx + 1], z0] : [])),
+      );
       ds.entities.add({
-        polygon: {
-          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
-          height: new Cesium.CallbackProperty(() => z0 + liftFor(i), false),
-          extrudedHeight: new Cesium.CallbackProperty(
-            () => z0 + FLOOR_H + liftFor(i),
+        wall: {
+          positions,
+          minimumHeights: new Cesium.CallbackProperty(
+            () => positions.map(() => z0 + liftFor(i)),
             false,
-          ),
+          ) as unknown as Cesium.Property,
+          maximumHeights: new Cesium.CallbackProperty(
+            () => positions.map(() => z0 + FLOOR_H + liftFor(i)),
+            false,
+          ) as unknown as Cesium.Property,
           material: i === 0 ? groundTexture : wallTexture,
           outline: true,
           outlineColor: MATERIALS.buildingModelRoofLine,
-          shadows: shadowsRef.current,
+          shadows: Cesium.ShadowMode.DISABLED,
         },
       });
       // Slab cap riding the same lift: a hair above the storey top, thin

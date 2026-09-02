@@ -168,6 +168,23 @@ export function parse(search: string): Partial<ViewState> {
 }
 
 /**
+ * Copy the current shareable URL to the clipboard.
+ *
+ * The URL is already the live record of the view (see useUrlState), so sharing
+ * is nothing more than handing out the address bar. Returns false when the
+ * clipboard is blocked (permissions, non-secure context) so the caller can say
+ * so rather than pretend it worked.
+ */
+export async function copyViewLink(): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Hydrate from the URL on mount, then keep the URL in step with the store.
  *
  * Writes use replaceState, not pushState: dragging the transparency slider

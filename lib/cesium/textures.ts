@@ -21,6 +21,12 @@ import type { UseType } from '@/lib/types';
  * tile around the whole perimeter, so a high-contrast tile would strobe into
  * vertical stripes exactly like the ones this drawing replaced. Details are
  * carried by shading (sills, coursing, spandrels), not by tonal extremes.
+ *
+ * VERTICAL-JOINT RULE: with metric tiling (repeat = perimeter / bay width)
+ * any vertical line drawn INSIDE the tile repeats once per bay and strobes at
+ * city distance -- the stripes in the bug report. Vertical joints therefore
+ * live only at the bay boundary (x = 0 / x = w), where one per bay is the
+ * correct rhythm. Horizontal elements (sills, spandrels, rails) are free.
  */
 
 const PX_PER_M = 24;
@@ -223,15 +229,15 @@ function drawCommercial(
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(0, h - spandrelH, w, 2);
 
-  // Mullions: verticals every 1.2 m and a horizontal at the glass/spandrel
-  // seam. Thin and low-contrast -- heavy mullions are what strobed before.
+  // Mullions only at the bay edges (see the vertical-joint rule above): the
+  // old interior mullion every 1.2 m repeated once per bay under metric
+  // tiling and stretched into the vertical stripes on misaligned walls. One
+  // tile = one curtain-wall bay.
   const mullion = 'rgba(203,212,220,0.55)';
   const mw = Math.max(1, Math.round(PX_PER_M * 0.06));
   ctx.fillStyle = mullion;
-  const step = Math.round(tileWM === 0 ? w : (tileWM / Math.max(1, Math.round(tileWM / 1.2))) * PX_PER_M);
-  for (let x = 0; x < w; x += Math.max(4, step)) {
-    ctx.fillRect(x, 0, mw, h - spandrelH);
-  }
+  ctx.fillRect(0, 0, mw, h - spandrelH);
+  ctx.fillRect(w - mw, 0, mw, h - spandrelH);
   ctx.fillRect(0, h - spandrelH - mw, w, mw);
 }
 
@@ -248,7 +254,8 @@ function drawInstitutional(
   for (let y = course; y < h; y += course) {
     ctx.fillRect(0, y, w, 1);
   }
-  // Quoin/pilaster shading at the bay edges.
+  // Quoin/pilaster shading at the bay edges only (x = 0 / x = w) -- one per
+  // bay under metric tiling, per the vertical-joint rule.
   ctx.fillStyle = 'rgba(90,78,58,0.10)';
   ctx.fillRect(0, 0, Math.round(PX_PER_M * 0.18), h);
   ctx.fillRect(w - Math.round(PX_PER_M * 0.18), 0, Math.round(PX_PER_M * 0.18), h);
@@ -293,19 +300,13 @@ function drawInstitutional(
 function drawIndustrial(
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  _tileWM: number, _tileHM: number,
+  tileWM: number, _tileHM: number,
 ) {
-  // Coated metal cladding. The ribs are a 6% tonal step -- the earlier 0.18 m
-  // dark-every-0.36 m stripes at full contrast were the worst offender in the
-  // "printed" look.
+  // Coated metal cladding. Flat tone + grain: the drawn-in 0.6 m ribs
+  // repeated once per bay under metric tiling and were the main source of
+  // the vertical stripes in the bug report, so they are gone.
   ctx.fillStyle = '#a3aab3';
   ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(60,66,74,0.10)';
-  const ribPitch = Math.round(PX_PER_M * 0.6);
-  const ribW = Math.max(1, Math.round(PX_PER_M * 0.1));
-  for (let x = 0; x < w; x += ribPitch) {
-    ctx.fillRect(x, 0, ribW, h);
-  }
   grain(ctx, w, h, 0.06);
 
   // Clerestory ribbon across the top third -- factory windows run in bands.
@@ -317,9 +318,10 @@ function drawIndustrial(
   ctx.fillRect(0, bandY, w, bandH);
   ctx.fillStyle = 'rgba(190,210,225,0.12)';
   ctx.fillRect(0, bandY, w, Math.max(1, Math.round(bandH * 0.3)));
-  // Ribbon mullions.
-  ctx.fillStyle = 'rgba(200,208,216,0.5)';
-  for (let x = 0; x < w; x += Math.max(6, Math.round(PX_PER_M * 1.0))) {
+  // Ribbon mullions, wide pitch and faint (see the vertical-joint rule).
+  ctx.fillStyle = 'rgba(200,208,216,0.35)';
+  const pitch = Math.max(6, Math.round(PX_PER_M * 2));
+  for (let x = 0; x < w; x += pitch) {
     ctx.fillRect(x, bandY, 1, bandH);
   }
   // Band frame.

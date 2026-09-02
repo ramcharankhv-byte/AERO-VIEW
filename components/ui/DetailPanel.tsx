@@ -4,7 +4,7 @@ import { useDataStore, useDetailPending, useEnsureDetail, useViewStore, useBuild
 import { UTILITY_LABEL } from '@/lib/cesium/materials';
 import { levelLabel, parentOf } from '@/lib/ulpin';
 import { orientedDims } from '@/lib/geo';
-import type { AssetType, Provenance, UtilityProps } from '@/lib/types';
+import type { AssetType, Provenance, UseType, UtilityProps } from '@/lib/types';
 import UlpinCard from './UlpinCard';
 import CountUp from './CountUp';
 import { DERIVED_PARCEL_NOTE, ProvenanceRow } from './Provenance';
@@ -21,7 +21,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-[3px]">
       <span className="row-label shrink-0">{label}</span>
-      <span className="row-value text-right">{value}</span>
+      <span className="row-value min-w-0 text-right">{value}</span>
     </div>
   );
 }
@@ -48,6 +48,14 @@ function SkeletonBar({ w = 'w-20' }: { w?: string }) {
 
 const m2 = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²`;
 const m = (v: number) => `${v.toFixed(1)} m`;
+
+/** Demo rates per m² of carpet area (₹). Synthetic — never a real valuation. */
+const DEMO_RATE_PER_M2: Record<UseType, number> = {
+  residential: 45_000,
+  commercial: 80_000,
+  institutional: 35_000,
+  industrial: 25_000,
+};
 
 export default function DetailPanel() {
   // All hooks at the top, before any conditional return. Adding a hook
@@ -192,6 +200,15 @@ export default function DetailPanel() {
               }
             />
             <Row
+              label="Indicative value (demo)"
+              value={
+                <span className="text-amber-300">
+                  ₹{Math.round(unit.carpet_m2 * DEMO_RATE_PER_M2[bprops.use_type])
+                    .toLocaleString('en-IN')}
+                </span>
+              }
+            />
+            <Row
               label="Parent parcel"
               value={
                 <span className="font-mono text-[11px]">
@@ -206,7 +223,8 @@ export default function DetailPanel() {
             synthetic={synthetic}
             note={
               'Unit boundaries are a grid subdivision of the building footprint, '
-              + 'not a registered floor plan. Tenure and encumbrance are synthetic.'
+              + 'not a registered floor plan. Tenure and encumbrance are synthetic. '
+              + 'The indicative value uses demo rates and is not a valuation.'
             }
           />
         </Panel>
@@ -357,6 +375,12 @@ export default function DetailPanel() {
       {areaBreakdown && totalUnits > 0 ? (
         <Section title="Floor area">
           <Row label="Total built-up" value={m2(areaBreakdown.total)} />
+          {detail?.parcel ? (
+            <Row
+              label="FSI (built-up ÷ plot)"
+              value={(areaBreakdown.total / detail.parcel.area_m2).toFixed(2)}
+            />
+          ) : null}
           <Row
             label="Above ground"
             value={`${m2(areaBreakdown.above)} · ${areaBreakdown.aboveCount} units`}
@@ -366,6 +390,12 @@ export default function DetailPanel() {
               label="Basement"
               value={`${m2(areaBreakdown.below)} · ${areaBreakdown.belowCount} units`}
             />
+          ) : null}
+          {detail?.parcel ? (
+            <p className="mt-1 text-[10px] leading-snug text-[rgb(var(--muted))]">
+              FSI uses the derived Voronoi plot area — indicative, not a
+              surveyed plot boundary.
+            </p>
           ) : null}
         </Section>
       ) : null}
@@ -474,9 +504,9 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="glass rounded-lg p-3">
+    <div className="glass max-h-full overflow-y-auto overflow-x-hidden rounded-lg p-3">
       <div className="panel-title">{kicker}</div>
-      <h2 className="mt-0.5 truncate text-[15px] font-semibold capitalize text-[rgb(var(--ink))]">
+      <h2 className="mt-0.5 break-words text-[15px] font-semibold capitalize leading-snug text-[rgb(var(--ink))]">
         {title}
       </h2>
       <div className="mt-2">{children}</div>

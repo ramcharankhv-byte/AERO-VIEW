@@ -27,6 +27,15 @@ html, body {
   color: rgb(var(--ink));
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   overflow: hidden;
+  /* Long identifiers and addresses must wrap instead of stretching the chrome
+     on narrow screens. */
+  overflow-wrap: anywhere;
+}
+
+/* Row values wrap rather than truncate: a ULPIN or address that scrolls off
+   the panel is worse than one that takes a second line. */
+.row-value {
+  overflow-wrap: anywhere;
 }
 
 @layer components {
@@ -140,3 +149,7 @@ input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted
   background: rgb(var(--edge) / 0.9);
   border-radius: 999px;
 }
+
+/* The bars are translucent over the scene, so thin scrollbars inside them
+   should be too; a fat grey thumb over glass reads as a rendering bug. */
+.glass ::-webkit-scrollbar { width: 6px; }

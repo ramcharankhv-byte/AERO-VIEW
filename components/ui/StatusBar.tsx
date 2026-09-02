@@ -28,35 +28,38 @@ export default function StatusBar() {
   const parcelUlpin = activeBuildingId !== null ? detail[activeBuildingId]?.parcel?.ulpin : null;
 
   return (
-    <div className="glass pointer-events-auto flex h-7 items-center gap-3 rounded-lg px-3 text-[10px] text-[rgb(var(--muted))]">
-      <span className="font-medium text-[rgb(var(--ink))]">{count} 3D buildings</span>
+    <div className="glass pointer-events-auto flex h-7 items-center gap-3 overflow-hidden rounded-lg px-3 text-[10px] text-[rgb(var(--muted))]">
+      <span className="shrink-0 font-medium text-[rgb(var(--ink))]">{count} 3D buildings</span>
       <Sep />
-      <span>Siripuram, Visakhapatnam</span>
+      <span className="hidden shrink-0 sm:inline">Siripuram, Visakhapatnam</span>
       <Sep />
-      <span>WGS 84 / EPSG:4326 · Z in metres</span>
+      <span className="hidden shrink-0 lg:inline">WGS 84 / EPSG:4326 · Z in metres</span>
       <Sep />
-      <span>AOI 1.22 × 1.11 km</span>
+      <span className="hidden shrink-0 md:inline">AOI 1.22 × 1.11 km</span>
       <Sep />
       {/* Stated honestly: heights are mostly inferred, not measured. */}
-      <span title="90% of heights are inferred from footprint area and building tag">
+      <span
+        className="hidden shrink-0 md:inline"
+        title="90% of heights are inferred from footprint area and building tag"
+      >
         Height accuracy ±1 storey (est.)
       </span>
       <Sep />
-      <span className={conflicts.length ? 'text-red-400' : ''}>
+      <span className={`shrink-0 ${conflicts.length ? 'text-red-400' : ''}`}>
         {conflicts.length} conflicts
       </span>
       {activeProps ? (
         <>
           <Sep />
           <span
-            className="font-mono text-[rgb(var(--ink))]"
+            className="hidden shrink-0 font-mono text-[rgb(var(--ink))] lg:inline"
             title={`Parcel ${parcelUlpin ?? '—'}`}
           >
             {activeProps.ulpin}
           </span>
         </>
       ) : null}
-      <span className="ml-auto flex items-center gap-3">
+      <span className="ml-auto flex shrink-0 items-center gap-3">
         <ScaleBar heightM={camHeight} />
         {/* Terrain and basemap are independent now: imagery needs no ion
             token, and the basemap can differ from the one picked if a
@@ -67,26 +70,28 @@ export default function StatusBar() {
             screen. */}
         {buildingStyle === 'photoreal' ? (
           <>
-            <span>Google Photorealistic 3D Tiles</span>
+            <span className="hidden xl:inline">Google Photorealistic 3D Tiles</span>
             <Sep />
-            <span>Terrain from tiles</span>
+            <span className="hidden xl:inline">Terrain from tiles</span>
           </>
         ) : (
           <>
-            <span className={imageryActive !== imageryProvider ? 'text-amber-300/90' : ''}>
+            <span
+              className={`hidden sm:inline ${imageryActive !== imageryProvider ? 'text-amber-300/90' : ''}`}
+            >
               {PROVIDER_LABELS[imageryActive]}
               {imageryActive !== imageryProvider ? ' (fallback)' : ''}
             </span>
             <Sep />
             {ionFallback ? (
-              <span className="text-amber-300/90">Ellipsoid · no terrain</span>
+              <span className="hidden sm:inline text-amber-300/90">Ellipsoid · no terrain</span>
             ) : (
-              <span>Cesium World Terrain</span>
+              <span className="hidden sm:inline">Cesium World Terrain</span>
             )}
           </>
         )}
         <Sep />
-        <span className="uppercase tracking-wide text-[rgb(var(--ink))]">
+        <span className="shrink-0 uppercase tracking-wide text-[rgb(var(--ink))]">
           {underground ? 'underground' : mode}
         </span>
       </span>
@@ -95,7 +100,7 @@ export default function StatusBar() {
 }
 
 function Sep() {
-  return <span className="text-[rgb(var(--edge))]">|</span>;
+  return <span className="hidden shrink-0 text-[rgb(var(--edge))] sm:inline">|</span>;
 }
 
 /**
