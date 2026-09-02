@@ -6,7 +6,7 @@ import type { ProviderId, TreatmentId } from './cesium/imagery-catalog';
 import { SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type {
   BuildingDetail, BuildingProps, BuildingStyle, ConflictRow, GeoFC, LayerKey,
-  Mode, ParcelInfo, UtilityProps,
+  Mode, ParcelInfo, SliceState, UtilityProps,
 } from './types';
 
 /**
@@ -24,8 +24,18 @@ export interface ViewState {
   selectedUnitId: number | null;
   selectedUtilityId: number | null;
   hoveredBuildingId: number | null;
+  /**
+   * The unit under the cursor on the isolated floor.
+   *
+   * Kept apart from hoveredBuildingId rather than folded into it: they are live
+   * at the same time (the cursor is over a flat, inside a building) and the
+   * tooltip and the units layer read different ones.
+   */
+  hoveredUnitId: number | null;
   layers: Record<LayerKey, boolean>;
   explodeT: number;                  // 0-100
+  /** Section cut through the active building. Mutually exclusive with explode. */
+  slice: SliceState;
   transparency: number;              // 0-100, applies to non-active buildings
   theme: 'dark' | 'light';
   underground: boolean;
@@ -73,10 +83,23 @@ export interface ViewState {
   selectBuilding: (id: number | null) => void;
   isolateFloor: (level: number | null) => void;
   selectUnit: (id: number | null) => void;
+  /**
+   * Jump straight to a unit on a level that is not isolated yet, in ONE write.
+   *
+   * Clicking a flat on the exploded stack in building mode has to set both
+   * isolatedFloor and selectedUnitId; doing it as isolateFloor()+selectUnit()
+   * would publish an intermediate state in which the floor is isolated and the
+   * unit is not, and every subscriber -- CameraDirector above all -- would act
+   * on it and start the wrong flight.
+   */
+  openUnit: (level: number, id: number) => void;
   selectUtility: (id: number | null) => void;
   setHovered: (id: number | null) => void;
+  /** Building and unit hover in one write, so a mouse move renders once. */
+  setHover: (buildingId: number | null, unitId: number | null) => void;
   toggleLayer: (key: LayerKey) => void;
   setExplode: (t: number) => void;
+  setSlice: (patch: Partial<SliceState>) => void;
   setTransparency: (t: number) => void;
   toggleTheme: () => void;
   setUnderground: (on: boolean) => void;
@@ -114,8 +137,10 @@ export const useViewStore = create<ViewState>((set) => ({
   selectedUnitId: null,
   selectedUtilityId: null,
   hoveredBuildingId: null,
+  hoveredUnitId: null,
   layers: { ...DEFAULT_LAYERS },
   explodeT: 0,
+  slice: { enabled: false, axis: 'ew', offset: 0 },
   transparency: 12,
   theme: 'dark',
   underground: false,
@@ -137,9 +162,13 @@ export const useViewStore = create<ViewState>((set) => ({
     set((s) =>
       id === null
         ? { mode: 'city', activeBuildingId: null, isolatedFloor: null,
-            selectedUnitId: null, selectedUtilityId: null, explodeT: 0 }
+            selectedUnitId: null, selectedUtilityId: null, explodeT: 0,
+            // The cut plane is positioned across THIS building's footprint, so
+            // it means nothing once there is no active building.
+            slice: { ...s.slice, enabled: false } }
         : { mode: 'building', activeBuildingId: id, isolatedFloor: null,
             selectedUnitId: null, selectedUtilityId: null,
+            slice: { ...s.slice, enabled: false, offset: 0 },
             // Auto-enable the parcels layer on selection so the user can see
             // the lot their selection is in without having to discover the
             // toggle. They can still turn it off and it will stay off.
@@ -158,13 +187,36 @@ export const useViewStore = create<ViewState>((set) => ({
         ? { mode: s.isolatedFloor !== null ? 'floor' : 'building', selectedUnitId: null }
         : { mode: 'unit', selectedUnitId: id, selectedUtilityId: null }),
 
+  openUnit: (level, id) =>
+    set({ mode: 'unit', isolatedFloor: level, selectedUnitId: id,
+          selectedUtilityId: null }),
+
   selectUtility: (id) => set({ selectedUtilityId: id }),
   setHovered: (id) => set({ hoveredBuildingId: id }),
+  setHover: (buildingId, unitId) =>
+    set({ hoveredBuildingId: buildingId, hoveredUnitId: unitId }),
 
   toggleLayer: (key) =>
     set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
 
-  setExplode: (t) => set({ explodeT: Math.max(0, Math.min(100, t)) }),
+  // Explode and slice are mutually exclusive, and the exclusion is enforced
+  // here rather than in the two controls: whichever one the user reaches for
+  // wins, and no component has to remember to switch the other off.
+  setExplode: (t) =>
+    set((s) => {
+      const explodeT = Math.max(0, Math.min(100, t));
+      return explodeT > 0 && s.slice.enabled
+        ? { explodeT, slice: { ...s.slice, enabled: false } }
+        : { explodeT };
+    }),
+
+  setSlice: (patch) =>
+    set((s) => {
+      const slice = { ...s.slice, ...patch };
+      slice.offset = Math.max(-100, Math.min(100, slice.offset));
+      return slice.enabled ? { slice, explodeT: 0 } : { slice };
+    }),
+
   setTransparency: (t) => set({ transparency: Math.max(0, Math.min(100, t)) }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
@@ -199,11 +251,12 @@ export const useViewStore = create<ViewState>((set) => ({
   hydrate: (patch) => set(patch),
 
   resetView: () =>
-    set({
+    set((s) => ({
       mode: 'city', activeBuildingId: null, isolatedFloor: null,
       selectedUnitId: null, selectedUtilityId: null, hoveredBuildingId: null,
-      explodeT: 0, underground: false, autoSpin: false,
-    }),
+      hoveredUnitId: null, explodeT: 0, underground: false, autoSpin: false,
+      slice: { ...s.slice, enabled: false },
+    })),
 }));
 
 /**

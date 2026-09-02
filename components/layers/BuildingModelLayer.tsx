@@ -49,6 +49,7 @@ export default function BuildingModelLayer() {
   const mode = useViewStore((s) => s.mode);
   const explodeT = useViewStore((s) => s.explodeT);
   const sunHour = useViewStore((s) => s.sunHour);
+  const sliceEnabled = useViewStore((s) => s.slice.enabled);
 
   const stateRef = useRef<ModelState>({ explodeT: 0 });
   /** Shared shadow mode -- see the note in BuildingsLayer. */
@@ -68,11 +69,17 @@ export default function BuildingModelLayer() {
 
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
-    if (!buildings || activeBuildingId === null || mode !== 'building') {
+    if (!buildings || activeBuildingId === null || mode !== 'building' || sliceEnabled) {
       // Deselect, or the user drilled into a floor/unit: the slab stack drawn
       // by FloorStackLayer takes over, and this model would sit on top of it
       // occluding the isolated-floor highlight. Tear down if we still have a
       // model up.
+      //
+      // Slicing in building mode is the same story for a different reason. The
+      // section is cut on the CPU against entity RINGS (see lib/cesium/section)
+      // and these storey walls are opaque and textured, so leaving them up
+      // would hide the very cut the user asked for behind an uncut box. The
+      // slab stack, which the section does reach, takes over instead.
       if (dsRef.current && !viewer.isDestroyed()) {
         viewer.dataSources.remove(dsRef.current, true);
         dsRef.current = null;
@@ -403,7 +410,7 @@ export default function BuildingModelLayer() {
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
       dsRef.current = null;
     };
-  }, [viewer, ready, ground, buildings, activeBuildingId, mode]);
+  }, [viewer, ready, ground, buildings, activeBuildingId, mode, sliceEnabled]);
 
   return null;
 }

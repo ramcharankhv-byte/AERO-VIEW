@@ -21,6 +21,23 @@ export type Mode = 'city' | 'building' | 'floor' | 'unit';
  */
 export type BuildingStyle = 'schematic' | 'photoreal';
 
+/**
+ * Section-cut state for the active building.
+ *
+ * `axis` is the direction the cutting plane's normal points, in the local
+ * metric frame: 'ew' opens an east-west section, 'ns' a north-south one.
+ * `offset` is -100..100 across the footprint's own extent along that normal,
+ * so one control reads the same on a 9 m house and a 60 m block.
+ *
+ * Mutually exclusive with explode: a stack that is both pulled apart and cut
+ * through shows neither clearly, so the store enforces one or the other.
+ */
+export interface SliceState {
+  enabled: boolean;
+  axis: 'ns' | 'ew';
+  offset: number;
+}
+
 export type LayerKey =
   | 'parcels' | 'buildings' | 'floors' | 'utilities' | 'terrain' | 'basemap';
 

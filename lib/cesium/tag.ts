@@ -12,7 +12,13 @@ import type * as Cesium from 'cesium';
 export interface EntityTag {
   kind: 'parcel' | 'building' | 'floor' | 'unit' | 'utility';
   id: number;
-  /** level_no, for floor entities. */
+  /**
+   * level_no, for floor AND unit entities.
+   *
+   * A unit carries it because a flat can be clicked on the exploded stack while
+   * its level is not the isolated one; the Picker needs the level to open both
+   * in a single store write rather than isolating and then selecting.
+   */
   level?: number;
 }
 
