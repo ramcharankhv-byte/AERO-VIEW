@@ -9,7 +9,7 @@ import { useViewStore } from '@/lib/store';
 import {
   SUN_MAX_HOUR, SUN_MIN_HOUR, SUN_NOON_HOUR, SUN_STEP_HOURS, formatSunHour,
 } from '@/lib/sun';
-import type { BuildingStyle, LayerKey } from '@/lib/types';
+import type { BuildingStyle, LayerKey, SliceState } from '@/lib/types';
 
 /**
  * Left panel: layer visibility, explode, transparency, view mode, theme.
@@ -31,6 +31,19 @@ const BUILDING_STYLES: { id: BuildingStyle; label: string; title: string }[] = [
     title: 'Google Photorealistic 3D Tiles. Captured imagery for orientation — '
       + 'it carries no rights data, and the cadastral geometry stays pickable '
       + 'underneath it.',
+  },
+];
+
+const SLICE_AXES: { id: SliceState['axis']; label: string; title: string }[] = [
+  {
+    id: 'ew',
+    label: 'E–W',
+    title: 'Cut along a north–south line and look at the east–west section.',
+  },
+  {
+    id: 'ns',
+    label: 'N–S',
+    title: 'Cut along an east–west line and look at the north–south section.',
   },
 ];
 
@@ -146,6 +159,10 @@ export default function LayerPanel() {
   const setImageryTreatment = useViewStore((s) => s.setImageryTreatment);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const setBuildingStyle = useViewStore((s) => s.setBuildingStyle);
+  const slice = useViewStore((s) => s.slice);
+  const setSlice = useViewStore((s) => s.setSlice);
+  const activeBuildingId = useViewStore((s) => s.activeBuildingId);
+  const canSlice = activeBuildingId !== null;
 
   // Depends only on build-time env, so the list is stable for the session.
   const providers = useMemo(() => availableProviders(), []);
@@ -307,6 +324,74 @@ export default function LayerPanel() {
           suffix="%"
           disabled={photoreal}
         />
+      </div>
+
+      {/* --- section cut --------------------------------------------------
+          Sits with Explode because the two are mutually exclusive: the store
+          switches whichever one is on off when the other is reached for, so
+          the control never has to disable its neighbour. Cutting needs a
+          building to cut, hence the city-mode gate. */}
+      <div className="mt-3 space-y-2 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+        <div className={canSlice ? '' : 'is-disabled'}>
+          <div className="flex items-center justify-between">
+            <span className="row-label">Slice</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={slice.enabled}
+              aria-label="Slice"
+              disabled={!canSlice}
+              onClick={() => setSlice({ enabled: !slice.enabled })}
+              className={[
+                'rounded px-2 py-0.5 text-[10px] transition-colors',
+                slice.enabled
+                  ? 'bg-[rgb(var(--accent))] text-black'
+                  : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+              ].join(' ')}
+            >
+              {slice.enabled ? 'on' : 'off'}
+            </button>
+          </div>
+          <div
+            className="mt-1 grid grid-cols-2 gap-1"
+            role="radiogroup"
+            aria-label="Slice axis"
+          >
+            {SLICE_AXES.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="radio"
+                aria-checked={slice.axis === a.id}
+                disabled={!canSlice}
+                title={a.title}
+                onClick={() => setSlice({ axis: a.id, enabled: true })}
+                className={[
+                  'rounded py-1 text-[11px] transition-colors',
+                  slice.axis === a.id
+                    ? 'bg-[rgb(var(--accent))] text-black'
+                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                ].join(' ')}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Slider
+          label="Slice position"
+          value={slice.offset}
+          onChange={(v) => setSlice({ offset: v })}
+          suffix="%"
+          min={-100}
+          max={100}
+          disabled={!canSlice || !slice.enabled}
+        />
+        <p className="text-[9px] leading-snug text-[rgb(var(--muted))]">
+          {slice.enabled
+            ? 'Cuts floor plates, height shells and every flat on them.'
+            : 'Section the active building. Turns Explode off.'}
+        </p>
       </div>
 
       <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">

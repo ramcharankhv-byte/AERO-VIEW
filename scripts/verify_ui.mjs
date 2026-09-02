@@ -1,10 +1,11 @@
 /**
  * End-to-end UI verification.
  *
- * Drives the real app in a real Chrome via CDP and walks the five view states:
- * city -> building -> floor -> unit -> underground, screenshotting each and
- * asserting the DOM actually changed. Uses puppeteer-core against the installed
- * Chrome rather than downloading a Chromium.
+ * Drives the real app in a real Chrome via CDP and walks the view states:
+ * city -> building -> floor -> unit -> sectioned floor -> underground,
+ * screenshotting each and asserting the DOM actually changed. Uses
+ * puppeteer-core against the installed Chrome rather than downloading a
+ * Chromium.
  *
  * Usage: node scripts/verify_ui.mjs [outDir]
  */
@@ -146,6 +147,18 @@ try {
 
   // --------------------------------------------------------------- FLOOR
   console.log('\n[4] FLOOR');
+  // The ladder only renders once /api/building/:id has resolved, which is a
+  // network round trip after the flight the previous step waited out. Waiting
+  // for a rung to exist rather than for a further fixed delay is what stops
+  // this step from failing on a slow first compile.
+  const ladderUp = await page
+    .waitForFunction(
+      () => [...document.querySelectorAll('button')].some((b) =>
+        /^(G|[0-9]{1,2}|B[0-9])$/.test(b.innerText.trim())),
+      { timeout: 30000 },
+    )
+    .then(() => true, () => false);
+  check('floor ladder rendered', ladderUp);
   const rung = await page.evaluate(() => {
     const btns = [...document.querySelectorAll('button')].filter((b) =>
       /^(G|[0-9]{1,2}|B[0-9])$/.test(b.innerText.trim()),
@@ -188,8 +201,160 @@ try {
   }
   await shot(page, '5-unit');
 
+  // ------------------------------------------------- FLOOR + UNITS + SLICE
+  // An isolated floor now shows its flats co-visibly with the level itself: a
+  // thin plate, a translucent height shell, and one solid box per unit. This
+  // block asserts the flats are really there, that a click on one resolves as
+  // a UNIT rather than as the shell in front of it, and that sectioning the
+  // level cuts the flats open rather than merging them into the plate.
+  //
+  // Unit centroids are read off the live scene through the dev-only
+  // __ulpinViewer seam and projected to canvas coordinates, so the click lands
+  // on a flat by construction instead of by sweeping the viewport and hoping.
+  console.log('\n[6] FLOOR UNITS + SLICE');
+
+  // Back out to the floor: the walk above ended with a unit selected.
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.innerText.trim() === 'Back to floor',
+    );
+    if (b) b.click();
+  });
+  await sleep(2500);
+
+  /** Unit entities in the live scene, with their centroids in canvas space. */
+  const readUnits = () =>
+    page.evaluate(() => {
+      const v = window.__ulpinViewer;
+      if (!v) return { seam: false, count: 0, area: 0, points: [] };
+      const ds = v.dataSources.getByName('units')[0];
+      if (!ds) return { seam: true, count: 0, area: 0, points: [] };
+      const now = v.clock.currentTime;
+      const points = [];
+      let count = 0;
+      let area = 0;
+      for (const e of ds.entities.values) {
+        if (e.tag?.kind !== 'unit') continue;
+        count++;
+        const shown = e.polygon?.show?.getValue(now);
+        if (!shown || !e.position) continue;
+        // Plan area of the visible flats, by Newell's method over the ring's
+        // ECEF positions. The section is cut into the RINGS, so area is what
+        // moves when the plane does -- and unlike a vertex count it can only
+        // go one way, which makes it an assertion rather than a coincidence.
+        const pos = e.polygon.hierarchy.getValue(now)?.positions ?? [];
+        let nx = 0; let ny = 0; let nz = 0;
+        for (let i = 0; i < pos.length; i++) {
+          const a = pos[i];
+          const b = pos[(i + 1) % pos.length];
+          nx += a.y * b.z - a.z * b.y;
+          ny += a.z * b.x - a.x * b.z;
+          nz += a.x * b.y - a.y * b.x;
+        }
+        area += 0.5 * Math.hypot(nx, ny, nz);
+        const win = v.scene.cartesianToCanvasCoordinates(e.position.getValue(now));
+        if (win) points.push({ x: Math.round(win.x), y: Math.round(win.y) });
+      }
+      return { seam: true, count, area, points };
+    });
+
+  const units = await readUnits();
+  check('dev viewer seam available', units.seam);
+  check('unit entities built for the active building', units.count > 0,
+    `${units.count} unit entit(ies)`);
+  check('units on the isolated floor are on screen and projected',
+    units.points.length > 0, `${units.points.length} visible`);
+
+  let floorUnitOk = false;
+  let floorUnitAt = null;
+  for (const p of units.points) {
+    if (p.x < 4 || p.y < 4 || p.x > 1676 || p.y > 946) continue;
+    await page.mouse.click(p.x, p.y);
+    await sleep(1400);
+    panel = await panelText(page);
+    if (/Titled unit/i.test(panel)) {
+      floorUnitOk = true;
+      floorUnitAt = `${p.x},${p.y}`;
+      break;
+    }
+  }
+  check('a unit centroid picks as a UNIT, not as the floor', floorUnitOk,
+    floorUnitOk ? `at ${floorUnitAt}` : 'no unit resolved');
+  if (floorUnitOk) {
+    // The ULPIN card splits the identifier into labelled segments, so the
+    // hyphenated form never reaches innerText; its gloss line does, and it only
+    // reads "unit N" when all four levels parsed. That is the check that the
+    // panel is showing a UNIT's ULPIN and not its parent floor's.
+    check('detail panel carries a unit ULPIN',
+      /parcel \d+ . building \d+ . level -?\d+ . unit \d+/.test(panel),
+      (panel.match(/parcel \d+ . building[^A-Z]{0,60}/) ?? ['none'])[0]);
+    check('provenance line present on the unit', /Provenance/i.test(panel));
+  }
+  await shot(page, '12-floor-units');
+
+  // -- section cut ---------------------------------------------------------
+  const sliceOn = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.getAttribute('aria-label') === 'Slice',
+    );
+    if (b) b.click();
+    return Boolean(b) && b.getAttribute('aria-checked') !== null;
+  });
+  check('slice toggle present and enabled in floor mode', sliceOn);
+  await sleep(600);
+  const sliceMoved = await page.evaluate(() => {
+    const el = document.querySelector('input[type=range][aria-label="Slice position"]');
+    if (!el || el.disabled) return false;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '20');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  });
+  check('slice position slider is live once slice is on', sliceMoved);
+  await sleep(1800);
+
+  // The cut reaches the flats, not just the plate: the section leaves separate
+  // unit boxes standing, and their RINGS have changed -- either a flat has been
+  // taken away entirely or the surviving ones have been re-cut.
+  const sliced = await readUnits();
+  check('units survive the section and stay individually drawn',
+    sliced.points.length > 0 && sliced.points.length <= units.count,
+    `${sliced.points.length}/${units.count} flats in section`);
+  check('the section cut the unit geometry, not only the plate',
+    sliced.area < units.area * 0.999,
+    `${units.points.length} flats/${units.area.toFixed(1)} m2 -> `
+    + `${sliced.points.length}/${sliced.area.toFixed(1)} m2`);
+  // Slice and explode are mutually exclusive, and the store is what enforces it.
+  const explodeAfterSlice = await page.evaluate(() => {
+    const el = document.querySelector('input[type=range][aria-label="Explode"]');
+    return el ? el.value : null;
+  });
+  check('enabling slice switched explode off', explodeAfterSlice === '0',
+    `explode=${explodeAfterSlice}`);
+  check('floor stayed isolated under the cut',
+    /Titled unit|Floor level|Basement level/i.test(await panelText(page)));
+  await shot(page, '13-floor-sliced');
+
+  const sliceErrors = errors.filter(
+    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|tile\.openstreetmap|openstreetmap\.org/i.test(e)
+      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com/i.test(e),
+  );
+  check('no console errors through the floor/slice walk', sliceErrors.length === 0,
+    sliceErrors.slice(0, 3).join(' | '));
+
+  // Explode and slice are mutually exclusive; leave the scene unsliced so the
+  // sections below see the same scene they always did.
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.getAttribute('aria-label') === 'Slice',
+    );
+    if (b && b.getAttribute('aria-checked') === 'true') b.click();
+  });
+  await sleep(1200);
+
   // --------------------------------------------------------- UNDERGROUND
-  console.log('\n[6] UNDERGROUND');
+  console.log('\n[7] UNDERGROUND');
   const ug = await page.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find(
       (x) => x.innerText.trim() === 'Underground',
@@ -210,7 +375,7 @@ try {
   // The five surfaces added by the polish pack. Back to city view first: the
   // tooltip, the provenance key and the stats panel are all city-view things,
   // and the walk above finished underground with a unit selected.
-  console.log('\n[7] POLISH PACK');
+  console.log('\n[8] POLISH PACK');
   await page.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find(
       (x) => x.innerText.trim() === 'Reset view',
@@ -337,16 +502,18 @@ try {
   await page.setRequestInterception(false);
 
   // -------------------------------------------------------- disabled controls
-  console.log('\n[8] DISABLED CONTROLS');
+  console.log('\n[9] DISABLED CONTROLS');
   const disabled = await page.evaluate(() =>
     [...document.querySelectorAll('button[disabled]')].map((b) => b.innerText.trim()),
   );
-  for (const label of ['Measurements', 'Share', 'Split', 'Slice']) {
+  // Slice is implemented now and is asserted live in [6]; the rest are
+  // still deliberately shown disabled rather than hidden.
+  for (const label of ['Measure', 'Share', 'Split']) {
     check(`${label} rendered disabled`, disabled.includes(label), disabled.join(','));
   }
 
   // ------------------------------------------------------------- console
-  console.log('\n[9] CONSOLE');
+  console.log('\n[10] CONSOLE');
   const real = errors.filter(
     // Third-party tile hosts are excluded: a transient 4xx/timeout from a
     // basemap CDN is a network condition, not an app error, and the imagery
