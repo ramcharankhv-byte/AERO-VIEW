@@ -20,14 +20,39 @@
  * never named. `name_source` records which of the last two applies to each
  * street, and the UI reports it. Nothing here overwrites an OSM name.
  *
- * Usage: node scripts/build_roads.mjs
+ * Usage: node scripts/build_roads.mjs [--slug=<project>] [--name="AOI name"]
+ *
+ * With no arguments this is the demo project, reading the committed extract at
+ * data/raw_highways.geojson and writing data/api/siripuram/roads.json. Any
+ * other slug reads data/projects/<slug>/raw_highways.geojson and writes
+ * data/api/<slug>/roads.json -- the same layout scripts/project.py uses, so
+ * this and the Python half of the pipeline agree about where a project's files
+ * live without either importing the other.
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 const ROOT = process.cwd();
-const SRC = path.join(ROOT, 'data', 'raw_highways.geojson');
-const OUT_DIR = path.join(ROOT, 'data', 'api');
+
+const argv = process.argv.slice(2);
+const opt = (key, fallback) => {
+  const hit = argv.find((a) => a.startsWith(`--${key}=`));
+  return hit ? hit.slice(key.length + 3) : fallback;
+};
+const SLUG = opt('slug', 'siripuram');
+if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(SLUG)) {
+  console.error(`build_roads: --slug must be lower-case letters, digits and hyphens; got ${SLUG}`);
+  process.exit(1);
+}
+// The demo project's raw extract predates per-project directories and is
+// committed where it has always been; moving it would be a rename of committed
+// data for no gain. Every other project keeps its inputs together.
+const WORK_DIR = SLUG === 'siripuram'
+  ? path.join(ROOT, 'data')
+  : path.join(ROOT, 'data', 'projects', SLUG);
+const AOI_NAME = opt('name', SLUG === 'siripuram' ? 'Siripuram, Visakhapatnam' : SLUG);
+const SRC = path.join(WORK_DIR, 'raw_highways.geojson');
+const OUT_DIR = path.join(ROOT, 'data', 'api', SLUG);
 const OUT = path.join(OUT_DIR, 'roads.json');
 
 /**
@@ -300,7 +325,7 @@ const features = streets.map((st, i) => {
 
 const doc = {
   type: 'FeatureCollection',
-  aoi: 'Siripuram, Visakhapatnam',
+  aoi: AOI_NAME,
   _disclaimer:
     'Centreline geometry, highway class and any name marked name_source="osm_name" '
     + 'are from OpenStreetMap (ODbL). Street references (STR-###), merged lengths, '
@@ -315,7 +340,7 @@ writeFileSync(OUT, JSON.stringify(doc), 'utf-8');
 const byClass = new Map();
 for (const f of features) byClass.set(f.properties.cls, (byClass.get(f.properties.cls) ?? 0) + 1);
 const osmNamed = features.filter((f) => f.properties.name_source === 'osm_name').length;
-console.log(`roads.json: ${features.length} streets `
+console.log(`data/api/${SLUG}/roads.json: ${features.length} streets `
   + `(${osmNamed} OSM-named, ${features.length - osmNamed} derived), `
   + `${(JSON.stringify(doc).length / 1024).toFixed(0)} KB`);
 console.log('  by class: '

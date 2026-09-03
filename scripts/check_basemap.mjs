@@ -24,7 +24,7 @@ const CHROME =
 mkdirSync(OUT, { recursive: true });
 
 const snapshotFC = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 );
 const BUILDING_COUNT = snapshotFC.features.length;
 

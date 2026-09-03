@@ -24,10 +24,10 @@ const CHROME = process.env.CHROME_PATH
 mkdirSync(OUT, { recursive: true });
 
 const ROADS = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'roads.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'roads.json'), 'utf-8'),
 );
 const BUILDING_COUNT = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 ).features.length;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

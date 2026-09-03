@@ -254,3 +254,109 @@ the live container rather than by reading the file.
 belongs to the project already on screen. Left strict they would have rejected
 every ULPIN of every project outside Visakhapatnam — a blank ULPIN card on the
 second AOI. Both now pass `'any'`, with the reason at the call site.
+
+---
+
+## Step 3 — Scoped API routes
+
+**Done.** Seven cadastre endpoints at `/api/p/[slug]/…`, seven unscoped aliases,
+`GET /api/projects` and `GET /api/projects/[slug]`, snapshots moved with
+`git mv`.
+
+**D3.0 — Step 2's commit carries some of Step 3's files.**
+`git add -A lib components docs db` in the Step 2 commit swept in `lib/db.ts`,
+`lib/projects.ts`, `lib/api/handlers.ts` and `lib/data/edits.ts`, which are
+Step 3 and Step 4 work. The brief forbids rewriting history, so the commit
+stands as made and this is the correction. The *content* is grouped as the
+brief describes; only the commit boundary is off. Read commits 2 and 3 together
+if the split matters to you.
+
+**D3.1 — Handler bodies live in `lib/api/handlers.ts`, not in the routes.**
+"Byte-identical on the snapshot backend" between `/api/buildings` and
+`/api/p/siripuram/buildings` is a property you either get by construction or
+verify forever. Both route files call the same function; the route file is five
+lines. Measured after the fact anyway, over the wire:
+
+```
+buildings  identical: true  339526 bytes
+parcels    identical: true  307171 bytes
+utilities  identical: true  205775 bytes
+conflicts  identical: true    4155 bytes
+roads      identical: true   94199 bytes
+```
+
+**D3.2 — `backend()` became per project, and that is a behaviour change.**
+It used to answer "is PostGIS reachable at all". With two projects that is the
+wrong question: with the database up and a second project that exists only as a
+snapshot, the old probe would have stamped `x-ulpin-backend: postgis` on a
+response the snapshot served. It now answers "did PostGIS serve *this*
+project". For siripuram with the database running it still returns `postgis`,
+which is what the acceptance scripts assert and what shipped.
+
+**D3.3 — A third scope, `legacy`, for an unmigrated volume.**
+`scopeFor(slug)` resolves to one of: *scoped* (the `projects` table knows the
+slug — filter on `project_id`), *legacy* (there is no `projects` table, and the
+slug is the demo project — every row in such a database is siripuram, so the
+unfiltered query is the correct one), or *none* (serve the snapshot). Without
+`legacy`, an existing `ulpin_pgdata` volume would have silently dropped to the
+snapshot the moment this branch was checked out. This was not hypothetical:
+the container running during this task was exactly that, and it is how the
+scoped routes were tested before the migration was applied.
+
+**D3.4 — A missing roads artefact is an empty collection, not a 404.**
+There is no road table in PostGIS, so `getRoads()` is snapshot-only. A project
+whose `build_roads.mjs` has not run has no `roads.json`, and answering 404 for
+it would read as "this project does not exist". It returns an empty
+FeatureCollection carrying a `_disclaimer` that says the artefact has not been
+built. `x-ulpin-roads: derived` is unchanged.
+
+**D3.5 — One new header, `x-ulpin-project`.**
+Additive. `x-ulpin-backend` and `x-ulpin-roads` are untouched in name, value and
+the conditions that produce them. The new one exists because with two URLs
+resolving to the same data, "which project did I actually get" is otherwise
+unanswerable from a response.
+
+**D3.6 — The error contract, verified over the wire.**
+
+```
+GET /api/p/nowhere/buildings      -> 404  {"error":"project not found", ...}
+GET /api/projects/nowhere         -> 404
+GET /api/p/ghost-ward/buildings   -> 503  {"error":"project unavailable",
+                                           "detail":"PostGIS is required for
+                                           this project ..."}
+GET /api/projects/ghost-ward      -> 503
+```
+
+The 503 was probed by adding a temporary registry entry with no snapshot
+directory, then reverting `data/api/projects.json` with `git checkout`. Neither
+path throws.
+
+**D3.7 — `POST /api/query` at the README's example point returns 0 rows, and
+did before this branch.**
+The brief's acceptance list expects four rows at
+`{"lon":83.3157,"lat":17.7268,"z":16.7}`. It returns none — and so does the
+unchanged SQL run directly in psql, and so does the unchanged JS prism test run
+directly over the unchanged `parcels.json`. The example point drifted out of
+its parcel at some earlier re-seed; this branch did not move it. The stack
+itself is intact and identical in shape, owner and z-extents at the parcel it
+was clearly written against:
+
+```
+$ curl -s -X POST localhost:3210/api/query -H 'Content-Type: application/json' \
+    -d '{"lon":83.3158,"lat":17.72644,"z":16.7}'
+
+parcel    AP-VSP-3D26-0048            K. Venkata Rao
+building  AP-VSP-3D26-0048-001        Kanaka Nivas      z 12.00..28.00
+floor     AP-VSP-3D26-0048-001-01     Level 1           z 15.20..18.40
+unit      AP-VSP-3D26-0048-001-01-02  B02               z 15.35..18.05
+```
+
+The README's example block is **left as it is**: correcting it is not in this
+task's scope, and the numbers in it are data-provenance-adjacent. Flagged in
+HANDOFF.md instead, with the working point above.
+
+**D3.8 — `build_roads.mjs` took a `--slug` early.**
+It writes into `data/api/<slug>/`, so it had to learn about projects the moment
+the snapshots moved. Re-run for siripuram it produces `roads.json` **byte for
+byte identical** to the committed one (94,199 bytes both sides), which is the
+check that the slug plumbing changed only the path.

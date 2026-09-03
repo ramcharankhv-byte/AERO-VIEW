@@ -26,7 +26,7 @@ mkdirSync(OUT, { recursive: true });
 // from the same snapshot the API serves when the DB is down, so the assertion
 // stays correct after a rebuild rather than depending on a hard-coded total.
 const snapshotFC = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 );
 const BUILDING_COUNT = snapshotFC.features.length;
 
