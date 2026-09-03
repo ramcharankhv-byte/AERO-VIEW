@@ -16,12 +16,26 @@ import type {
   ConflictRow, EnrichedBuilding, GeoFC, ParcelInfo, RoadProps, UtilityProps,
 } from '@/lib/types';
 
+/**
+ * The demo AOI, as a constant.
+ *
+ * Kept because lib/cesium/imagery.ts bounds the optional drone-orthophoto
+ * provider to it, and that pyramid is a flight over Siripuram specifically --
+ * a bbox from another project would ask a tile server for photographs that do
+ * not exist. Everything else takes the bbox from the project row; see
+ * frameInitialCamera below.
+ */
 export const AOI = {
   west: 83.313,
   south: 17.718,
   east: 83.3245,
   north: 17.728,
 };
+
+/** west, south, east, north — the order the project row and the CLI both use. */
+export type Bbox = readonly [number, number, number, number];
+
+export const DEMO_BBOX: Bbox = [AOI.west, AOI.south, AOI.east, AOI.north];
 
 /** True iff NEXT_PUBLIC_CESIUM_TOKEN is set. */
 export function hasIonToken(): boolean {
@@ -60,17 +74,36 @@ export function configureScene(viewer: Cesium.Viewer): void {
   applyGisDarkScene(scene);
 }
 
+/** The height that frames a bbox of this size at a 55-degree pitch. */
+export function frameHeightFor(bbox: Bbox): number {
+  const [west, south, east, north] = bbox;
+  const midLat = (south + north) / 2;
+  const widthM = Math.abs(east - west) * 111320 * Math.cos((midLat * Math.PI) / 180);
+  const heightM = Math.abs(north - south) * 110574;
+  // 1200 m is the height the demo AOI has always opened at. Scaling by the
+  // larger dimension relative to it keeps a smaller ward from opening as a
+  // speck and a larger one from overflowing the frame, and returns exactly
+  // 1200 for a bbox the size of Siripuram's.
+  const span = Math.max(widthM, heightM);
+  return Math.round((span / 1220) * 1200);
+}
+
 /**
- * The single non-CameraDirector camera call: framing the AOI on first paint.
- * The README documents this as the one exception to "all camera motion lives
- * in CameraDirector" — it is the scene's initial pose, not a transition.
+ * The single non-CameraDirector camera call: framing the project on first
+ * paint. The README documents this as the one exception to "all camera motion
+ * lives in CameraDirector" — it is the scene's initial pose, not a transition.
+ *
+ * It takes the project's bbox now instead of reading a module constant. That
+ * is the whole of the change: still one call, still at construction, still the
+ * only setView in the application.
  */
-export function frameInitialCamera(viewer: Cesium.Viewer): void {
+export function frameInitialCamera(viewer: Cesium.Viewer, bbox: Bbox = DEMO_BBOX): void {
+  const [west, south, east, north] = bbox;
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(
-      (AOI.west + AOI.east) / 2,
-      (AOI.south + AOI.north) / 2,
-      1200,
+      (west + east) / 2,
+      (south + north) / 2,
+      frameHeightFor(bbox),
     ),
     orientation: {
       heading: Cesium.Math.toRadians(35),
@@ -93,8 +126,8 @@ export async function sampleGroundUnder(
   return sampleGroundHeights(terrainProvider, points);
 }
 
-/** Parallel fetch of the cadastre endpoints used at boot. */
-export async function fetchInitialData(): Promise<{
+/** Parallel fetch of one project's cadastre endpoints used at boot. */
+export async function fetchInitialData(slug: string): Promise<{
   buildings: GeoFC<EnrichedBuilding>;
   parcels: GeoFC<ParcelInfo>;
   utilities: GeoFC<UtilityProps>;
@@ -102,16 +135,17 @@ export async function fetchInitialData(): Promise<{
   conflicts: ConflictRow[];
 }> {
   const EMPTY_ROADS: GeoFC<RoadProps> = { type: 'FeatureCollection', features: [] };
+  const base = `/api/p/${encodeURIComponent(slug)}`;
   const [bRes, pRes, uRes, cRes, rRes] = await Promise.all([
-    fetch('/api/buildings'),
-    fetch('/api/parcels'),
-    fetch('/api/utilities'),
-    fetch('/api/conflicts'),
+    fetch(`${base}/buildings`),
+    fetch(`${base}/parcels`),
+    fetch(`${base}/utilities`),
+    fetch(`${base}/conflicts`),
     // Caught on its own rather than inside the Promise.all: a rejection there
     // fails the whole boot and CesiumRoot renders an empty scene. Footprints
     // are the application; streets are orientation context, and losing them
     // must not cost the user the cadastre.
-    fetch('/api/roads').catch(() => null),
+    fetch(`${base}/roads`).catch(() => null),
   ]);
   const buildings = (await bRes.json()) as GeoFC<EnrichedBuilding>;
   const parcels = (await pRes.json()) as GeoFC<ParcelInfo>;

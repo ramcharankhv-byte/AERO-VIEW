@@ -6,6 +6,7 @@ import React, {
   createContext, useContext, useEffect, useRef, useState,
 } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
+import type { Project } from '@/lib/types';
 import type { GroundMap } from '@/lib/cesium/terrain';
 import { applyTreatment, createImageryLayer } from '@/lib/cesium/imagery';
 import {
@@ -37,18 +38,34 @@ interface ViewerCtx {
   viewer: Cesium.Viewer | null;
   ground: GroundMap;
   ready: boolean;
+  /**
+   * The project this scene is showing.
+   *
+   * Carried on the viewer context rather than prop-drilled, because the one
+   * consumer that needs it -- CameraDirector, for the city and underground
+   * poses -- already takes the viewer from here, and threading a second prop
+   * through Scene for the same component would be two ways to say one thing.
+   * Null only in the default context, which nothing inside a scene sees.
+   */
+  project: Project | null;
 }
 
-const Ctx = createContext<ViewerCtx>({ viewer: null, ground: new Map(), ready: false });
+const Ctx = createContext<ViewerCtx>({
+  viewer: null, ground: new Map(), ready: false, project: null,
+});
 
 export function useViewer(): ViewerCtx {
   return useContext(Ctx);
 }
 
-export default function CesiumRoot({ children }: { children?: React.ReactNode }) {
+export default function CesiumRoot(
+  { project, children }: { project: Project; children?: React.ReactNode },
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
-  const [ctx, setCtx] = useState<ViewerCtx>({ viewer: null, ground: new Map(), ready: false });
+  const [ctx, setCtx] = useState<ViewerCtx>({
+    viewer: null, ground: new Map(), ready: false, project,
+  });
 
   /**
    * The terrain provider chosen at boot, kept so Photoreal mode can put it
@@ -143,13 +160,13 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
       // degrees of heading/pitch and ~1% of height cover both orbit gestures
       // and the tail of a camera flight, so every real move requests a frame.
       viewer.scene.camera.percentageChanged = 0.01;
-      frameInitialCamera(viewer);
+      frameInitialCamera(viewer, project.bbox);
 
       // ---- one-time data load -------------------------------------------
       const store = useDataStore.getState();
       store.setLoading(true);
       try {
-        const data = await fetchInitialData();
+        const data = await fetchInitialData(project.slug);
         if (disposed) return;
         store.setBuildings(data.buildings);
         store.setParcels(data.parcels);
@@ -159,10 +176,10 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
 
         const ground = await sampleGroundUnder(terrainProvider, data.buildings);
         if (disposed) return;
-        setCtx({ viewer, ground, ready: true });
+        setCtx({ viewer, ground, ready: true, project });
       } catch (err) {
         store.setError(String(err));
-        if (!disposed) setCtx({ viewer, ground: new Map(), ready: true });
+        if (!disposed) setCtx({ viewer, ground: new Map(), ready: true, project });
       } finally {
         useDataStore.getState().setLoading(false);
       }
@@ -175,6 +192,9 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
       if (v && !v.isDestroyed()) v.destroy();
     };
     // Intentionally mount-only: the viewer must be constructed exactly once.
+    // `project` is not a dependency and must not become one -- changing
+    // project is a page navigation, which unmounts this component and builds a
+    // new viewer, rather than a prop change this effect should react to.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

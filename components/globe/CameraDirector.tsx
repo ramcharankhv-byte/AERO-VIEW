@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { useViewer } from './CesiumRoot';
 import { useActiveDetail, useDataStore, useViewStore } from '@/lib/store';
 import { toSceneZ } from '@/lib/cesium/terrain';
+import { frameHeightFor } from '@/lib/cesium/setup';
 import { ringCentreWithRadius } from '@/lib/geo';
 
 /**
@@ -21,7 +22,6 @@ import { ringCentreWithRadius } from '@/lib/geo';
  * is the scene's initial pose, not a transition.)
  */
 
-const AOI_CENTRE = { lon: 83.31875, lat: 17.723 };
 const FLY_MS = 1.5;
 
 /** Position the camera so it looks down at (lon, lat, groundZ) with a pitch. */
@@ -51,7 +51,14 @@ function poseFor(
 }
 
 export default function CameraDirector() {
-  const { viewer, ground, ready } = useViewer();
+  const { viewer, ground, ready, project } = useViewer();
+  // The project's own centre, not a module constant. Pressing Reset on a
+  // Hyderabad project used to fly the camera to Visakhapatnam.
+  const aoiCentre = project
+    ? { lon: (project.bbox[0] + project.bbox[2]) / 2,
+        lat: (project.bbox[1] + project.bbox[3]) / 2 }
+    : { lon: 0, lat: 0 };
+  const cityHeight = project ? frameHeightFor(project.bbox) : 1200;
   const mode = useViewStore((s) => s.mode);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const isolatedFloor = useViewStore((s) => s.isolatedFloor);
@@ -81,7 +88,7 @@ export default function CameraDirector() {
             return { lon: c.lon, lat: c.lat, height: 70 };
           }
         }
-        return { ...AOI_CENTRE, height: 130 };
+        return { ...aoiCentre, height: 130 };
       })();
       camera.flyTo({
         ...poseFor(target.lon, target.lat, 0, target.height, -18),
@@ -95,7 +102,8 @@ export default function CameraDirector() {
       camera.flyTo({
         // Matches frameInitialCamera's height/heading/pitch, so Reset returns
         // to the pose the scene opened on rather than a subtly different one.
-        ...poseFor(AOI_CENTRE.lon, AOI_CENTRE.lat, 0, 1200, -55, 35),
+        // Both read the height from the same frameHeightFor(bbox).
+        ...poseFor(aoiCentre.lon, aoiCentre.lat, 0, cityHeight, -55, 35),
         duration: FLY_MS,
       });
       return;

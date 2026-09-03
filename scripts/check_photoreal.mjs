@@ -18,7 +18,8 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const OUT = process.argv[2] ?? path.join(process.cwd(), 'docs', 'shots');
-const APP_URL = process.env.ULPIN_URL ?? 'http://localhost:3000/';
+// `/` is the project gallery now; the viewer lives at /p/<slug>.
+const APP_URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 const CHROME =
   process.env.CHROME_PATH ??
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
