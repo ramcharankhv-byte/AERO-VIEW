@@ -135,3 +135,122 @@ therefore never appears in a diff. It has been left in place rather than
 deleted — the brief says it must survive — and it turned out to be useful: it
 is the file Step 4's one-time adoption copy is exercised against.
 
+
+---
+
+## Step 1 — Projects table and registry
+
+**Done.** `projects` table, `project_id` on parcel / building / utility, an
+additive migration for an existing volume, and a committed registry snapshot.
+
+**D1.1 — Row ids stay globally unique; only the ULPIN number restarts.**
+The brief says parcel numbering is scoped per project. It is — but only the
+*ULPIN* number. `parcel.id` is a primary key that `building.parcel_id`,
+`/api/p/<slug>/building/:id` and every FK address rows by, and restarting it at
+1 per project would collide on the second AOI. So `scripts/build_geometry.sql`
+now computes two numbers per row: `*_no`, the per-project ordinal that goes
+into the ULPIN, and `*_id`, that ordinal plus an offset past every other
+project's rows. For the first project seeded every offset is zero, which is
+what keeps siripuram's ids *and* its identifiers byte-identical.
+
+**D1.2 — `ulpin_fmt()`'s new arguments landed in this step, not step 2.**
+`build_geometry.sql` cannot write a per-project ULPIN without them, so the SQL
+half of Step 2 is a prerequisite for Step 1 rather than a successor to it. The
+three new arguments default to `'AP'`, `'VSP'`, `'3D26'`, so a call site that
+passes only `(p, b, f, u)` emits exactly the string it emitted before. Step 2's
+commit carries the TypeScript half and the parity assertion. If Step 2 were
+ever reverted, this signature would remain — harmlessly, since its defaults
+reproduce the old literal exactly.
+
+**D1.3 — `TRUNCATE` became a scoped `DELETE`.**
+`03_seed_db.py` used to `TRUNCATE parcel, building, floor, unit, conflict
+RESTART IDENTITY CASCADE`. That would erase a sibling AOI the moment one
+existed. Re-seeding now deletes only the project being seeded, from
+`build_geometry.sql` (which is where the scope is known), and the cascade from
+`parcel` carries building → floor → unit with it.
+
+**D1.4 — `seed_ctx`, not `psql -v`.**
+`pg.py` pipes each SQL file through a separate `psql -f -`, so a `\set`
+variable does not survive from one invocation to the next and the two SQL files
+would each have to be told the scope separately — and could disagree.
+`scripts/project.py` writes a one-row `seed_ctx` table instead; both files read
+it.
+
+**D1.5 — `created_at` is pinned, not `now()`.**
+`data/api/projects.json` is a committed snapshot of the `projects` row. A
+`created_at` defaulted to `now()` would differ from it after every `initdb`, so
+the demo row's timestamp is set explicitly to `2026-09-01T04:49:47Z` — when the
+AOI's data first entered the repository (`git log` on `data/api/buildings.json`).
+
+**D1.6 — The table is `projects` (plural), against the schema's own convention.**
+Every other table here is singular. The brief names it `projects` explicitly
+and that is what shipped; the deviation is called out in a comment at the
+definition so the next reader does not have to wonder whether it was an
+accident.
+
+**D1.7 — Registry stats are computed, and they match the brief exactly.**
+384 buildings · 325 parcels · 131 streets · 1,810 floors · 6,438 units ·
+301 utility runs · 12 conflicts, read out of the committed snapshots rather
+than typed in. `streets` is not a database count: there is no road table, so it
+is the feature count of the derived `roads.json`, and it is 0 for a project
+whose street artefact has not been built.
+
+---
+
+## Step 2 — ULPIN takes state and district from the project
+
+**Done, and proven byte-identical.**
+
+`generate()`, `parse()`, `levelOf()`, `parentOf()` and `ulpin_fmt()` all take
+the revenue codes now, defaulting to AP/VSP/3D26. The defaults are the whole
+mechanism by which this is invisible to the demo project.
+
+**D2.1 — The proof, not the argument.**
+Every ULPIN in `data/api/siripuram/` was parsed and regenerated through the new
+code and compared to the original string:
+
+```
+ULPINs checked : 9749
+mismatches     : 0
+```
+
+and `ulpin_fmt()` was re-run against the live PostGIS for both projects:
+
+```
+AP-VSP-3D26-0042 | ...-007 | ...-007-00 | ...-007-B2 | ...-007-05-03
+TS-HYD-3D26-0042 | ...-007 | ...-007-00 | ...-007-B2 | ...-007-05-03
+```
+
+matching the fixed expectations now asserted in `lib/ulpin.test.ts`.
+
+**D2.2 — `parse()` stays strict by default; `levelOf`/`parentOf` do not.**
+The brief says to extend the parity assertion, not to change what `parse()`
+accepts. An existing test requires `parse('XX-VSP-3D26-0042')` to be `null`, and
+a regex loosened to "any two letters" would have broken it. So `parse(x)` still
+validates against the demo project's codes, and `parse(x, 'any')` — or
+`parse(x, someProjectsCodes)` — is the opt-in. `levelOf` and `parentOf` default
+to `'any'` instead, because they answer questions ("how deep does this go",
+"what contains it") whose answers do not depend on which district minted the
+identifier; `parentOf` re-emits the prefix it found, so walking up a TS-HYD
+identifier never silently relabels it AP-VSP.
+
+**D2.3 — `UlpinParts` did not gain fields.**
+`codesOf()` is a separate function rather than two more keys on `parse()`'s
+return value, because an existing test deep-compares that object
+(`assert.deepEqual(parse('...b2'), { parcel: 42, building: 7, floor: -2 })`)
+and adding keys would have failed it for no gain.
+
+**D2.4 — `CREATE OR REPLACE` was not enough, and this would have bitten hard.**
+Postgres matches `CREATE OR REPLACE FUNCTION` on the *full* signature, so the
+seven-argument `ulpin_fmt` was created as an **overload** beside the old
+four-argument one on the running volume. `SELECT ulpin_fmt(42)` then failed
+with *"function ulpin_fmt(integer) is not unique"* — which is every call site in
+`build_geometry.sql` at once, on any existing database. `db/02_functions.sql`
+now drops the old signature first. Caught by running the parity check against
+the live container rather than by reading the file.
+
+**D2.5 — Two UI call sites became permissive.**
+`TopBar`'s search box and `UlpinCard` both call `parse()` on an identifier that
+belongs to the project already on screen. Left strict they would have rejected
+every ULPIN of every project outside Visakhapatnam — a blank ULPIN card on the
+second AOI. Both now pass `'any'`, with the reason at the call site.

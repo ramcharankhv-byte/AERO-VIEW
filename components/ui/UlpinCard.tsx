@@ -16,7 +16,10 @@ const SEGMENT_LABELS = ['State', 'District', 'Scheme', 'Parcel', 'Bldg', 'Floor'
 
 export default function UlpinCard({ ulpin }: { ulpin: string }) {
   const [copied, setCopied] = useState(false);
-  const parts = parse(ulpin);
+  // 'any' codes: this card renders an identifier the server has already
+  // minted for the project on screen. Asserting the demo project's district
+  // here would blank the card for every other AOI.
+  const parts = parse(ulpin, 'any');
   const segments = ulpin.split('-');
 
   const copy = async () => {

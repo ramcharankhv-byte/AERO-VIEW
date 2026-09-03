@@ -88,6 +88,14 @@ $fn$;
 -- produced when the prefix was a literal, which is what keeps every identifier
 -- already minted for siripuram -- and every ULPIN in data/api/siripuram/ --
 -- byte-identical across this signature change.
+-- The four-argument version has to GO, not merely be replaced. CREATE OR
+-- REPLACE only matches an identical signature, so on a volume that already has
+-- the old function the new one is an OVERLOAD, and `ulpin_fmt(42)` then fails
+-- with "function ulpin_fmt(integer) is not unique" -- every call site in
+-- build_geometry.sql at once. Dropping first is what makes `npm run db:schema`
+-- against an existing volume work rather than half-work.
+DROP FUNCTION IF EXISTS ulpin_fmt(int, int, int, int);
+
 CREATE OR REPLACE FUNCTION ulpin_fmt(p int, b int DEFAULT NULL,
                                      f int DEFAULT NULL, u int DEFAULT NULL,
                                      st text DEFAULT 'AP',
