@@ -10,7 +10,7 @@ import type * as Cesium from 'cesium';
  * allocation per read.
  */
 export interface EntityTag {
-  kind: 'parcel' | 'building' | 'floor' | 'unit' | 'utility';
+  kind: 'parcel' | 'building' | 'road' | 'floor' | 'unit' | 'utility';
   id: number;
   /**
    * level_no, for floor AND unit entities.

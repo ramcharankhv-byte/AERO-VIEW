@@ -85,7 +85,7 @@ export default function ParcelInset() {
   if (mode === 'city' || !view) return null;
 
   return (
-    <div className="glass pointer-events-auto rounded-lg p-2.5">
+    <div data-panel="parcel-inset" className="glass pointer-events-auto rounded-lg p-2.5">
       <div className="flex items-center justify-between">
         <span className="panel-title">Parcel context</span>
         <span className="font-mono text-[9px] text-[rgb(var(--muted))]">
@@ -94,9 +94,7 @@ export default function ParcelInset() {
       </div>
       <svg
         viewBox={`0 0 ${SIZE} ${SIZE}`}
-        width={SIZE}
-        height={SIZE}
-        className="mt-1.5 rounded bg-black/30"
+        className={`mt-1.5 h-auto w-full max-w-[${SIZE}px] rounded bg-[rgb(var(--surface-2))]`}
       >
         {view.neighbours
           .filter((p) => !p.selected)
@@ -104,8 +102,8 @@ export default function ParcelInset() {
             <path
               key={`n${p.id}`}
               d={p.d}
-              fill="rgba(140,170,200,0.06)"
-              stroke="rgba(140,170,200,0.35)"
+              fill="rgb(var(--ink) / 0.06)"
+              stroke="rgb(var(--ink) / 0.30)"
               strokeWidth="0.7"
             />
           ))}
@@ -113,7 +111,7 @@ export default function ParcelInset() {
           <path
             key={`b${b.id}`}
             d={b.d}
-            fill={b.active ? 'rgba(240,190,72,0.55)' : 'rgba(160,180,205,0.22)'}
+            fill={b.active ? 'rgb(var(--ink) / 0.85)' : 'rgb(var(--ink) / 0.22)'}
             stroke="none"
           />
         ))}
@@ -123,19 +121,19 @@ export default function ParcelInset() {
             <path
               key={`s${p.id}`}
               d={p.d}
-              fill="rgba(120,235,180,0.16)"
-              stroke="rgb(120,235,180)"
+              fill="rgb(var(--ink) / 0.12)"
+              stroke="rgb(var(--ink))"
               strokeWidth="1.6"
             />
           ))}
       </svg>
       <div className="mt-1.5 flex items-center gap-3 text-[9px] text-[rgb(var(--muted))]">
         <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-sm border border-[rgb(120,235,180)]" />
+          <span className="h-2 w-2 rounded-sm border border-[rgb(var(--ink))]" />
           selected plot
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-sm bg-[rgba(240,190,72,0.7)]" />
+          <span className="h-2 w-2 rounded-sm bg-[rgb(var(--ink))]" />
           building
         </span>
       </div>

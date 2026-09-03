@@ -149,7 +149,7 @@ export default function ElevationRuler() {
           />
           <span
             className={[
-              'whitespace-nowrap rounded bg-black/55 px-1 text-[9px] leading-[1.4] backdrop-blur-sm',
+              'whitespace-nowrap rounded bg-[rgb(var(--panel)/0.85)] px-1 text-[9px] leading-[1.4] backdrop-blur-sm',
               t.basement ? 'text-[rgb(var(--muted))]' : 'text-[rgb(var(--ink))]',
             ].join(' ')}
           >

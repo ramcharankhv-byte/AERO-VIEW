@@ -50,6 +50,7 @@ const SLICE_AXES: { id: SliceState['axis']; label: string; title: string }[] = [
 const LAYERS: { key: LayerKey; label: string }[] = [
   { key: 'parcels', label: 'Surface parcels' },
   { key: 'buildings', label: 'Buildings' },
+  { key: 'roads', label: 'Streets' },
   { key: 'floors', label: 'Floors & units' },
   { key: 'utilities', label: 'Underground utilities' },
   { key: 'terrain', label: 'DEM / terrain' },
@@ -174,7 +175,8 @@ export default function LayerPanel() {
   }, [theme]);
 
   return (
-    <div className="glass pointer-events-auto w-[210px] rounded-lg p-3">
+    <div data-panel="layers"
+      className="glass pointer-events-auto w-full rounded-lg p-3">
       <div className="panel-title">Layers</div>
       <div className="mt-1.5">
         {LAYERS.map((l) => (
@@ -208,8 +210,8 @@ export default function LayerPanel() {
                 className={[
                   'rounded py-1 text-[11px] transition-colors',
                   buildingStyle === s.id
-                    ? 'bg-[rgb(var(--accent))] text-black'
-                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                    ? 'is-active'
+                    : 'bg-[rgb(var(--tint)/0.06)] text-[rgb(var(--ink))] tint-hover',
                 ].join(' ')}
               >
                 {s.label}
@@ -264,8 +266,8 @@ export default function LayerPanel() {
                 className={[
                   'rounded py-1 text-[11px] transition-colors',
                   imageryTreatment === t
-                    ? 'bg-[rgb(var(--accent))] text-black'
-                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                    ? 'is-active'
+                    : 'bg-[rgb(var(--tint)/0.06)] text-[rgb(var(--ink))] tint-hover',
                 ].join(' ')}
               >
                 {TREATMENT_LABELS[t]}
@@ -288,8 +290,8 @@ export default function LayerPanel() {
           display={sunHour === null ? 'off' : formatSunHour(sunHour)}
         />
         <div className="mt-1 flex items-center justify-between gap-2">
-          {/* Shadows are the expensive half and stay off until the slider is
-              touched, so the untouched default is byte-for-byte the old scene. */}
+          {/* The slider's off position is the only way back to the unlit,
+              shadowless scene -- it is the cheap path, not the default. */}
           <span className="text-[9px] leading-snug text-[rgb(var(--muted))]">
             {sunHour === null
               ? 'Lighting and shadows off'
@@ -298,7 +300,7 @@ export default function LayerPanel() {
           <button
             type="button"
             onClick={() => setSunHour(SUN_NOON_HOUR)}
-            className="shrink-0 rounded bg-white/5 px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] transition-colors hover:bg-white/15"
+            className="shrink-0 rounded bg-[rgb(var(--tint)/0.06)] px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] transition-colors tint-hover"
           >
             Noon
           </button>
@@ -345,8 +347,8 @@ export default function LayerPanel() {
               className={[
                 'rounded px-2 py-0.5 text-[10px] transition-colors',
                 slice.enabled
-                  ? 'bg-[rgb(var(--accent))] text-black'
-                  : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                  ? 'is-active'
+                  : 'bg-[rgb(var(--tint)/0.06)] text-[rgb(var(--ink))] tint-hover',
               ].join(' ')}
             >
               {slice.enabled ? 'on' : 'off'}
@@ -369,8 +371,8 @@ export default function LayerPanel() {
                 className={[
                   'rounded py-1 text-[11px] transition-colors',
                   slice.axis === a.id
-                    ? 'bg-[rgb(var(--accent))] text-black'
-                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                    ? 'is-active'
+                    : 'bg-[rgb(var(--tint)/0.06)] text-[rgb(var(--ink))] tint-hover',
                 ].join(' ')}
               >
                 {a.label}
@@ -410,10 +412,10 @@ export default function LayerPanel() {
                 onClick={() => setViewMode(v)}
                 className={[
                   'rounded py-1 text-[11px] transition-colors',
-                  disabled ? 'is-disabled bg-white/5' : '',
+                  disabled ? 'is-disabled bg-[rgb(var(--tint)/0.06)]' : '',
                   viewMode === v && !disabled
-                    ? 'bg-[rgb(var(--accent))] text-black'
-                    : 'bg-white/5 text-[rgb(var(--ink))] hover:bg-white/15',
+                    ? 'is-active'
+                    : 'bg-[rgb(var(--tint)/0.06)] text-[rgb(var(--ink))] tint-hover',
                 ].join(' ')}
               >
                 {v}
@@ -426,7 +428,7 @@ export default function LayerPanel() {
       <button
         type="button"
         onClick={toggleTheme}
-        className="mt-3 w-full rounded bg-white/5 py-1 text-[11px] text-[rgb(var(--ink))] hover:bg-white/15"
+        className="mt-3 w-full rounded bg-[rgb(var(--tint)/0.06)] py-1 text-[11px] text-[rgb(var(--ink))] tint-hover"
       >
         {theme === 'dark' ? 'Light theme' : 'Dark theme'}
       </button>

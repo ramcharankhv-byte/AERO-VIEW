@@ -8,3 +8,4 @@ __pycache__/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+data/edits.json

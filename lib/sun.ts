@@ -8,9 +8,23 @@
 
 export const SUN_MIN_HOUR = 6;
 export const SUN_MAX_HOUR = 18;
-/** Where the "Noon" reset lands, and the slider position while untouched. */
+/** Where the "Noon" button lands. */
 export const SUN_NOON_HOUR = 12;
 export const SUN_STEP_HOURS = 0.5;
+
+/**
+ * Where the sun starts: 16:30 local, late afternoon.
+ *
+ * The scene boots lit rather than flat, and it boots lit from LOW. At this
+ * hour on the equinox the sun sits about 20 degrees above the horizon, which
+ * throws a shadow roughly three times a building's height -- long enough that
+ * a six-storey block and a two-storey one are told apart by their shadows
+ * before anyone reads a label, which is the whole reason the sun is on.
+ *
+ * Noon is the wrong default for exactly that reason: an overhead sun puts the
+ * shadow under the building and the massing goes flat.
+ */
+export const SUN_DEFAULT_HOUR = 16.5;
 
 /** Local time of the AOI. The sun is an illustration, not a survey instrument. */
 export const SUN_UTC_OFFSET_HOURS = 5.5;

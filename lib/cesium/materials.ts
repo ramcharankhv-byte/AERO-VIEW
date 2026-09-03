@@ -1,17 +1,67 @@
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
-import type { AssetType, Provenance, UseType } from '@/lib/types';
+import type { AssetType, Provenance, RoadClass, UseType } from '@/lib/types';
 
 /**
  * Every colour state in the scene, defined once.
  *
  * ARCHITECTURE RULE: no component constructs its own Cesium.Color for entity
  * styling. If a new visual state is needed it is added here, so that "what does
- * gold mean" has exactly one answer in the codebase.
+ * this tone mean" has exactly one answer in the codebase.
+ *
+ * COLOUR RULE: three families, and which one a tone belongs to is the whole
+ * decision.
+ *
+ *   BUILT FORM is neutral off-white -- OFF_WHITE (#F5F5F5) and a tight band
+ *   just below it. It is the one thing on screen that is not a photograph, and
+ *   keeping it colourless is what makes it read as an abstraction laid over
+ *   the ground rather than as another object in the scene. City-scale masses
+ *   are drawn at BUILDING_ALPHA so the imagery under them stays readable.
+ *
+ *   THE GROUND is the provider's own colour, dimmed and slightly saturated
+ *   into deep green by the imagery treatment (lib/cesium/imagery.ts). Neutral
+ *   buildings against dark green terrain is the contrast the whole scheme is
+ *   built on: value AND chroma separate them, so massing survives even where a
+ *   pale roof sits under a pale wall.
+ *
+ *   MEANING keeps its hue: utility corridors by asset type, provenance by
+ *   source, CONFLICT_COLOR red for a detected encroachment. These are legend
+ *   entries, not surfaces, and hue is what makes four of them legible at once.
+ *
+ * The CHROME -- top bar, dock, panels, dashboard -- is black and white, and
+ * lives in app/globals.css. It is deliberately the only monochrome surface.
+ *
+ * Values are chosen against a dark scene background, so the usable band is
+ * roughly 70-255. Anything darker reads as a hole rather than as a surface.
  */
 
 const rgba = (r: number, g: number, b: number, a: number) =>
   Cesium.Color.fromBytes(r, g, b, Math.round(a * 255));
+
+/** Neutral grey. Every built-form tone, every road stroke, every selection. */
+const grey = (v: number, a = 1) => rgba(v, v, v, a);
+
+/**
+ * The off-white the buildings are made of: #F5F5F5, as a 0-255 value.
+ *
+ * Named rather than inlined because it is the anchor of the whole built-form
+ * band below -- roofs, caps, plinths and slabs are all defined as a step down
+ * from it, so moving the scheme is moving this number.
+ */
+const OFF_WHITE = 245;
+
+/**
+ * Opacity of a city-scale building mass.
+ *
+ * Not a slider default and not a fade state: it is the resting look. At 0.45
+ * the satellite texture under a block -- its own roof, the plot it stands in,
+ * the lane beside it -- stays readable through the extrusion, so the massing
+ * is drawn OVER the evidence instead of hiding it. Hover and the exploded
+ * model deliberately sit above it; the transparency slider, which fades the
+ * buildings you are not inspecting, is clamped to it (see BuildingsLayer) so
+ * "less visible than at rest" stays true at every slider position.
+ */
+export const BUILDING_ALPHA = 0.45;
 
 // -------------------------------------------------------------- floor view
 /**
@@ -62,40 +112,56 @@ export const FLOOR_VIEW = {
 } as const;
 
 // ---------------------------------------------------------------- buildings
-/** Base fill by use type -- muted, so highlights read clearly against them. */
-export const USE_COLOR: Record<UseType, Cesium.Color> = {
-  residential: rgba(122, 146, 178, 1),
-  commercial: rgba(178, 150, 110, 1),
-  institutional: rgba(132, 168, 150, 1),
-  industrial: rgba(150, 140, 160, 1),
+/**
+ * Base fill by use type -- four off-whites in a deliberately tight band.
+ *
+ * OFF_WHITE is the anchor and residential takes it exactly; the other three sit
+ * within a few values of it. The band is that narrow because these are one
+ * material family, not four categories competing for attention: the use type is
+ * a fact the DetailPanel states in words, and at 45% opacity over live imagery
+ * a wide ramp would read as dirt on the glass rather than as a category. Hover
+ * goes to pure white and to a higher alpha, which is what makes it legible
+ * against a band this tight.
+ */
+const USE_VALUE: Record<UseType, number> = {
+  residential: OFF_WHITE,
+  commercial: 238,
+  institutional: 250,
+  industrial: 232,
+};
+
+const USE_COLOR: Record<UseType, Cesium.Color> = {
+  residential: grey(USE_VALUE.residential),
+  commercial: grey(USE_VALUE.commercial),
+  institutional: grey(USE_VALUE.institutional),
+  industrial: grey(USE_VALUE.industrial),
 };
 
 /**
- * Tint multiplied over the window-grid facade texture in schematic mode.
- *
- * The raw USE_COLOR would swamp the texture -- multiplying a muted blue over
- * an already-muted brick reads as mud. Lerping 55% toward white keeps the
- * windows legible while the use type still comes through as a hue. Computed
- * once per use type rather than per frame: the material callback runs on every
- * building on every frame.
+ * Roof palette. All roofs in this AOI are flat slabs. Each tone sits a clear
+ * step BELOW its wall tone -- far enough that the top face reads as a separate
+ * plane, close enough that it is plainly the same building. With a raking
+ * late-afternoon sun this step and the cast shadow do the same job from
+ * opposite directions, which is why neither has to be heavy-handed.
  */
-const FACADE_TINT: Record<UseType, Cesium.Color> = (() => {
-  const out = {} as Record<UseType, Cesium.Color>;
-  for (const use of Object.keys(USE_COLOR) as UseType[]) {
-    out[use] = Cesium.Color.lerp(
-      USE_COLOR[use], Cesium.Color.WHITE, 0.55, new Cesium.Color(),
-    );
-  }
-  return out;
-})();
+const ROOF_COLOR: Record<UseType, Cesium.Color> = {
+  residential: grey(216),
+  commercial: grey(209),
+  institutional: grey(221),
+  industrial: grey(203),
+};
 
 export const MATERIALS = {
-  /** City mode: a normal, unselected building. */
-  buildingDefault: (use: UseType, alpha = 0.92) =>
+  /**
+   * Schematic mode: the flat wall colour of a city-scale extrusion.
+   *
+   * Flat, not the window-grid texture. A repeating facade at BUILDING_ALPHA
+   * over live imagery reads as moire, not as windows -- the fenestration
+   * belongs to the architectural model of the ONE building being inspected,
+   * where it is opaque and close enough to resolve (BuildingModelLayer).
+   */
+  buildingFacade: (use: UseType, alpha = BUILDING_ALPHA) =>
     USE_COLOR[use].withAlpha(alpha),
-
-  /** Schematic mode: the tint over the repeating facade texture. */
-  buildingFacade: (use: UseType, alpha = 0.92) => FACADE_TINT[use].withAlpha(alpha),
 
   /**
    * Photoreal mode: the schematic extrusion is still there, still tagged, and
@@ -106,21 +172,19 @@ export const MATERIALS = {
    */
   buildingGhost: Cesium.Color.WHITE.withAlpha(0.01),
 
-  /** Cursor is over it. */
-  buildingHover: rgba(120, 205, 255, 1),
-
-  /** Someone else's building while one is active -- faded right back. */
-  buildingFaded: (use: UseType, alpha: number) => USE_COLOR[use].withAlpha(alpha),
+  /** Cursor is over it. Well above the base band, so it cannot be mistaken
+   *  for an unusually pale neighbour. */
+  buildingHover: grey(255),
 
   /** An above-ground floor slab in the exploded stack. */
-  floorSlab: rgba(150, 190, 230, 0.34),
+  floorSlab: grey(210, 0.34),
 
   /**
    * The isolated level's base plate. Solid enough to read as a floor the flats
    * stand on, and it is the surface a click resolves to as "the floor" when no
    * unit is under the cursor -- corridors, lobbies, the level's own space.
    */
-  floorPlate: rgba(120, 168, 214, 0.82),
+  floorPlate: grey(198, 0.82),
 
   /**
    * The isolated level's height envelope, drawn as a full-Z-extent shell so the
@@ -131,17 +195,18 @@ export const MATERIALS = {
    * inside are plainly visible, and Picker's drill-to-unit rule keeps the shell
    * from swallowing the pick ray as well.
    */
-  floorShell: rgba(150, 198, 240, FLOOR_VIEW.SHELL_ALPHA),
-  floorShellOutline: rgba(176, 220, 255, 0.55),
+  floorShell: grey(230, FLOOR_VIEW.SHELL_ALPHA),
+  floorShellOutline: grey(235, 0.55),
 
-  /** Edge of the isolated floor: near-white so the highlight has a crisp rim. */
-  floorActiveOutline: rgba(200, 242, 255, 1),
+  /** Edge of the isolated floor: pure white, so the highlight has a crisp rim. */
+  floorActiveOutline: grey(255),
 
-  /** Basements are solid grey -- they read as mass, not as habitable volume. */
-  basementSlab: rgba(120, 124, 132, 0.95),
+  /** Basements are the darkest tone -- they read as mass, not as habitable
+   *  volume. */
+  basementSlab: grey(96, 0.95),
 
   /** Edge of a floor slab in the stack. */
-  floorOutline: rgba(143, 180, 216, 0.5),
+  floorOutline: grey(180, 0.5),
 
   /**
    * A unit volume on the isolated floor.
@@ -150,32 +215,38 @@ export const MATERIALS = {
    * fade in as the exploded stack opens, and they dim (never vanish) while a
    * sibling is selected.
    */
-  unitDefault: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
-    rgba(196, 214, 236, 1).withAlpha(alpha),
+  unitDefault: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) => grey(198).withAlpha(alpha),
 
-  /** Cursor is over it. Same blue the buildings use for hover, so the gesture
-   *  means one thing at every level of the hierarchy. */
+  /** Cursor is over it. The same brightening the buildings use for hover, so
+   *  the gesture means one thing at every level of the hierarchy. */
   unitHover: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
-    rgba(120, 205, 255, 1).withAlpha(Math.max(alpha, 0.7)),
+    grey(232).withAlpha(Math.max(alpha, 0.7)),
 
   /** Edge of an unselected unit. */
-  unitOutlineIdle: rgba(159, 182, 207, 0.45),
+  unitOutlineIdle: grey(150, 0.45),
 
-  /** The selected unit: gold, with a silhouette outline. */
-  unitSelected: (alpha = 0.88) => rgba(240, 190, 72, 1).withAlpha(alpha),
-  unitOutline: rgba(255, 226, 140, 1),
+  /**
+   * The selected unit: pure white with a full-strength white silhouette.
+   *
+   * Hover and selection are close in value, so the OUTLINE is what actually
+   * distinguishes them -- an unselected flat never gets one at this strength,
+   * and a full-strength white silhouette survives being seen through the
+   * translucent shell around it.
+   */
+  unitSelected: (alpha = 0.88) => grey(255).withAlpha(alpha),
+  unitOutline: grey(255),
 
   /** Unit code label on the isolated floor. */
-  unitLabelFill: rgba(238, 246, 255, 1),
-  unitLabelOutline: rgba(8, 14, 24, 1),
+  unitLabelFill: grey(245),
+  unitLabelOutline: grey(0),
 
   /** Surface parcel polygons, clamped to ground. */
-  parcelFill: rgba(90, 170, 140, 0.16),
-  parcelOutline: rgba(120, 210, 170, 0.85),
-  parcelActive: rgba(150, 235, 190, 0.4),
+  parcelFill: grey(190, 0.1),
+  parcelOutline: grey(215, 0.85),
+  parcelActive: grey(240, 0.28),
 
   /** Architectural model on the active building. */
-  buildingModelWall: rgba(238, 232, 220, 1),
+  buildingModelWall: grey(OFF_WHITE),
   buildingModelRoof: (use: UseType) => ROOF_COLOR[use],
   /**
    * Flat cap over the city-scale extrusions. The extruded polygon carries the
@@ -183,43 +254,117 @@ export const MATERIALS = {
    * window boxes on every roof; this cap is drawn just above it in a muted
    * roof tone so the top reads as a roof.
    */
-  buildingRoofCap: (use: UseType, alpha = 1) => ROOF_COLOR[use].withAlpha(alpha),
+  buildingRoofCap: (use: UseType, alpha = BUILDING_ALPHA) =>
+    ROOF_COLOR[use].withAlpha(alpha),
   /**
    * Roof edge line. A quiet darkening of the roof tone rather than the dark
    * fixture colour -- full-contrast outlines around every roof face were
    * half of the "printed" look on the old model.
    */
-  buildingModelRoofLine: rgba(28, 32, 38, 0.45),
-  buildingModelFixture: rgba(80, 84, 92, 1),
+  buildingModelRoofLine: grey(24, 0.45),
+  buildingModelFixture: grey(120),
   /** Ground apron at the model's foot. */
-  buildingModelPlinth: rgba(96, 98, 102, 1),
+  buildingModelPlinth: grey(132),
   /**
    * Flat concrete cap closing the top of each per-storey prism in the
    * exploded model. Without it the extruded wall texture prints its window
    * grid on every storey's top face; this light slab tone also reads as the
    * floor-plate edge, which is the detailing the explode view wants.
    */
-  buildingModelSlabCap: rgba(196, 190, 180, 1),
+  buildingModelSlabCap: grey(232),
 } as const;
 
+// -------------------------------------------------------------------- roads
 /**
- * Muted concrete roof palette. All roofs in this AOI are flat slabs, so every
- * tone is a neutral deck/membrane grey -- keeping roofs near-neutral is what
- * lets the textured walls stay the visual subject.
+ * Street and road centrelines, drawn clamped to the ground.
+ *
+ * Roads are the one layer that must stay legible over BOTH a dark satellite
+ * basemap and Google's captured mesh, so each is drawn as a bright line over a
+ * dark casing -- the standard cartographic trick, and the only way a neutral
+ * grey line survives both a black rooftop and a white one underneath it.
+ *
+ * Width is in screen pixels and encodes the road hierarchy, which is what the
+ * hue used to do on a conventional map. The order below is the hierarchy.
  */
-const ROOF_COLOR: Record<UseType, Cesium.Color> = {
-  residential: rgba(176, 172, 164, 1),   // concrete deck
-  commercial: rgba(112, 116, 122, 1),    // gravel + membrane
-  institutional: rgba(150, 156, 150, 1), // weathered screed
-  industrial: rgba(100, 104, 110, 1),    // coated metal sheet
+export const ROAD_STYLE: Record<RoadClass, { width: number; value: number; alpha: number }> = {
+  motorway: { width: 7, value: 240, alpha: 0.95 },
+  trunk: { width: 7, value: 238, alpha: 0.95 },
+  primary: { width: 6, value: 236, alpha: 0.94 },
+  secondary: { width: 5, value: 220, alpha: 0.92 },
+  tertiary: { width: 4, value: 200, alpha: 0.9 },
+  residential: { width: 3, value: 172, alpha: 0.86 },
+  living_street: { width: 3, value: 172, alpha: 0.86 },
+  unclassified: { width: 3, value: 156, alpha: 0.84 },
+  service: { width: 2, value: 132, alpha: 0.78 },
 };
 
+export const ROAD_COLOR: Record<RoadClass, Cesium.Color> = (() => {
+  const out = {} as Record<RoadClass, Cesium.Color>;
+  for (const cls of Object.keys(ROAD_STYLE) as RoadClass[]) {
+    const s = ROAD_STYLE[cls];
+    out[cls] = grey(s.value, s.alpha);
+  }
+  return out;
+})();
+
+/** What each class is called in the panel and the key. */
+export const ROAD_CLASS_LABEL: Record<RoadClass, string> = {
+  motorway: 'Motorway',
+  trunk: 'Trunk road',
+  primary: 'Arterial road',
+  secondary: 'Sub-arterial road',
+  tertiary: 'Collector road',
+  residential: 'Residential street',
+  unclassified: 'Minor street',
+  living_street: 'Living street',
+  service: 'Service lane',
+};
+
+/**
+ * Dark casing drawn under every road line.
+ *
+ * One grey value cannot hold contrast against both the dimmed satellite
+ * basemap and Google's bright photoreal mesh. A dark casing under a light
+ * stroke is the standard cartographic answer and it works over any surface
+ * without reaching for a hue.
+ */
+export const ROAD_CASING = grey(8, 0.72);
+/** Cursor is over it. */
+export const ROAD_HOVER = grey(255, 0.96);
+/** The picked street. */
+export const ROAD_SELECTED = grey(255, 0.98);
+/** How much wider the casing is than the line it sits under, in pixels. */
+export const ROAD_CASING_EXTRA_PX = 2;
+/** Extra width of the halo drawn over the one selected street, in pixels. */
+export const ROAD_SELECTED_EXTRA_PX = 3;
+/**
+ * Click tolerance for streets, in screen pixels.
+ *
+ * A 2-3 px stroke is an unusable target, and the brief requires selection to
+ * work whether the user hits the drawn line or merely its vicinity. This is
+ * applied as the width of a WIDENED second pick pass in Picker.tsx, not as an
+ * invisible corridor entity: the widened pass costs no entities and no GPU
+ * time, and it runs only after the tight pick has already failed to find any
+ * solid, so it can never enlarge the target of a building, floor or unit.
+ */
+export const ROAD_PICK_PX = 13;
+
 // ---------------------------------------------------------------- utilities
+/**
+ * Utility corridors, one hue per asset type.
+ *
+ * These are tubes several metres underground seen through a translucent globe,
+ * often crossing each other in a single view, and they are the one layer where
+ * four categories are on screen at once with no room to label each. Hue is the
+ * encoding that survives that; the Legend still states the type and the depth
+ * in words beside every swatch. Kept clear of the built-form green so a duct
+ * never reads as part of a basement, and clear of CONFLICT_COLOR's red.
+ */
 export const UTILITY_COLOR: Record<AssetType, Cesium.Color> = {
-  water: rgba(64, 158, 232, 1),
-  sewer: rgba(150, 112, 74, 1),
-  power: rgba(238, 186, 60, 1),
-  metro: rgba(176, 108, 220, 1),
+  power: Cesium.Color.fromCssColorString('#FACC15'),   // amber
+  water: Cesium.Color.fromCssColorString('#38BDF8'),   // blue
+  sewer: Cesium.Color.fromCssColorString('#B45309'),   // brown
+  metro: Cesium.Color.fromCssColorString('#C084FC'),   // violet
 };
 
 export const UTILITY_LABEL: Record<AssetType, string> = {
@@ -232,21 +377,46 @@ export const UTILITY_LABEL: Record<AssetType, string> = {
 /** A utility corridor the user has picked. */
 export const UTILITY_SELECTED = Cesium.Color.WHITE.withAlpha(0.95);
 
-/** Conflicting segments pulse between these two. */
-export const CONFLICT_COLOR = rgba(255, 64, 64, 0.95);
-export const CONFLICT_COLOR_DIM = rgba(150, 24, 24, 0.55);
+/**
+ * Conflicting segments pulse between these two.
+ *
+ * THE ONLY HUE IN THE APPLICATION. A 3D intersection between a sewer and an
+ * occupied basement is the one thing in this scene that a viewer must not scan
+ * past, and it is the finding the whole ST_3DIntersects pipeline exists to
+ * produce. Encoding it as another grey would bury it in the grey it is
+ * supposed to stand out from. Matches --danger in app/globals.css.
+ */
+export const CONFLICT_COLOR = rgba(239, 68, 68, 0.95);
+export const CONFLICT_COLOR_DIM = rgba(120, 26, 26, 0.55);
 
 // --------------------------------------------------------------- provenance
-/** Estimated data is visually distinct from surveyed data throughout the UI. */
+/**
+ * Estimated data stays visually distinct from surveyed data throughout the UI,
+ * by hue AND by fill pattern.
+ *
+ * Ordered by strength of evidence: green is a surveyed plan, violet is a guess.
+ * The pattern paired with each colour lives in app/globals.css (.swatch-solid /
+ * -dense / -mid / -open) and is what keeps the four distinguishable in
+ * greyscale and for a colour-blind reader -- the hue is the fast read, the
+ * pattern is the reliable one.
+ */
 export const PROVENANCE_HEX: Record<Provenance, string> = {
-  surveyed_plan: '#4ade80',
-  osm_tag: '#38bdf8',
-  dsm_dem: '#a78bfa',
-  estimated: '#fbbf24',
+  surveyed_plan: '#4ADE80',  // measured
+  osm_tag: '#38BDF8',        // mapped
+  dsm_dem: '#FACC15',        // derived
+  estimated: '#C084FC',      // nothing measured it
+};
+
+/** The fill pattern paired with each provenance value. See globals.css. */
+export const PROVENANCE_SWATCH: Record<Provenance, string> = {
+  surveyed_plan: 'swatch-solid',   // measured
+  osm_tag: 'swatch-dense',         // mapped
+  dsm_dem: 'swatch-mid',           // derived
+  estimated: 'swatch-open',        // nothing measured it
 };
 
 /** Canvas clear colour behind the globe. */
-export const SCENE_BACKGROUND = Cesium.Color.fromCssColorString('#05080f');
+export const SCENE_BACKGROUND = Cesium.Color.BLACK;
 
 /** A circular cross-section for PolylineVolume tubes. */
 export function tubeShape(radius: number, sides = 12): Cesium.Cartesian2[] {

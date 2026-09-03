@@ -33,12 +33,12 @@ export default function ActionBar() {
         : 'Back to city';
 
   return (
-    <div className="glass pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 py-1">
+    <div data-panel="actions" className="glass pointer-events-auto flex flex-wrap items-center gap-1 rounded-lg px-1.5 py-1">
       {mode !== 'city' ? (
         <button
           type="button"
           onClick={back}
-          className="rounded px-2 py-1 text-[11px] text-[rgb(var(--ink))] hover:bg-white/10"
+          className="rounded px-2 py-1 text-[11px] text-[rgb(var(--ink))] tint-hover"
         >
           {backLabel}
         </button>
@@ -49,8 +49,8 @@ export default function ActionBar() {
         className={[
           'rounded px-2 py-1 text-[11px] transition-colors',
           underground
-            ? 'bg-[rgb(var(--accent))] text-black'
-            : 'text-[rgb(var(--ink))] hover:bg-white/10',
+            ? 'is-active'
+            : 'text-[rgb(var(--ink))] tint-hover',
         ].join(' ')}
       >
         Underground
@@ -70,8 +70,8 @@ export default function ActionBar() {
           activeBuildingId === null
             ? 'is-disabled text-[rgb(var(--muted))]'
             : slice.enabled
-              ? 'bg-[rgb(var(--accent))] text-black'
-              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+              ? 'is-active'
+              : 'text-[rgb(var(--ink))] tint-hover',
         ].join(' ')}
       >
         Slice

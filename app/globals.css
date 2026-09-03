@@ -2,43 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Dark is the default: the scene is a full-bleed satellite view and light
-   chrome over it is unreadable. The light theme is a deliberate opt-in. */
+/*
+ * Monochrome CHROME. Colour scene.
+ * --------------------------------
+ * The interface -- top bar, dock, panels, dashboard -- is black, white and
+ * grey, and the only hue in these tokens is `--danger`, reserved for states a
+ * user must not miss: a detected encroachment, and a field that will not save.
+ *
+ * That rule stops at the canvas. The basemap keeps its own colour (see
+ * TREATMENTS in lib/cesium/imagery.ts), built form is green, and utility
+ * corridors and provenance are carried by hue plus a fill pattern -- see the
+ * COLOUR RULE in lib/cesium/materials.ts. Black chrome is what lets the scene
+ * be the only coloured surface on screen; do not push these tokens into it.
+ *
+ * Tokens are space-separated RGB triplets so Tailwind's alpha syntax works:
+ * rgb(var(--ink) / 0.6).
+ *
+ * The light theme is the exact inverse rather than a different palette. It is
+ * kept -- not dropped -- because the theme toggle is existing functionality;
+ * making it a true inverse is what lets one set of component classes serve
+ * both, which the previous blue-accented theme never managed.
+ */
 :root {
-  --panel: 12 18 28;
-  --edge: 42 56 78;
-  --ink: 226 236 248;
-  --muted: 138 158 184;
-  --accent: 92 190 255;
+  --bg: 0 0 0;              /* page + scene background      #000000 */
+  --panel: 10 10 10;        /* floating chrome              #0A0A0A */
+  --surface-2: 23 23 23;    /* inset/raised inside a panel  #171717 */
+  --edge: 38 38 38;         /* hairline dividers            #262626 */
+  --edge-strong: 64 64 64;  /* emphasised borders           #404040 */
+  --ink: 255 255 255;       /* primary text                 #FFFFFF */
+  --muted: 163 163 163;     /* secondary text               #A3A3A3 */
+  --muted-2: 138 138 138;   /* tertiary / captions          #8A8A8A */
+
+  /* Active/selected fill. White on black; --on-accent is what sits on it. */
+  --accent: 255 255 255;
+  --on-accent: 0 0 0;
+
+  /* Hover/press wash. Flips with the theme so one class works in both. */
+  --tint: 255 255 255;
+
+  /* The only hue in the application. Two values, because #EF4444 on #0A0A0A
+     is ~4.6:1 -- passing for body text, marginal at the 9-11px this app
+     actually uses. Fills, dots and borders take --danger; TEXT takes
+     --danger-ink, which clears 8:1. */
+  --danger: 239 68 68;      /* #EF4444 */
+  --danger-ink: 252 165 165;/* #FCA5A5 */
+
+  --focus: 255 255 255;
+
+  /* Written by the compact bottom sheet so Cesium's credit container is
+     lifted clear of it. See .cesium-viewer-bottom below -- attribution is a
+     licence obligation and may never end up underneath a panel. */
+  --credit-bottom: 34px;
 }
 
 html[data-theme='light'] {
-  --panel: 246 249 253;
-  --edge: 196 210 228;
-  --ink: 18 28 42;
-  --muted: 78 98 122;
-  --accent: 24 118 210;
+  --bg: 255 255 255;
+  --panel: 250 250 250;
+  --surface-2: 244 244 245;
+  --edge: 212 212 212;
+  --edge-strong: 163 163 163;
+  --ink: 0 0 0;
+  --muted: 82 82 82;
+  --muted-2: 115 115 115;
+
+  --accent: 0 0 0;
+  --on-accent: 255 255 255;
+
+  --tint: 0 0 0;
+
+  --danger: 220 38 38;      /* #DC2626 -- darker, for contrast on white */
+  --danger-ink: 153 27 27;  /* #991B1B */
+
+  --focus: 0 0 0;
 }
 
 html, body {
   height: 100%;
   margin: 0;
-  background: #05080f;
+  background: rgb(var(--bg));
   color: rgb(var(--ink));
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   overflow: hidden;
+  /* Chrome floats over a canvas that owns every drag gesture; a rubber-band
+     scroll on the body would fight Cesium's touch handling on mobile. */
+  overscroll-behavior: none;
 }
 
 @layer components {
   .glass {
-    background: rgb(var(--panel) / 0.82);
-    border: 1px solid rgb(var(--edge) / 0.65);
-    backdrop-filter: blur(14px) saturate(1.25);
-    box-shadow: 0 8px 30px rgb(0 0 0 / 0.45);
+    background: rgb(var(--panel) / 0.88);
+    border: 1px solid rgb(var(--edge));
+    backdrop-filter: blur(14px);
+    box-shadow: 0 8px 30px rgb(0 0 0 / 0.55);
   }
   .glass-soft {
-    background: rgb(var(--panel) / 0.62);
-    border: 1px solid rgb(var(--edge) / 0.45);
+    background: rgb(var(--panel) / 0.68);
+    border: 1px solid rgb(var(--edge) / 0.7);
     backdrop-filter: blur(10px);
   }
   .chip {
@@ -57,15 +116,78 @@ html, body {
   .is-disabled {
     @apply cursor-not-allowed opacity-40;
   }
+
+  /* The hover/press wash, as one class instead of hover:bg-white/10 spelled
+     out at thirty call sites -- which was also why the light theme never
+     worked, since white-on-white is invisible. */
+  .tint-hover {
+    @apply transition-colors hover:bg-[rgb(var(--tint)/0.10)];
+  }
+  .tint-soft {
+    background: rgb(var(--tint) / 0.06);
+  }
+
+  /* Active/selected control. Replaces bg-[rgb(var(--accent))] text-black,
+     which inverted incorrectly under the light theme. */
+  .is-active {
+    background: rgb(var(--accent));
+    color: rgb(var(--on-accent));
+  }
 }
 
-/* Range inputs: the explode and transparency sliders. */
+/* ---------------------------------------------------------------- forms --
+ * Used by the building edit form. Kept here rather than in the component so
+ * that "what does an invalid field look like" has one answer.
+ */
+.field {
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid rgb(var(--edge-strong));
+  background: rgb(var(--surface-2));
+  padding: 3px 6px;
+  font-size: 12px;
+  color: rgb(var(--ink));
+}
+.field::placeholder { color: rgb(var(--muted-2)); }
+.field:focus {
+  outline: none;
+  border-color: rgb(var(--ink));
+}
+.field[aria-invalid='true'] {
+  border-color: rgb(var(--danger));
+}
+.field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* A read-only field must not look like a disabled editable one: it is not
+   waiting for anything, it can never be typed into. Flat, no border, muted. */
+.field-readonly {
+  border-color: transparent;
+  background: transparent;
+  color: rgb(var(--muted));
+  cursor: default;
+}
+
+/* ------------------------------------------------------- focus visibility --
+ * There was no focus style anywhere in the application. Every interactive
+ * element gets one, and only for keyboard users, so pointer users see no
+ * change from before.
+ */
+:where(button, [role='button'], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid rgb(var(--focus));
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Range inputs: the explode, transparency, slice and sun sliders. */
 input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
+  width: 100%;
   height: 3px;
   border-radius: 999px;
-  background: rgb(var(--edge));
+  background: rgb(var(--edge-strong));
   outline: none;
 }
 input[type='range']::-webkit-slider-thumb {
@@ -86,15 +208,61 @@ input[type='range']::-moz-range-thumb {
   border: 2px solid rgb(var(--panel));
   cursor: pointer;
 }
-input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted)); }
+input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted-2)); }
+input[type='range']:disabled::-moz-range-thumb { background: rgb(var(--muted-2)); }
+
+/* ------------------------------------------------------------- swatches --
+ * Provenance sources and utility asset types used to be four hues each. They
+ * are now four grey values, each with its own fill pattern, so the two are
+ * still distinguishable side by side without introducing colour -- and stay
+ * distinguishable in greyscale, which four hues never were.
+ */
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 2px;
+  border: 1px solid rgb(var(--edge-strong));
+  background-color: rgb(var(--surface-2));
+}
+.swatch-solid  { background-color: currentColor; }
+.swatch-dense  { background-color: rgb(var(--muted)); }
+.swatch-mid {
+  background-image: repeating-linear-gradient(
+    45deg, currentColor 0 1px, transparent 1px 3px);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* Open outline, no fill. "Nothing measured it" -- which is exactly what an
+   estimate is, and a stronger mapping than amber-versus-green ever was. */
+.swatch-open {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.swatch-danger { background-color: rgb(var(--danger)); border-color: rgb(var(--danger)); }
 
 /* Attribution is a licence obligation (Esri, Maxar, CARTO, OSM), so the credit
    container is never hidden. Position only -- text, colour and the ion logo are
    left exactly as Cesium renders them; this just lifts the box clear of the
-   full-width StatusBar sitting at bottom-3. */
-.cesium-viewer-bottom {
-  bottom: 34px;
-  left: 8px;
+   StatusBar. The offset shrinks on small screens where the bar is shorter. */
+/*
+ * !important, and deliberately.
+ *
+ * Cesium's own widgets.css declares `.cesium-viewer-bottom { bottom: 0 }` at
+ * the SAME specificity as this rule, and it is loaded from a <link> in the
+ * document head whose order relative to this stylesheet is decided by the
+ * bundler, not by us. Without the override the credit sat at the bottom edge
+ * underneath the status bar -- which it did in this app until now.
+ *
+ * Attribution to Esri, Maxar, CARTO and OSM is a licence obligation, so this
+ * is one of the few places where losing a specificity race is not an option.
+ * --credit-bottom is written by the bottom sheet on compact layouts.
+ */
+.cesium-viewer-bottom,
+.cesium-viewer .cesium-viewer-bottom {
+  bottom: var(--credit-bottom, 34px) !important;
+  left: 8px !important;
   z-index: 30;
 }
 
@@ -112,9 +280,9 @@ input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted
 .skeleton {
   background-image: linear-gradient(
     90deg,
-    rgb(var(--edge) / 0.35) 0%,
-    rgb(var(--edge) / 0.75) 50%,
-    rgb(var(--edge) / 0.35) 100%
+    rgb(var(--edge) / 0.5) 0%,
+    rgb(var(--edge-strong) / 0.9) 50%,
+    rgb(var(--edge) / 0.5) 100%
   );
   background-size: 200% 100%;
   animation: shimmer 1.3s linear infinite;
@@ -132,11 +300,20 @@ input[type='range']:disabled::-webkit-slider-thumb { background: rgb(var(--muted
     animation: none;
   }
   .skeleton { background-position: 0 0; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
 }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgb(var(--edge) / 0.9);
+  background: rgb(var(--edge-strong));
   border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted-2)); }
+
+/* Touch: a panel that scrolls must not rubber-band the page behind it, which
+   on a phone would otherwise fight the globe's own pan gesture. */
+@media (pointer: coarse) {
+  .overflow-y-auto,
+  .overflow-auto { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 }

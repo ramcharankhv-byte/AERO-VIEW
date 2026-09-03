@@ -6,7 +6,19 @@ import { PROVIDER_LABELS } from '@/lib/cesium/imagery-catalog';
 import { useCameraHeight } from '@/lib/cesium/setup';
 
 /** Bottom bar: coordinate system, scale, accuracy and the real building count. */
-export default function StatusBar() {
+export default function StatusBar({
+  /**
+   * Narrow layouts drop the lower-priority readouts rather than letting a
+   * ten-child single-line flex overflow.
+   *
+   * The building count and the place name are NEVER dropped: scripts/
+   * verify_ui.mjs asserts on both, and they are the two facts that say what
+   * you are looking at. Dropping the imagery/terrain name is not a licence
+   * problem -- the actual attribution lives in Cesium's own credit container,
+   * which is repositioned but never hidden (see .cesium-viewer-bottom).
+   */
+  dense = false,
+}: { dense?: boolean } = {}) {
   const buildings = useDataStore((s) => s.buildings);
   const conflicts = useDataStore((s) => s.conflicts);
   const mode = useViewStore((s) => s.mode);
@@ -28,21 +40,31 @@ export default function StatusBar() {
   const parcelUlpin = activeBuildingId !== null ? detail[activeBuildingId]?.parcel?.ulpin : null;
 
   return (
-    <div className="glass pointer-events-auto flex h-7 items-center gap-3 rounded-lg px-3 text-[10px] text-[rgb(var(--muted))]">
+    <div
+      data-panel="status"
+      className="glass pointer-events-auto flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap rounded-lg px-3 text-[10px] text-[rgb(var(--muted))] sm:gap-3"
+    >
       <span className="font-medium text-[rgb(var(--ink))]">{count} 3D buildings</span>
       <Sep />
       <span>Siripuram, Visakhapatnam</span>
-      <Sep />
-      <span>WGS 84 / EPSG:4326 · Z in metres</span>
-      <Sep />
-      <span>AOI 1.22 × 1.11 km</span>
-      <Sep />
-      {/* Stated honestly: heights are mostly inferred, not measured. */}
-      <span title="90% of heights are inferred from footprint area and building tag">
-        Height accuracy ±1 storey (est.)
-      </span>
-      <Sep />
-      <span className={conflicts.length ? 'text-red-400' : ''}>
+      {dense ? null : (
+        <>
+          <Sep />
+          <span className="hidden xl:inline">WGS 84 / EPSG:4326 · Z in metres</span>
+          <Sep />
+          <span className="hidden 2xl:inline">AOI 1.22 × 1.11 km</span>
+          <Sep />
+          {/* Stated honestly: heights are mostly inferred, not measured. */}
+          <span
+            className="hidden 2xl:inline"
+            title="90% of heights are inferred from footprint area and building tag"
+          >
+            Height accuracy ±1 storey (est.)
+          </span>
+          <Sep />
+        </>
+      )}
+      <span className={conflicts.length ? 'text-dangerInk' : ''}>
         {conflicts.length} conflicts
       </span>
       {activeProps ? (
@@ -73,13 +95,13 @@ export default function StatusBar() {
           </>
         ) : (
           <>
-            <span className={imageryActive !== imageryProvider ? 'text-amber-300/90' : ''}>
+            <span className={imageryActive !== imageryProvider ? 'font-medium text-ink' : ''}>
               {PROVIDER_LABELS[imageryActive]}
               {imageryActive !== imageryProvider ? ' (fallback)' : ''}
             </span>
             <Sep />
             {ionFallback ? (
-              <span className="text-amber-300/90">Ellipsoid · no terrain</span>
+              <span className="font-medium text-ink">Ellipsoid · no terrain</span>
             ) : (
               <span>Cesium World Terrain</span>
             )}

@@ -28,17 +28,17 @@ import { PROVIDER_LABELS, TREATMENT_LABELS } from './cesium/imagery-catalog';
 
 /** Layer keys in a fixed order, so the `layers` param is stable and diffable. */
 const LAYER_ORDER: LayerKey[] = [
-  'parcels', 'buildings', 'floors', 'utilities', 'terrain', 'basemap',
+  'parcels', 'buildings', 'roads', 'floors', 'utilities', 'terrain', 'basemap',
 ];
 
 /** Short codes; layers=pbf is legible in a way layers=parcels,buildings is not. */
 const LAYER_CODE: Record<LayerKey, string> = {
-  parcels: 'p', buildings: 'b', floors: 'f',
+  parcels: 'p', buildings: 'b', roads: 'r', floors: 'f',
   utilities: 'u', terrain: 't', basemap: 'm',
 };
 
 const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
-  parcels: false, buildings: true, floors: true,
+  parcels: false, buildings: true, roads: true, floors: true,
   utilities: false, terrain: true, basemap: true,
 };
 
@@ -82,6 +82,7 @@ function idParam(v: string | null): number | null {
 export type UrlState = Pick<
   ViewState,
   'activeBuildingId' | 'isolatedFloor' | 'selectedUnitId' | 'selectedUtilityId'
+  | 'selectedRoadId'
   | 'layers' | 'explodeT' | 'transparency' | 'theme' | 'underground'
   | 'imageryProvider' | 'imageryTreatment' | 'buildingStyle'
 >;

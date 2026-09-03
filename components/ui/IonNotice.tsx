@@ -18,11 +18,11 @@ export default function IonNotice() {
   if (!ionFallback || dismissed) return null;
 
   return (
-    <div className="glass pointer-events-auto max-w-[330px] rounded-lg border-amber-500/40 px-3 py-2">
+    <div className="glass pointer-events-auto max-w-[330px] rounded-lg border-edgeStrong px-3 py-2">
       <div className="flex items-start gap-2">
-        <span className="mt-[3px] inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+        <span className="mt-[3px] inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-muted" />
         <div>
-          <div className="text-[11px] font-semibold text-amber-300">
+          <div className="text-[11px] font-semibold text-ink">
             No Cesium ion token
           </div>
           <p className="mt-0.5 text-[10px] leading-snug text-[rgb(var(--muted))]">

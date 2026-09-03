@@ -5,6 +5,7 @@ import CameraDirector from './CameraDirector';
 import Picker from './Picker';
 import ParcelsLayer from '../layers/ParcelsLayer';
 import BuildingsLayer from '../layers/BuildingsLayer';
+import RoadsLayer from '../layers/RoadsLayer';
 import BuildingModelLayer from '../layers/BuildingModelLayer';
 import FloorStackLayer from '../layers/FloorStackLayer';
 import UnitsLayer from '../layers/UnitsLayer';
@@ -30,6 +31,7 @@ export default function Scene() {
 
       {/* Render-only layers, drawn back to front. */}
       <ParcelsLayer />
+      <RoadsLayer />
       <BuildingsLayer />
       <BuildingModelLayer />
       <FloorStackLayer />
