@@ -29,10 +29,10 @@ export default function ConflictBanner() {
   const lead = ordered[0];
 
   return (
-    <div className="glass pointer-events-auto max-w-[560px] rounded-lg border-red-500/50 px-3 py-2">
+    <div data-panel="conflict" className="glass pointer-events-auto w-full max-w-[560px] rounded-lg border-danger/60 px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="pulse-conflict inline-block h-2 w-2 shrink-0 rounded-full bg-red-500" />
-        <span className="text-[12px] font-semibold text-red-300">
+        <span className="pulse-conflict inline-block h-2 w-2 shrink-0 rounded-full bg-danger" />
+        <span className="text-[12px] font-semibold text-dangerInk">
           {conflicts.length} utility/basement conflict
           {conflicts.length > 1 ? 's' : ''} detected
         </span>
@@ -47,7 +47,7 @@ export default function ConflictBanner() {
         level {lead.level_no} of{' '}
         <span className="font-mono">{lead.building_ulpin}</span>
         {lead.status !== 'operational' ? (
-          <span className="text-red-300"> — {lead.status}</span>
+          <span className="text-dangerInk"> — {lead.status}</span>
         ) : null}
         .
       </p>
@@ -61,8 +61,8 @@ export default function ConflictBanner() {
             className={[
               'rounded px-1.5 py-0.5 font-mono text-[9px] transition-colors',
               selectedUtilityId === c.utility_id
-                ? 'bg-red-500 text-black'
-                : 'bg-red-500/15 text-red-200 hover:bg-red-500/30',
+                ? 'bg-danger text-white'
+                : 'bg-danger/15 text-dangerInk hover:bg-danger/30',
             ].join(' ')}
           >
             {c.building_ulpin}

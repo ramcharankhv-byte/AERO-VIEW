@@ -2,9 +2,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 import type {
-  BuildingDetail, BuildingProps, ConflictRow, GeoFC,
-  ParcelInfo, StackHit, UtilityProps,
+  BuildingDetail, BuildingProps, ConflictRow, EnrichedBuilding, GeoFC,
+  ParcelInfo, RoadProps, StackHit, UtilityProps,
 } from './types';
+import { enrichBuilding, enrichCollection, type UnitFacts } from './mock/building';
+import { allEdits, editsFor, editsRev } from './data/edits';
+import type { BuildingEdit } from './data/building-schema';
 
 /**
  * Data access with two backends.
@@ -220,11 +223,193 @@ const QUERY_SQL = `
   ORDER BY CASE s.level WHEN 'parcel' THEN 1 WHEN 'building' THEN 2
                         WHEN 'floor' THEN 3 ELSE 4 END, s.id`;
 
-export async function getBuildings(): Promise<GeoFC<BuildingProps>> {
+/** Raw footprints, from PostGIS or the snapshot. NOT enriched. */
+async function buildingsFC(): Promise<GeoFC<BuildingProps>> {
   const r = await viaDb(async () =>
     (await q<{ fc: GeoFC<BuildingProps> }>(BUILDINGS_SQL))[0].fc);
   if (r.ok) return r.value;
   return snapshot<GeoFC<BuildingProps>>('buildings.json');
+}
+
+/**
+ * buildingId -> real unit totals, memoised for the process.
+ *
+ * THE CONSISTENCY TRAP THIS SOLVES. getBuildings() has no unit rows in hand,
+ * so a naive implementation would estimate built_up_m2 from the footprint
+ * while getBuildingDetail() summed the real unit areas -- two different
+ * numbers for the same building, and the DetailPanel reads its header rows
+ * from the FeatureCollection and the rest from the detail document. Both
+ * paths take their totals from this one index instead.
+ *
+ * On the snapshot path this walks detail.json once. That file is already
+ * parsed and held by `fileCache` for getBuildingDetail, so the cost is paid
+ * once per process and never again.
+ */
+let unitIndexCache: Map<number, UnitFacts> | null = null;
+let unitIndexRev = -1;
+async function unitIndex(): Promise<Map<number, UnitFacts>> {
+  // Keyed on the edit revision so a save invalidates the memo with an integer
+  // comparison rather than a deep check.
+  if (unitIndexCache && unitIndexRev === editsRev()) return unitIndexCache;
+  unitIndexRev = editsRev();
+  const out = new Map<number, UnitFacts>();
+
+  const viaSql = await viaDb(async () =>
+    q<{ building_id: number; built: string; n: number }>(
+      'SELECT f.building_id, sum(u.built_m2) AS built, count(*)::int AS n '
+      + 'FROM unit u JOIN floor f ON f.id = u.floor_id GROUP BY f.building_id'));
+  if (viaSql.ok) {
+    for (const row of viaSql.value) {
+      out.set(row.building_id, { builtM2: Number(row.built) || 0, unitCount: row.n });
+    }
+    unitIndexCache = out;
+    return out;
+  }
+
+  const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
+  for (const [key, doc] of Object.entries(all)) {
+    let builtM2 = 0;
+    for (const u of doc.units ?? []) builtM2 += u.built_m2;
+    out.set(Number(key), { builtM2, unitCount: doc.units?.length ?? 0 });
+  }
+  unitIndexCache = out;
+  return out;
+}
+
+/**
+ * Vertices of every street, for the nearest-street lookup the generated
+ * addresses use.
+ *
+ * A generated address should at least name a street that really runs past the
+ * building. Built from the same derived artefact the map draws, and degrades
+ * to an empty list (the generator then says "Siripuram") when it is absent.
+ */
+let streetIndexCache: { lon: number; lat: number; name: string }[] | null = null;
+async function streetIndex(): Promise<{ lon: number; lat: number; name: string }[]> {
+  if (streetIndexCache) return streetIndexCache;
+  try {
+    const fc = await snapshot<GeoFC<RoadProps>>('roads.json');
+    const pts: { lon: number; lat: number; name: string }[] = [];
+    for (const f of fc.features) {
+      const parts = f.geometry.type === 'MultiLineString'
+        ? (f.geometry.coordinates as number[][][])
+        : [f.geometry.coordinates as number[][]];
+      for (const line of parts) {
+        // Every third vertex is plenty: this is a nearest-street lookup, not a
+        // routing index, and it keeps the scan small.
+        for (let i = 0; i < line.length; i += 3) {
+          pts.push({ lon: line[i][0], lat: line[i][1], name: f.properties.name });
+        }
+      }
+    }
+    streetIndexCache = pts;
+  } catch {
+    streetIndexCache = [];
+  }
+  return streetIndexCache;
+}
+
+function nearestStreetFactory(pts: { lon: number; lat: number; name: string }[]) {
+  return (lon: number, lat: number): string | null => {
+    let best: string | null = null;
+    let bestD = Infinity;
+    for (const p of pts) {
+      // Squared degrees: monotonic in true distance at this scale, and this
+      // runs once per building over a few thousand points.
+      const dx = p.lon - lon;
+      const dy = p.lat - lat;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = p.name; }
+    }
+    return best;
+  };
+}
+
+/**
+ * Apply a user's edits over a record, in two passes.
+ *
+ * The two passes answer different questions and neither alone is correct:
+ *
+ *   Pass 1 overlays only the fields that exist in the REAL schema (name,
+ *   address, floors, height_m) BEFORE enrichment, so that everything the
+ *   generator derives from them -- the built-up estimate, the occupancy band,
+ *   the permitted building subtypes -- is derived from the edited values
+ *   rather than the originals.
+ *
+ *   Pass 2 overlays every edited field AFTER enrichment, so that a value the
+ *   user typed explicitly wins outright over whatever the generator produced
+ *   for it.
+ *
+ * A single pass in either direction gets one of the two wrong: applied only
+ * before, an explicit built-up area is overwritten by the estimate; applied
+ * only after, editing the storey count leaves every derived figure stale.
+ */
+const REAL_SCHEMA_FIELDS = ['name', 'address', 'floors', 'height_m'] as const;
+
+function preEnrich(b: BuildingProps, edit: Partial<BuildingEdit> | null): BuildingProps {
+  if (!edit) return b;
+  const out = { ...b };
+  for (const f of REAL_SCHEMA_FIELDS) {
+    if (edit[f] !== undefined) (out as Record<string, unknown>)[f] = edit[f];
+  }
+  return out;
+}
+
+function postEnrich(
+  b: EnrichedBuilding,
+  edit: Partial<BuildingEdit> | null,
+): EnrichedBuilding {
+  if (!edit) return b;
+  const out: EnrichedBuilding = { ...b, ...edit };
+  // An edited name or address is no longer an OSM tag nor a generated value;
+  // it is the user's. The panel needs to be able to say so.
+  if (edit.name !== undefined) out.name_source = 'generated';
+  if (edit.address !== undefined) out.address_source = 'generated';
+  return out;
+}
+
+/**
+ * Footprints, with the synthetic register attached.
+ *
+ * The enrichment is the LAST transform before the data leaves this module and
+ * it is applied on both backends, so PostGIS and the snapshot serve identical
+ * records. See lib/mock/building.ts for what it may and may not invent.
+ */
+let enrichedCache: GeoFC<EnrichedBuilding> | null = null;
+let enrichedRev = -1;
+
+export async function getBuildings(): Promise<GeoFC<EnrichedBuilding>> {
+  // Memoised on the edit revision.
+  //
+  // Enrichment walks 384 buildings and, for each, scans ~3,800 street vertices
+  // to find the one its generated address should name -- about 1.5M distance
+  // comparisons. Cheap once, wasteful on every request, and queryPoint calls
+  // this too, so a point query was paying for the whole collection. The result
+  // is a pure function of (raw data, unit index, streets, edits), and only the
+  // last of those can change at runtime.
+  if (enrichedCache && enrichedRev === editsRev()) return enrichedCache;
+
+  const [fc, units, streets, edits] = await Promise.all([
+    buildingsFC(), unitIndex(), streetIndex(), allEdits(),
+  ]);
+  const pre: GeoFC<BuildingProps> = edits.size === 0 ? fc : {
+    ...fc,
+    features: fc.features.map((f) => ({
+      ...f,
+      properties: preEnrich(f.properties, edits.get(f.properties.id) ?? null),
+    })),
+  };
+  const enriched = enrichCollection(pre, units, nearestStreetFactory(streets));
+  const out: GeoFC<EnrichedBuilding> = edits.size === 0 ? enriched : {
+    ...enriched,
+    features: enriched.features.map((f) => ({
+      ...f,
+      properties: postEnrich(f.properties, edits.get(f.properties.id) ?? null),
+    })),
+  };
+  enrichedCache = out;
+  enrichedRev = editsRev();
+  return out;
 }
 
 export async function getParcels(): Promise<GeoFC<ParcelInfo>> {
@@ -241,6 +426,19 @@ export async function getUtilities(): Promise<GeoFC<UtilityProps>> {
   return snapshot<GeoFC<UtilityProps>>('utilities.json');
 }
 
+/**
+ * Streets. Snapshot-only, and deliberately so.
+ *
+ * db/01_schema.sql has no road table: scripts/utilities.sql builds one as an
+ * UNLOGGED temp table to offset utility corridors from and drops it again. So
+ * unlike buildings and parcels there is no PostGIS answer to prefer here, and
+ * wrapping this in viaDb() would only imply one exists. The centrelines are
+ * merged, named and measured at build time by scripts/build_roads.mjs.
+ */
+export async function getRoads(): Promise<GeoFC<RoadProps>> {
+  return snapshot<GeoFC<RoadProps>>('roads.json');
+}
+
 export async function getConflicts(): Promise<ConflictRow[]> {
   const r = await viaDb(async () =>
     (await q<{ rows: ConflictRow[] }>(CONFLICTS_SQL))[0].rows);
@@ -249,13 +447,39 @@ export async function getConflicts(): Promise<ConflictRow[]> {
 }
 
 export async function getBuildingDetail(id: number): Promise<BuildingDetail | null> {
-  const r = await viaDb(async () => {
-    const rows = await q<{ doc: BuildingDetail }>(DETAIL_SQL, [id]);
-    return rows[0]?.doc ?? null;
-  });
-  if (r.ok) return r.value;
-  const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
-  return all[String(id)] ?? null;
+  const raw = await (async () => {
+    const r = await viaDb(async () => {
+      const rows = await q<{ doc: BuildingDetail }>(DETAIL_SQL, [id]);
+      return rows[0]?.doc ?? null;
+    });
+    if (r.ok) return r.value;
+    const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
+    return all[String(id)] ?? null;
+  })();
+  if (!raw) return null;
+
+  // Same generator, same seeds and the same unit index getBuildings uses, so
+  // the header rows the panel reads from the FeatureCollection and the rows it
+  // reads from here can never disagree.
+  const [units, streets, edit] = await Promise.all([
+    unitIndex(), streetIndex(), editsFor(id),
+  ]);
+  const ring = (raw.building.footprint?.coordinates as number[][][] | undefined)?.[0];
+  let lon = 0;
+  let lat = 0;
+  if (ring && ring.length > 1) {
+    const n = ring.length - 1;
+    for (let i = 0; i < n; i++) { lon += ring[i][0] / n; lat += ring[i][1] / n; }
+  }
+  const enriched = postEnrich(
+    enrichBuilding(preEnrich(raw.building, edit), {
+      footprint: raw.building.footprint,
+      units: units.get(id) ?? null,
+      nearestStreet: nearestStreetFactory(streets)(lon, lat),
+    }),
+    edit,
+  );
+  return { ...raw, building: { ...enriched, footprint: raw.building.footprint } };
 }
 
 /**
@@ -263,8 +487,19 @@ export async function getBuildingDetail(id: number): Promise<BuildingDetail | nu
  * ST_3DIntersects against a POINT Z is the containment test on the DB path.
  */
 export async function queryPoint(lon: number, lat: number, z: number): Promise<StackHit[]> {
-  if (await usingDb()) return q<StackHit>(QUERY_SQL, [lon, lat, z]);
-  return queryPointFromSnapshot(lon, lat, z);
+  const hits = (await usingDb())
+    ? await q<StackHit>(QUERY_SQL, [lon, lat, z])
+    : await queryPointFromSnapshot(lon, lat, z);
+
+  // The building label is built inside QUERY_SQL (and its JS twin), neither of
+  // which can reach the TypeScript enrichment. Reconciled here so this third
+  // read path names a building the same way the other two do.
+  const named = await getBuildings();
+  const byId = new Map(named.features.map((f) => [f.properties.id, f.properties]));
+  return hits.map((h) => {
+    const p = h.level === 'building' ? byId.get(h.id) : undefined;
+    return p && p.name ? { ...h, label: p.name } : h;
+  });
 }
 
 /** Ray-casting point-in-ring; exact for the vertical prisms this schema stores. */
@@ -303,7 +538,7 @@ async function queryPointFromSnapshot(
 ): Promise<StackHit[]> {
   const out: StackHit[] = [];
   const parcels = await snapshot<{ features: SnapParcel[] }>('parcels.json');
-  const buildings = await snapshot<{ features: SnapBuilding[] }>('buildings.json');
+  const buildings = (await buildingsFC()) as unknown as { features: SnapBuilding[] };
 
   for (const f of parcels.features) {
     if (inRing(firstRing(f.geometry), lon, lat)) {

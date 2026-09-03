@@ -12,7 +12,9 @@ import { ringCentroid } from '@/lib/geo';
 import { applyGisDarkScene } from './imagery';
 import { SCENE_BACKGROUND } from './materials';
 import { sampleGroundHeights, type GroundMap, type SamplePoint } from './terrain';
-import type { BuildingProps, ConflictRow, GeoFC, ParcelInfo, UtilityProps } from '@/lib/types';
+import type {
+  ConflictRow, EnrichedBuilding, GeoFC, ParcelInfo, RoadProps, UtilityProps,
+} from '@/lib/types';
 
 export const AOI = {
   west: 83.313,
@@ -81,7 +83,7 @@ export function frameInitialCamera(viewer: Cesium.Viewer): void {
 /** Sample terrain height under every building centroid. */
 export async function sampleGroundUnder(
   terrainProvider: Cesium.TerrainProvider,
-  buildings: GeoFC<BuildingProps>,
+  buildings: GeoFC<EnrichedBuilding>,
 ): Promise<GroundMap> {
   const points: SamplePoint[] = buildings.features.map((f) => {
     const ring = (f.geometry.coordinates as number[][][])[0];
@@ -91,27 +93,38 @@ export async function sampleGroundUnder(
   return sampleGroundHeights(terrainProvider, points);
 }
 
-/** Parallel fetch of the four cadastre endpoints used at boot. */
+/** Parallel fetch of the cadastre endpoints used at boot. */
 export async function fetchInitialData(): Promise<{
-  buildings: GeoFC<BuildingProps>;
+  buildings: GeoFC<EnrichedBuilding>;
   parcels: GeoFC<ParcelInfo>;
   utilities: GeoFC<UtilityProps>;
+  roads: GeoFC<RoadProps>;
   conflicts: ConflictRow[];
 }> {
-  const [bRes, pRes, uRes, cRes] = await Promise.all([
+  const EMPTY_ROADS: GeoFC<RoadProps> = { type: 'FeatureCollection', features: [] };
+  const [bRes, pRes, uRes, cRes, rRes] = await Promise.all([
     fetch('/api/buildings'),
     fetch('/api/parcels'),
     fetch('/api/utilities'),
     fetch('/api/conflicts'),
+    // Caught on its own rather than inside the Promise.all: a rejection there
+    // fails the whole boot and CesiumRoot renders an empty scene. Footprints
+    // are the application; streets are orientation context, and losing them
+    // must not cost the user the cadastre.
+    fetch('/api/roads').catch(() => null),
   ]);
-  const buildings = (await bRes.json()) as GeoFC<BuildingProps>;
+  const buildings = (await bRes.json()) as GeoFC<EnrichedBuilding>;
   const parcels = (await pRes.json()) as GeoFC<ParcelInfo>;
   const utilities = (await uRes.json()) as GeoFC<UtilityProps>;
   const rawConflicts = (await cRes.json()) as ConflictRow[];
+  const roads = rRes && rRes.ok
+    ? ((await rRes.json()) as GeoFC<RoadProps>)
+    : EMPTY_ROADS;
   return {
     buildings,
     parcels,
     utilities,
+    roads: Array.isArray(roads?.features) ? roads : EMPTY_ROADS,
     conflicts: Array.isArray(rawConflicts) ? rawConflicts : [],
   };
 }

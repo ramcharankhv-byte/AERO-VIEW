@@ -26,12 +26,12 @@ export default function PhotorealNotice() {
   return (
     <div
       role="status"
-      className="glass pointer-events-auto max-w-[330px] rounded-lg border-amber-500/40 px-3 py-2"
+      className="glass pointer-events-auto max-w-[330px] rounded-lg border-edgeStrong px-3 py-2"
     >
       <div className="flex items-start gap-2">
-        <span className="mt-[3px] inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+        <span className="mt-[3px] inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-muted" />
         <div>
-          <div className="text-[11px] font-semibold text-amber-300">
+          <div className="text-[11px] font-semibold text-ink">
             Photoreal unavailable — showing Schematic
           </div>
           <p className="mt-0.5 text-[10px] leading-snug text-[rgb(var(--muted))]">
@@ -40,7 +40,7 @@ export default function PhotorealNotice() {
           <button
             type="button"
             onClick={() => setBuildingStyle('photoreal')}
-            className="mt-1.5 rounded bg-white/5 px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] hover:bg-white/15"
+            className="mt-1.5 rounded bg-[rgb(var(--tint)/0.06)] px-2 py-0.5 text-[10px] text-[rgb(var(--ink))] tint-hover"
           >
             Retry
           </button>

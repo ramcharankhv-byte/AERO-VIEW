@@ -36,7 +36,7 @@ export default function UlpinCard({ ulpin }: { ulpin: string }) {
         <button
           type="button"
           onClick={copy}
-          className="rounded px-1.5 py-0.5 text-[10px] text-[rgb(var(--muted))] hover:bg-white/10 hover:text-[rgb(var(--ink))]"
+          className="rounded px-1.5 py-0.5 text-[10px] text-[rgb(var(--muted))] tint-hover hover:text-[rgb(var(--ink))]"
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
@@ -51,7 +51,7 @@ export default function UlpinCard({ ulpin }: { ulpin: string }) {
             <span
               className={
                 i >= 3
-                  ? 'rounded bg-[rgb(var(--accent))]/15 px-1 py-0.5 text-[rgb(var(--accent))]'
+                  ? 'rounded bg-[rgb(var(--tint)/0.15)] px-1 py-0.5 text-[rgb(var(--ink))]'
                   : 'px-0.5 py-0.5'
               }
             >
@@ -70,7 +70,7 @@ export default function UlpinCard({ ulpin }: { ulpin: string }) {
         </div>
       ) : null}
 
-      <p className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-1.5 text-[9px] leading-snug text-amber-300/80">
+      <p className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-1.5 text-[9px] leading-snug text-muted">
         {DISCLAIMER}
       </p>
     </div>

@@ -2,10 +2,22 @@
 
 import { useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { UTILITY_COLOR, UTILITY_LABEL } from '@/lib/cesium/materials';
+import { ROAD_COLOR, ROAD_STYLE, UTILITY_COLOR, UTILITY_LABEL } from '@/lib/cesium/materials';
 import { PROVENANCES } from '@/lib/stats';
-import type { AssetType } from '@/lib/types';
+import type { AssetType, RoadClass } from '@/lib/types';
 import { ProvenanceBadge } from './Provenance';
+
+/**
+ * The three street weights worth keying.
+ *
+ * Not all nine classes: the key exists to explain that line weight encodes
+ * hierarchy, which three examples do better than an exhaustive list.
+ */
+const ROAD_KEY: { cls: RoadClass; label: string }[] = [
+  { cls: 'primary', label: 'Arterial' },
+  { cls: 'tertiary', label: 'Collector' },
+  { cls: 'service', label: 'Service lane' },
+];
 
 const DEPTHS: Record<AssetType, string> = {
   power: '-1.0 m',
@@ -26,6 +38,8 @@ export default function Legend() {
   const underground = useViewStore((s) => s.underground);
   const mode = useViewStore((s) => s.mode);
   const utilities = useDataStore((s) => s.utilities);
+  const roads = useDataStore((s) => s.roads);
+  const showRoads = useViewStore((s) => s.layers.roads);
   const buildings = useDataStore((s) => s.buildings);
 
   // Local, not store state: this is a disclosure toggle on one panel, with no
@@ -54,7 +68,7 @@ export default function Legend() {
   }
 
   return (
-    <div className="glass pointer-events-auto w-[186px] rounded-lg p-2.5">
+    <div data-panel="legend" className="glass pointer-events-auto w-full rounded-lg p-2.5">
       <button
         type="button"
         onClick={() => setOverride(!provenanceOpen)}
@@ -93,14 +107,45 @@ export default function Legend() {
         </div>
       ) : null}
 
+      {/* Streets are keyed only when they are on screen and there is no
+          underground view competing for the space. */}
+      {showRoads && !underground && (roads?.features.length ?? 0) > 0 ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Streets</div>
+          <div className="mt-1.5 space-y-1">
+            {ROAD_KEY.map(({ cls, label }) => (
+              <div key={cls} className="flex items-center gap-2">
+                <span className="flex h-2 w-4 shrink-0 items-center">
+                  <span
+                    className="w-full rounded-full"
+                    style={{
+                      height: `${Math.max(1, ROAD_STYLE[cls].width - 1)}px`,
+                      background: ROAD_COLOR[cls].toCssColorString(),
+                    }}
+                  />
+                </span>
+                <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">{label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            Line weight is the road hierarchy. Centrelines from OpenStreetMap;
+            street references and unnamed-street labels are derived.
+          </p>
+        </div>
+      ) : null}
+
       {underground ? (
         <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
           <div className="panel-title">Utility corridors</div>
           <div className="mt-1.5 space-y-1">
             {(['water', 'sewer', 'power', 'metro'] as AssetType[]).map((t) => (
               <div key={t} className="flex items-center gap-2">
+                {/* Ringed: the panel is near-black, and the darkest corridor
+                    tone (sewer brown) would otherwise sit on it with almost no
+                    edge of its own. */}
                 <span
-                  className="h-2 w-4 shrink-0 rounded-full"
+                  className="h-2 w-4 shrink-0 rounded-full ring-1 ring-[rgb(var(--edge-strong))]"
                   style={{ background: UTILITY_COLOR[t].toCssColorString() }}
                 />
                 <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">
@@ -116,8 +161,8 @@ export default function Legend() {
             ))}
           </div>
           <div className="mt-2 flex items-center gap-2 border-t border-[rgb(var(--edge))]/50 pt-2">
-            <span className="pulse-conflict h-2 w-4 shrink-0 rounded-full bg-red-500" />
-            <span className="text-[11px] text-red-300">Basement conflict</span>
+            <span className="pulse-conflict h-2 w-4 shrink-0 rounded-full bg-danger" />
+            <span className="text-[11px] text-dangerInk">Basement conflict</span>
           </div>
           <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
             Alignments derived from road centrelines, not as-built utility records.

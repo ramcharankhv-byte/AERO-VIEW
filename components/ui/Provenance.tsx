@@ -1,6 +1,6 @@
 'use client';
 
-import { PROVENANCE_HEX } from '@/lib/cesium/materials';
+import { PROVENANCE_HEX, PROVENANCE_SWATCH } from '@/lib/cesium/materials';
 import { PROVENANCE_IS_AUTHORITATIVE, PROVENANCE_LABEL } from '@/lib/ulpin';
 import type { Provenance } from '@/lib/types';
 
@@ -13,6 +13,20 @@ import type { Provenance } from '@/lib/types';
  * says so rather than borrowing the authority of a real survey.
  */
 
+/**
+ * The blanket caveat for the synthetic building register.
+ *
+ * Deliberately says which fields are real as well as which are not: a note
+ * that only admits to fabrication leaves the user unsure whether the storey
+ * count they are about to act on was invented too.
+ */
+export const MOCK_BUILDING_NOTE =
+  'Building name, type, built-up area, occupancy, owner and status are '
+  + 'synthetic demonstration values generated from the building id — rows '
+  + 'marked "demo". Storeys, height, ULPIN, footprint and coordinates are '
+  + 'real. Names and addresses mapped in OpenStreetMap are shown unchanged '
+  + 'and marked "osm".';
+
 export const DERIVED_PARCEL_NOTE =
   'Derived boundary — Voronoi plot around clustered OSM footprints. '
   + 'Not a surveyed cadastral boundary.';
@@ -24,25 +38,32 @@ export function ProvenanceBadge({
   source: Provenance;
   synthetic?: boolean;
 }) {
-  const hex = PROVENANCE_HEX[source];
   const authoritative = PROVENANCE_IS_AUTHORITATIVE[source] && !synthetic;
   return (
     <span
-      className="chip inline-flex items-center gap-1 border"
-      style={{
-        color: hex,
-        borderColor: `${hex}66`,
-        background: `${hex}14`,
-      }}
+      className={[
+        'chip inline-flex items-center gap-1.5 border',
+        // Authority was previously visible only in the `title` attribute --
+        // i.e. only to a user who hovered. With hue gone it becomes a visible
+        // state instead: a solid rim is a source you may rely on, a dashed one
+        // is not. That is the distinction this component exists to draw.
+        authoritative
+          ? 'border-[rgb(var(--edge-strong))] text-[rgb(var(--ink))]'
+          : 'border-dashed border-[rgb(var(--edge-strong))] text-[rgb(var(--muted))]',
+      ].join(' ')}
+      style={{ background: 'rgb(var(--surface-2))' }}
       title={
         authoritative
           ? 'Authoritative source'
           : 'Not authoritative — do not rely on this value'
       }
     >
+      {/* The mark is drawn in the provenance value via `currentColor`, so the
+          swatch and the label always agree. See .swatch-* in globals.css. */}
       <span
-        className="inline-block h-1.5 w-1.5 rounded-full"
-        style={{ background: hex }}
+        className={`swatch h-2 w-2 ${PROVENANCE_SWATCH[source]}`}
+        style={{ color: PROVENANCE_HEX[source], borderColor: 'transparent' }}
+        aria-hidden
       />
       {PROVENANCE_LABEL[source] ?? source}
       {synthetic ? ' (demo)' : ''}
