@@ -20,8 +20,26 @@ import path from 'node:path';
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/';
 const CHROME = process.env.CHROME_PATH
   ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const EDITS = process.env.ULPIN_EDITS_PATH
-  ?? path.join(process.cwd(), 'data', 'edits.json');
+/**
+ * Where the store this run should be asserting against lives.
+ *
+ * ULPIN_EDITS_PATH names a BASE DIRECTORY now, not a file: edits are per
+ * project (data/projects/<slug>/edits.json), because the store is keyed by
+ * building id and building ids are only unique within a project. A value still
+ * ending in `.json` is read as the directory that file was in, which is what
+ * lib/data/edits.ts does too -- an existing development setup keeps working
+ * rather than silently creating a directory called `edits.json`.
+ *
+ * This drives the UNSCOPED /api/building/:id alias, which resolves to the demo
+ * project, so the store it should find is the demo project's.
+ */
+const SLUG = process.env.ULPIN_PROJECT ?? 'siripuram';
+const EDITS_BASE = (() => {
+  const override = process.env.ULPIN_EDITS_PATH;
+  if (!override) return path.join(process.cwd(), 'data', 'projects');
+  return override.toLowerCase().endsWith('.json') ? path.dirname(override) : override;
+})();
+const EDITS = path.join(EDITS_BASE, SLUG, 'edits.json');
 
 const BUILDING_COUNT = JSON.parse(
   readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),

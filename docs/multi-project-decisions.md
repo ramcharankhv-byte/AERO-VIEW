@@ -360,3 +360,62 @@ It writes into `data/api/<slug>/`, so it had to learn about projects the moment
 the snapshots moved. Re-run for siripuram it produces `roads.json` **byte for
 byte identical** to the committed one (94,199 bytes both sides), which is the
 check that the slug plumbing changed only the path.
+
+---
+
+## Step 4 — Per-project edits
+
+**Done.** `data/projects/<slug>/edits.json`, still gitignored, with a one-time
+copy of the old global store into the demo project's path.
+
+**D4.1 — `ULPIN_EDITS_PATH` means a base directory now, but a `.json` value
+still works.**
+The brief says to extend it to mean a base directory. Taken literally, an
+existing development setup pointing it at `…/edits.json` would have started
+creating a *directory* with that name. Both `lib/data/edits.ts` and
+`scripts/check_edit.mjs` therefore read a value ending in `.json` as "the
+directory that file was in". One rule, implemented in both places, stated in
+both places.
+
+**D4.2 — The adoption copy is skipped when `ULPIN_EDITS_PATH` is set.**
+Found by running `check:edit`. Its `[4] VALIDATION` step asserts that *nothing
+was written* while validation was failing, which requires the store not to
+exist yet — and that is exactly why it points the variable at a scratch
+directory. The adoption copy was helpfully seeding that scratch directory from
+`data/edits.json` and failing the precondition on an otherwise clean run. An
+explicit override means "use this store", not "seed this store from the old
+one", so adoption now runs only against the default location.
+
+**D4.3 — Copy, and say so out loud.**
+On first read of the demo project's store, if `data/edits.json` exists and the
+per-project file does not, it is **copied** — never moved, never deleted — and
+the copy prints:
+
+```
+[edits] copied the pre-multi-project store C:\Aero View\data\edits.json ->
+        …\edits\siripuram\edits.json. The original has been left in place,
+        not moved.
+```
+
+Verified in the dev server's log.
+
+**D4.4 — Result: `check:edit` is greener than baseline.**
+34/34 rather than 34/35, and the one that changed is the precondition
+D4.2 fixed. Every guarantee the brief lists is asserted and passing: 400 for
+coordinates and ULPIN, 422 for validation failures, the shared schema, the
+pessimistic save, the pure overlay over the pristine snapshot, and the
+entity-count-unchanged assertion (768 -> 768). The scoped route was probed
+separately and behaves identically:
+
+```
+PATCH /api/p/siripuram/building/2  {"ulpin":"X"}   -> 400
+PATCH /api/p/siripuram/building/2  {"floors":-3}   -> 422
+PATCH /api/p/nowhere/building/2    {"name":"x"}    -> 404
+PATCH /api/p/siripuram/building/2  {"name":"…"}    -> 200, x-ulpin-edit-rev: 1
+```
+
+and the store it writes carries `"project": "siripuram"`, so a file that ends
+up in the wrong directory says so about itself.
+
+**D4.5 — No fallback needed.** The namespaced-key fallback (`<slug>:<id>` in
+one global file) was not used.

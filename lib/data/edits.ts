@@ -113,6 +113,12 @@ let migrationDone = false;
 async function adoptLegacyStore(slug: string): Promise<void> {
   if (migrationDone || slug !== DEFAULT_SLUG) return;
   migrationDone = true;
+  // An explicit ULPIN_EDITS_PATH means "use this store", not "seed this store
+  // from the old one". Without this, scripts/check_edit.mjs -- which points
+  // the variable at a scratch directory precisely so it starts from nothing --
+  // would find data/edits.json copied in underneath it and fail its "nothing
+  // was written while validation was failing" precondition on a clean run.
+  if (process.env.ULPIN_EDITS_PATH) return;
   const target = editsPath(slug);
   try {
     await fs.access(target);
