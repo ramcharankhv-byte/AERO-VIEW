@@ -1,0 +1,28 @@
+{
+  "projects": [
+    {
+      "slug": "siripuram",
+      "name": "Siripuram, Visakhapatnam",
+      "bbox": [
+        83.313,
+        17.718,
+        83.3245,
+        17.728
+      ],
+      "state_code": "AP",
+      "district_code": "VSP",
+      "scheme_code": "3D26",
+      "status": "ready",
+      "created_at": "2026-09-01T04:49:47.000Z",
+      "stats": {
+        "buildings": 384,
+        "parcels": 325,
+        "streets": 131,
+        "floors": 1810,
+        "units": 6438,
+        "utilities": 301,
+        "conflicts": 12
+      }
+    }
+  ]
+}

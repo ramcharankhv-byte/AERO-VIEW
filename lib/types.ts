@@ -158,7 +158,59 @@ export interface GeoFeature<P = Record<string, unknown>> {
 export interface GeoFC<P = Record<string, unknown>> {
   type: 'FeatureCollection';
   features: GeoFeature<P>[];
+  /** The project's name. Written by the buildings query on both backends. */
   aoi?: string;
+  /**
+   * Present on collections that are DERIVED rather than sourced -- streets,
+   * and any collection served empty because its artefact is missing. Read by
+   * scripts/check_roads.mjs, which asserts the derivation is disclosed on the
+   * wire and not only in a comment.
+   */
+  _disclaimer?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Projects.
+//
+// One project is one AOI. It carries the bbox the viewer frames, the revenue
+// codes its ULPINs are minted under (see lib/ulpin.ts), and a status the
+// gallery renders. Mirrors the `projects` table in db/01_schema.sql and the
+// committed registry snapshot in data/api/projects.json, which are the two
+// places this type is read from.
+// ---------------------------------------------------------------------------
+
+export type ProjectStatus = 'draft' | 'generating' | 'ready' | 'failed';
+
+/**
+ * Entity counts, denormalised onto the project row by 05_export_static.py.
+ *
+ * `streets` is not a database count: there is no road table, so it is the
+ * length of the derived data/api/<slug>/roads.json, and it is 0 for a project
+ * whose street artefact has not been built.
+ */
+export interface ProjectStats {
+  buildings: number;
+  parcels: number;
+  streets: number;
+  floors: number;
+  units: number;
+  utilities: number;
+  conflicts: number;
+}
+
+export interface Project {
+  slug: string;
+  name: string;
+  /** west, south, east, north — the same order scripts/ and the CLI use. */
+  bbox: [number, number, number, number];
+  state_code: string;
+  district_code: string;
+  scheme_code: string;
+  status: ProjectStatus;
+  /** ISO 8601, UTC. */
+  created_at: string;
+  /** Null until the project has been exported at least once. */
+  stats: ProjectStats | null;
 }
 
 // ---------------------------------------------------------------------------

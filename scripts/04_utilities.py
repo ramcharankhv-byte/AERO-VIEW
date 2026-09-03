@@ -9,18 +9,31 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pg  # noqa: E402
+import project as proj  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+SCOPE = "(SELECT project_id FROM seed_ctx)"
+
 
 def main():
-    if int(pg.scalar("SELECT count(*) FROM building")) == 0:
-        raise SystemExit("run scripts/03_seed_db.py first")
+    p = proj.parse_args()
+
+    # Re-published rather than assumed: this script is runnable on its own, so
+    # it cannot rely on 03_seed_db.py having left seed_ctx behind, and if it
+    # did it could be reading a different project's scope than the one asked
+    # for on the command line.
+    proj.make_seed_ctx(p)
+
+    if int(pg.scalar(f"SELECT count(*) FROM building WHERE project_id = {SCOPE}")) == 0:
+        raise SystemExit(f"run scripts/03_seed_db.py first (no buildings for {p.slug})")
 
     pg.run_file(os.path.join(HERE, "utilities.sql"))
 
-    n_util = int(pg.scalar("SELECT count(*) FROM utility"))
-    n_conf = int(pg.scalar("SELECT count(*) FROM conflict"))
+    n_util = int(pg.scalar(f"SELECT count(*) FROM utility WHERE project_id = {SCOPE}"))
+    n_conf = int(pg.scalar(
+        "SELECT count(*) FROM conflict c JOIN utility u ON u.id = c.a_id"
+        f" WHERE u.project_id = {SCOPE}"))
     print(f"\nutilities={n_util}, conflicts={n_conf}")
     if n_util == 0:
         raise SystemExit("FAILED: no utility runs generated")
