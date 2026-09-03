@@ -26,6 +26,41 @@ import type { UseType } from '@/lib/types';
 const PX_PER_M = 24;
 const cache = new Map<string, HTMLCanvasElement>();
 
+/**
+ * Strip every trace of hue from a finished tile.
+ *
+ * The drawers below still describe their materials in the tones a real facade
+ * has -- warm plaster, cool glass, sandstone coursing -- because that is what
+ * produces believable SHADING: the sills, spandrels, mullions and coursing all
+ * depend on tonal relationships that were tuned by eye. Converting those
+ * relationships to grey by hand, fifty literals at a time, would have quietly
+ * flattened half of them.
+ *
+ * So the drawing is left alone and the hue is removed at the end, in one place
+ * that cannot be bypassed. Rec. 709 luma is used rather than a channel average
+ * so that a mid blue pane and a mid tan wall do not collapse to the same grey
+ * -- perceptual weight is exactly what has to survive.
+ *
+ * Runs once per cached tile (there are at most eight), so the per-pixel pass
+ * costs nothing at render time.
+ */
+function desaturate(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  // A tainted or zero-sized canvas cannot be read back. Returning the tile
+  // undesaturated is far better than throwing during scene construction.
+  let img: ImageData;
+  try {
+    img = ctx.getImageData(0, 0, w, h);
+  } catch {
+    return;
+  }
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const y = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    d[i] = d[i + 1] = d[i + 2] = y;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 export function windowGrid(
   use: UseType,
   tileWidthM = 4,
@@ -76,6 +111,9 @@ export function windowGrid(
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
   ctx.fillRect(0, 0, w, Math.max(1, Math.round(PX_PER_M * 0.08)));
 
+  // Last step before caching: the tile leaves here neutral, always.
+  desaturate(ctx, w, h);
+
   cache.set(key, canvas);
   return canvas;
 }
@@ -104,7 +142,7 @@ export function plotHatch(parcelId: number, longAxisDeg: number): HTMLCanvasElem
 
   // Transparent base -- the parcel tint underneath stays visible.
   ctx.clearRect(0, 0, size, size);
-  ctx.strokeStyle = 'rgba(140, 220, 180, 0.13)';
+  ctx.strokeStyle = 'rgba(220, 220, 220, 0.13)';
   ctx.lineWidth = 2;
   const pitch = 12;
   ctx.save();

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useViewer } from './CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { ProvenanceBadge } from '../ui/Provenance';
+import { useCoarsePointer } from '@/lib/use-layout';
 
 /**
  * The hover tooltip for city view.
@@ -34,7 +35,12 @@ export default function BuildingTooltip() {
   // The tooltip is only meaningful over the city massing: in building, floor
   // and unit modes the DetailPanel is already showing this building, and
   // underground the surface is not the subject.
-  const visible = hoveredBuildingId !== null && mode === 'city' && !underground;
+  // A hover card means nothing on a touch device -- there is no hover state to
+  // report -- and rendering it would only cost a DOM overlay and a mousemove
+  // listener that never usefully fires.
+  const coarse = useCoarsePointer();
+  const visible =
+    !coarse && hoveredBuildingId !== null && mode === 'city' && !underground;
 
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed() || !visible) return;

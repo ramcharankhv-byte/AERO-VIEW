@@ -121,15 +121,18 @@ export default function BuildingModelLayer() {
     // A narrower wall tile (one bay per 3 m, not 4) so the model reads with
     // finer fenestration rhythm than the city-scale extrusions. Storey 0
     // takes a ground-floor variant whose bay carries an entry door.
+    // The tile leaves textures.ts neutral, so this tint is what makes the
+    // model read as built form rather than as a white block: WHITE here left
+    // the walls the one grey object in a green scene.
     const wallCanvas = windowGrid(use, 3, FLOOR_H);
     const wallTexture = new Cesium.ImageMaterialProperty({
       image: wallCanvas,
-      color: Cesium.Color.WHITE,
+      color: MATERIALS.buildingModelWall,
     });
     const groundCanvas = windowGrid(use, 3, FLOOR_H, true);
     const groundTexture = new Cesium.ImageMaterialProperty({
       image: groundCanvas,
-      color: Cesium.Color.WHITE,
+      color: MATERIALS.buildingModelWall,
     });
 
     // Above-ground storeys 0..floors-1, then any basements as a solid grey

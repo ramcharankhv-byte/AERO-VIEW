@@ -15,7 +15,11 @@
     "verify:ui": "node scripts/verify_ui.mjs",
     "check:basemap": "node scripts/check_basemap.mjs",
     "db:schema": "docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/01_schema.sql && docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/02_functions.sql",
-    "check:photoreal": "node scripts/check_photoreal.mjs"
+    "check:photoreal": "node scripts/check_photoreal.mjs",
+    "build:roads": "node scripts/build_roads.mjs",
+    "check:roads": "node scripts/check_roads.mjs",
+    "check:edit": "node scripts/check_edit.mjs",
+    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844"
   },
   "dependencies": {
     "cesium": "1.126.0",
