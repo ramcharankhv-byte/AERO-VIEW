@@ -593,3 +593,162 @@ it for an `<a href="/">` removes the chunk's client boundary and the error with
 it, and a 404 page linking home wants a full navigation anyway rather than a
 soft one. Worth knowing if this repository is ever moved to a path without a
 space — the workaround would then be unnecessary, though it is harmless.
+
+---
+
+## Step 7 — The pipeline takes a bbox
+
+**Done.**
+
+**D7.1 — `npm run seed` had to become one command, not five.**
+It was `python 01 && python 02 && python 03 && python 04 && python 05`. npm
+appends `--` arguments to the **end of the whole script string**, so
+`npm run seed -- --slug=x` would have handed them to `05_export_static` alone
+and let the other four seed siripuram — silently, with the export then writing
+a different project's directory from the one that was built. `scripts/seed.py`
+takes the arguments once and passes the same set to every stage. It is the only
+way the brief's invocation can work at all.
+
+**D7.2 — `build_roads.mjs` joined the chain.**
+The brief lists it among the scripts to thread arguments through, but it was
+not in the seed chain — it had its own `build:roads` script. It writes
+`data/api/<slug>/roads.json`, which `05_export_static.py` counts into
+`projects.stats`, so leaving it out gave every new project **0 streets** and no
+centrelines to draw. It is stage 5 of 6 now. Re-run for siripuram it produces
+`roads.json` byte for byte identical to the committed one (94,199 bytes both
+sides), which is the check that the slug plumbing changed only the path.
+
+**D7.3 — The demo project's file paths are special-cased, deliberately.**
+Its OSM extract is committed at `data/raw_*.geojson` and its optional DEM and
+survey register at `data/`, both predating this feature. Moving them would be a
+rename of committed data for no gain, and it would break "reproduces siripuram
+exactly as today". Every other project keeps its inputs under
+`data/projects/<slug>/`. The special case is one property on `Project`
+(`is_default`) and it is documented at the definition.
+
+**D7.4 — Verified: `npm run seed` with no arguments reproduces the numbers.**
+Ran in full against the live PostGIS:
+
+```
+parcels 325 · buildings 384 · floors 1810 · units 6438
+utilities=301, conflicts=12 · 131 streets (10 OSM-named, 121 derived)
+```
+
+Every snapshot came back **content-identical** to the committed one, compared
+order-insensitively field by field. The committed files themselves were then
+restored with `git checkout`, because a re-export legitimately differs in two
+ways that are not content: `detected_at` timestamps, and FeatureCollection
+order (`json_agg` has never had an `ORDER BY`, and the committed snapshots are
+not in id order either — that predates this branch).
+
+**D7.5 — One defect found by that verification, and fixed: conflict ids.**
+Step 1 replaced `TRUNCATE … RESTART IDENTITY` with a project-scoped `DELETE`,
+because truncating would erase a sibling AOI. But `conflict.id` is a `serial`
+and a `DELETE` does not reset the sequence, so a re-seed produced ids 13..24
+where it used to produce 1..12, and every later re-seed would have walked them
+further. `RESTART IDENTITY` is not available as a fix — it would renumber
+another project's conflicts. `conflict.id` is now assigned the same way every
+other id is: a deterministic `row_number()` plus an offset taken after this
+project's rows are deleted, zero for a single-project database. The sequence is
+`setval`'d past what was written by hand. The ordering is now explicit
+(`ORDER BY u.id, f.id`) where it previously fell out of the query plan, so the
+same conflict gets the same id every time. The set of 12 is unchanged and the
+planted `unauthorised alignment` sewer is still conflict 12 against
+`AP-VSP-3D26-0174-001`.
+
+**D7.6 — Overpass etiquette, tightened rather than merely kept.**
+A real identifying User-Agent (it sent `curl/8.0` before). Each mirror tried at
+most **twice** with a widening backoff, down from six rounds over four mirrors —
+eight attempts at five-second intervals is not politeness. A hard failure
+carrying a readable message rather than a silent partial seed, and an empty
+response still treated as a mirror failure rather than an answer. The raw
+responses are cached to `data/projects/<slug>/osm.json`, written only once
+**both** queries have succeeded so the cache never records half an AOI.
+
+**D7.7 — `--slug` is lower-cased rather than rejected.**
+`--slug=BadSlug` becomes `badslug`. Friendlier than an error, and the validated
+pattern still rejects anything a directory name should not carry.
+
+---
+
+## Step 8 — A second project
+
+**Done, with real data.** `hyderabad-banjara` — Banjara Hills Ward, Hyderabad,
+bbox `78.4300,17.4100,78.4450,17.4250`, fetched live from Overpass:
+
+```
+2,213 buildings · 1,309 parcels · 350 streets · 8,119 floors
+31,807 units · 1,214 utility runs · 80 conflicts
+identifiers TS-HYD-3D26-####,  9 OSM-tagged heights, 2,204 estimated
+```
+
+Nothing here is stubbed, hand-written or copied. Both projects open; the
+gallery shows two cards; siripuram's six snapshots are byte-identical
+afterwards (sha256 checked before and after).
+
+**Seeding a second AOI found three real defects a single AOI could never have
+surfaced.** All three are fixed:
+
+**D8.1 — `scripts/pg.py` decoded psql output with the locale codec.**
+`text=True` alone uses cp1252 on Windows, and psql echoes back whatever it was
+given — including an OSM `name` tag outside Latin-1. The `UnicodeDecodeError`
+was raised in a subprocess reader thread, which does **not** propagate as a
+clean failure: the call returned empty stdout and the stage failed several
+lines later with an unrelated message. Every subprocess now decodes UTF-8
+explicitly. This was latent for as long as the only AOI was Siripuram, whose
+names happen to be Latin-1 clean.
+
+**D8.2 — `ST_OffsetCurve` returns a MULTILINESTRING from a valid LINESTRING.**
+Offsetting a hairpin makes the curve cross itself and the result comes back in
+pieces. `utility.geom_3d` is declared `LineStringZ`, so it aborted the whole
+transaction:
+
+```
+ERROR:  Geometry type (MultiLineString) does not match column type (LineString)
+```
+
+`scripts/utilities.sql` now takes the longest LINESTRING component via a new
+`longest_line()`. That is the right answer rather than merely a safe one: the
+short pieces an offset sheds are the inside of the hairpin, and a service
+corridor is laid along the run of the road, not around the tightest part of its
+geometry.
+
+**D8.3 — Every generated address claimed to be in Visakhapatnam.**
+`lib/mock/building.ts` appended `", Siripuram, Visakhapatnam 530003"`
+unconditionally — to 2,213 buildings in Hyderabad — and `DetailPanel`'s
+area-of-interest header was a hardcoded `"Siripuram, Visakhapatnam"` whatever
+project was open, sitting directly above correct counts for a different city.
+Both now read the project's own name off the FeatureCollection's `aoi` field,
+the same source the StatusBar uses, so the three cannot disagree. Only the demo
+AOI gets a PIN code: a PIN cannot be derived from a bbox, and inventing one
+attaches a real postal district to buildings that are not in it. These values
+are synthetic and the UI says so, but a synthetic value that is confidently
+wrong about *where the building is* is a different kind of wrong from one that
+is merely invented.
+
+**D8.4 — Known limitation, not fixed, stated in the README instead.**
+The owner-organisation pool in `lib/mock/names.ts` (GVMC, VMRDA, APEPDCL,
+Visakhapatnam Port Authority) and the utility authorities in
+`scripts/utilities.sql` (GVMC Water Supply, GVMC Sewerage Board, APEPDCL,
+Visakhapatnam Metro Rail Ltd) name bodies that operate in Visakhapatnam. On the
+Hyderabad project they are placeholders in the same sense every owner name has
+always been — but placeholders borrowing a **real body's name in the wrong
+city**. Fixing it properly means either a per-project authority table or
+generic labels, plus a re-seed. Left alone as out of scope for a refactor,
+called out in the README's Projects section so it is not discovered by someone
+showing the second project to a stranger.
+
+**D8.5 — What got committed, and what did not.**
+`data/api/hyderabad-banjara/` (~20 MB, `detail.json` is 17 MB of it) as the
+brief instructs, plus `data/projects/hyderabad-banjara/raw_*.geojson` and
+`buildings_attributed.geojson` so the project rebuilds offline exactly as
+siripuram does. `data/projects/*/osm.json` is gitignored — it is a byte-for-byte
+duplicate of the raw extracts beside it, and the largest file in the directory.
+
+**D8.6 — A stray directory I created and did not delete: `data/projects/badslug/`.**
+An early typo (`--slug=BadSlug`, lower-cased to `badslug`) ran a fetch before I
+noticed. The brief forbids deleting anything under `data/`, so it is still
+there, untracked and unreferenced: no registry row, no `data/api/badslug/`
+content, nothing points at it. It is inert. The removal command is in
+HANDOFF.md. I would rather leave my own mess visible with an explicit
+instruction than quietly break a rule that exists to protect your data.
