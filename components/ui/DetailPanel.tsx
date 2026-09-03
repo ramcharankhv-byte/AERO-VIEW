@@ -1,13 +1,17 @@
 'use client';
 
-import { useDataStore, useDetailPending, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
-import { UTILITY_LABEL } from '@/lib/cesium/materials';
+import { useEffect } from 'react';
+
+import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
+import BuildingEditForm from './detail/BuildingEditForm';
+import UnsavedBanner from './detail/UnsavedBanner';
+import { ROAD_CLASS_LABEL, UTILITY_LABEL } from '@/lib/cesium/materials';
 import { levelLabel, parentOf } from '@/lib/ulpin';
 import { orientedDims } from '@/lib/geo';
-import type { AssetType, Provenance, UtilityProps } from '@/lib/types';
+import type { AssetType, Provenance, RoadProps, UtilityProps } from '@/lib/types';
 import UlpinCard from './UlpinCard';
 import CountUp from './CountUp';
-import { DERIVED_PARCEL_NOTE, ProvenanceRow } from './Provenance';
+import { DERIVED_PARCEL_NOTE, MOCK_BUILDING_NOTE, ProvenanceRow } from './Provenance';
 
 /**
  * One panel, four modes: property / floor / unit / utility.
@@ -17,12 +21,57 @@ import { DERIVED_PARCEL_NOTE, ProvenanceRow } from './Provenance';
  * was surveyed or guessed.
  */
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function Row({
+  label,
+  value,
+  source,
+}: {
+  label: string;
+  value: React.ReactNode;
+  /**
+   * Where THIS row's value came from.
+   *
+   * Per row, not per panel, because the two are genuinely mixed: 59 of these
+   * buildings carry a name an OSM contributor mapped and 325 carry one this
+   * viewer generated, and a blanket "some of this is synthetic" footnote would
+   * leave the user unable to tell which they are looking at.
+   */
+  source?: 'osm_tag' | 'generated' | 'derived';
+}) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-[3px]">
       <span className="row-label shrink-0">{label}</span>
-      <span className="row-value text-right">{value}</span>
+      <span className="row-value flex items-baseline justify-end gap-1.5 text-right">
+        {value}
+        {source ? <SourceChip source={source} /> : null}
+      </span>
     </div>
+  );
+}
+
+/** Marks a single value as mapped fact or as a demonstration value. */
+function SourceChip({ source }: { source: 'osm_tag' | 'generated' | 'derived' }) {
+  if (source === 'osm_tag') {
+    return (
+      <span
+        title="Mapped in OpenStreetMap by a contributor"
+        className="chip shrink-0 border border-[rgb(var(--edge-strong))] text-[rgb(var(--muted))]"
+      >
+        osm
+      </span>
+    );
+  }
+  return (
+    <span
+      title={
+        source === 'derived'
+          ? 'Computed from the sourced data, not measured'
+          : 'Synthetic demonstration value — not a register entry'
+      }
+      className="chip shrink-0 border border-dashed border-[rgb(var(--edge-strong))] text-[rgb(var(--muted-2))]"
+    >
+      {source === 'derived' ? 'derived' : 'demo'}
+    </span>
   );
 }
 
@@ -48,6 +97,10 @@ function SkeletonBar({ w = 'w-20' }: { w?: string }) {
 
 const m2 = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²`;
 const m = (v: number) => `${v.toFixed(1)} m`;
+/** Streets run from tens of metres to kilometres; switch units rather than
+ *  printing "2369.7 m". */
+const km = (v: number) =>
+  (v >= 1000 ? `${(v / 1000).toFixed(2)} km` : `${Math.round(v)} m`);
 
 export default function DetailPanel() {
   // All hooks at the top, before any conditional return. Adding a hook
@@ -58,12 +111,19 @@ export default function DetailPanel() {
   const isolatedFloor = useViewStore((s) => s.isolatedFloor);
   const selectedUnitId = useViewStore((s) => s.selectedUnitId);
   const selectedUtilityId = useViewStore((s) => s.selectedUtilityId);
+  const selectedRoadId = useViewStore((s) => s.selectedRoadId);
   const underground = useViewStore((s) => s.underground);
   const selectBuilding = useViewStore((s) => s.selectBuilding);
   const selectUtility = useViewStore((s) => s.selectUtility);
 
+  const editingId = useEditStore((s) => s.editingId);
+  const beginEdit = useEditStore((s) => s.beginEdit);
+  const savedRev = useEditStore((s) => s.savedRev);
+  const clearSaved = useEditStore((s) => s.clearSaved);
+
   const buildings = useDataStore((s) => s.buildings);
   const utilities = useDataStore((s) => s.utilities);
+  const roads = useDataStore((s) => s.roads);
   const conflicts = useDataStore((s) => s.conflicts);
   const loading = useDataStore((s) => s.loading);
   const detail = useEnsureDetail(activeBuildingId);
@@ -71,9 +131,75 @@ export default function DetailPanel() {
 
   // Derived context selectors -- also called unconditionally, even when
   // they return an empty array (no active selection).
+  // The "saved" confirmation clears itself; it is an acknowledgement, not a
+  // state the panel should sit in.
+  useEffect(() => {
+    if (savedRev === null) return;
+    const t = setTimeout(clearSaved, 2600);
+    return () => clearTimeout(t);
+  }, [savedRev, clearSaved]);
+
   const siblings = useParcelSiblings(activeBuildingId);
   const buildingConflicts = useBuildingConflicts(activeBuildingId);
   const neighbours = useBuildingNeighbours(activeBuildingId, 50);
+
+  // ---- street ------------------------------------------------------------
+  // First in the cascade because the store guarantees that a non-null
+  // selectedRoadId is always the most recent selection: every other select*
+  // action clears it.
+  if (selectedRoadId !== null) {
+    const feat = roads?.features.find((f) => f.properties.id === selectedRoadId);
+    const r = feat?.properties as RoadProps | undefined;
+    if (r) {
+      const derived = r.name_source === 'derived';
+      return (
+        <Panel title={r.name} kicker="Street">
+          <Row
+            label="Street ID"
+            value={<span className="font-mono">{r.ref}</span>}
+          />
+          <Row label="Classification" value={ROAD_CLASS_LABEL[r.cls] ?? r.cls} />
+          <Row label="Length" value={km(r.length_m)} />
+          {r.alt_name ? <Row label="Also known as" value={r.alt_name} /> : null}
+          <Row label="One-way" value={r.oneway ? 'Yes' : 'No'} />
+          {r.lanes !== null ? <Row label="Lanes" value={r.lanes} /> : null}
+          {r.surface ? (
+            <Row label="Surface" value={<span className="capitalize">{r.surface}</span>} />
+          ) : null}
+          <Row
+            label="Merged from"
+            value={`${r.segments} OSM way${r.segments === 1 ? '' : 's'}`}
+          />
+          <Row
+            label="OSM ways"
+            value={
+              <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
+                {r.osm_ids.slice(0, 3).join(', ')}
+                {r.osm_ids.length > 3 ? ` +${r.osm_ids.length - 3}` : ''}
+              </span>
+            }
+          />
+          {/* An OSM-tagged name is mapped fact; a derived one is this viewer's
+              own label. The provenance row is where that distinction is made,
+              exactly as it is for building heights. */}
+          <ProvenanceRow
+            source={derived ? 'estimated' : 'osm_tag'}
+            note={
+              derived
+                ? 'Centreline geometry and classification are from OpenStreetMap. '
+                  + `This street carries no OSM name; the label above was assigned by `
+                  + `this viewer from its position relative to `
+                  + `${r.derived_from ?? 'the surrounding area'}. It is NOT a municipal `
+                  + `street name — quote ${r.ref} instead.`
+                : 'Street name, classification and centreline mapped in '
+                  + 'OpenStreetMap by a contributor. Length is computed '
+                  + 'geodesically from that centreline.'
+            }
+          />
+        </Panel>
+      );
+    }
+  }
 
   // ---- utility -----------------------------------------------------------
   if (selectedUtilityId !== null) {
@@ -91,18 +217,18 @@ export default function DetailPanel() {
           <Row
             label="Status"
             value={
-              <span className={u.status === 'operational' ? '' : 'text-red-400'}>
+              <span className={u.status === 'operational' ? '' : 'text-dangerInk'}>
                 {u.status}
               </span>
             }
           />
           {related.length > 0 ? (
-            <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 p-2">
-              <div className="text-[11px] font-semibold text-red-300">
+            <div className="mt-2 rounded border border-danger/50 bg-danger/10 p-2">
+              <div className="text-[11px] font-semibold text-dangerInk">
                 {related.length} basement conflict{related.length > 1 ? 's' : ''}
               </div>
               {related.map((c) => (
-                <div key={c.id} className="mt-1 font-mono text-[10px] text-red-200/90">
+                <div key={c.id} className="mt-1 font-mono text-[10px] text-dangerInkInk/90">
                   {c.building_ulpin} · level {c.level_no}
                 </div>
               ))}
@@ -186,7 +312,7 @@ export default function DetailPanel() {
             <Row
               label="Encumbrance"
               value={
-                <span className={unit.encumbrance === 'None' ? '' : 'text-amber-300'}>
+                <span className={unit.encumbrance === 'None' ? '' : 'font-semibold text-ink'}>
                   {unit.encumbrance}
                 </span>
               }
@@ -247,6 +373,7 @@ export default function DetailPanel() {
   }
 
   // ---- building ----------------------------------------------------------
+  const editing = editingId === bprops.id;
   const totalUnits = detail?.units.length ?? 0;
   // Footprint dimensions: oriented bbox in metres. The buildings
   // FeatureCollection carries no footprint property -- only the per-building
@@ -287,15 +414,100 @@ export default function DetailPanel() {
     <Panel
       title={bprops.name ?? `${bprops.use_type} building`}
       kicker="Building"
+      action={
+        editing ? null : (
+          <button
+            type="button"
+            onClick={() => beginEdit(bprops.id)}
+            disabled={detailPending}
+            title={
+              detailPending
+                ? 'Waiting for the building record to load'
+                : 'Edit this building record'
+            }
+            className={[
+              'shrink-0 rounded px-2 py-0.5 text-[11px] transition-colors',
+              detailPending
+                ? 'is-disabled text-[rgb(var(--muted))]'
+                : 'border border-[rgb(var(--edge-strong))] text-[rgb(var(--ink))] tint-hover',
+            ].join(' ')}
+          >
+            Edit
+          </button>
+        )
+      }
     >
+      <UnsavedBanner activeId={bprops.id} />
       <UlpinCard ulpin={bprops.ulpin} />
+
+      {savedRev !== null ? (
+        <p role="status" className="mt-2 rounded border border-[rgb(var(--edge-strong))] bg-[rgb(var(--surface-2))] px-2 py-1 text-[11px] text-[rgb(var(--ink))]">
+          Saved · revision {savedRev}
+        </p>
+      ) : null}
+
+      {editing ? <BuildingEditForm building={bprops} /> : null}
+
       <div className="mt-2">
+        {/* Register attributes. Sourced fields (storeys, height, ULPIN) sit
+            below unmarked; anything this viewer generated carries a chip. */}
+        {bprops.building_ref ? (
+          <Row
+            label="Building ID"
+            value={<span className="font-mono">{bprops.building_ref}</span>}
+            source="derived"
+          />
+        ) : null}
         <Row label="Use type" value={<span className="capitalize">{bprops.use_type}</span>} />
-        {bprops.address ? <Row label="Address" value={bprops.address} /> : null}
+        {bprops.building_type ? (
+          <Row label="Building type" value={bprops.building_type} source="generated" />
+        ) : null}
+        {bprops.address ? (
+          <Row
+            label="Address"
+            value={bprops.address}
+            source={bprops.address_source === 'osm_tag' ? 'osm_tag' : 'generated'}
+          />
+        ) : null}
         <Row label="Height" value={m(bprops.height_m)} />
         <Row label="Storeys" value={`${bprops.floors} above ground`} />
         <Row label="Basements" value={bprops.basements} />
         <Row label="Ground elevation" value={m(bprops.ground_elev)} />
+        {bprops.built_up_m2 !== undefined ? (
+          <Row label="Built-up area" value={m2(bprops.built_up_m2)} source="derived" />
+        ) : null}
+        {bprops.occupancy_units !== undefined ? (
+          <Row
+            label="Occupancy"
+            value={
+              <span>
+                {bprops.occupancy_units} / {bprops.occupancy_total_units} units
+                {bprops.occupancy_persons
+                  ? ` · ~${bprops.occupancy_persons} residents`
+                  : ''}
+              </span>
+            }
+            source="generated"
+          />
+        ) : null}
+        {bprops.owner_org ? (
+          <Row label="Owner / organisation" value={bprops.owner_org} source="generated" />
+        ) : null}
+        {bprops.status ? (
+          <Row label="Status" value={bprops.status} source="generated" />
+        ) : null}
+        {/* Read-only by requirement, and marked as such: these are the
+            building's identity, not attributes of it. */}
+        {bprops.lat !== undefined ? (
+          <Row
+            label="Coordinates"
+            value={
+              <span className="font-mono text-[11px]" title="Read-only">
+                {bprops.lat.toFixed(5)}, {bprops.lon?.toFixed(5)}
+              </span>
+            }
+          />
+        ) : null}
         {/* Everything above comes from the buildings FeatureCollection, which
             is already in hand the moment the building is picked. Only the rows
             below wait on /api/building/:id, so only they shimmer -- blanking
@@ -323,6 +535,20 @@ export default function DetailPanel() {
           </>
         )}
       </div>
+
+      {/* Editing the storey count does not regenerate floor and unit records:
+          those are cadastral child rows, and fabricating them would be a far
+          larger invention than a name. Derived from the data rather than from
+          edit state, so it stays true after the form closes and after a
+          reload -- which is when it actually matters. */}
+      {detail && detail.floors.length > 0
+        && detail.floors.filter((f) => f.level_no >= 0).length !== bprops.floors ? (
+          <p className="mt-2 rounded border border-[rgb(var(--edge-strong))] bg-[rgb(var(--surface-2))] p-2 text-[10px] leading-snug text-[rgb(var(--muted))]">
+            Storey count was edited to {bprops.floors}. The floor and unit records
+            below still reflect the {detail.floors.filter((f) => f.level_no >= 0).length}{' '}
+            surveyed levels — an attribute edit does not regenerate them.
+          </p>
+        ) : null}
 
       {/* --- footprint dimensions ----------------------------------------- */}
       {/* Reserved while pending: this section pops into existence when the
@@ -376,15 +602,15 @@ export default function DetailPanel() {
           <Row label="Clear (None)" value={encBreakdown.None} />
           <Row
             label="Mortgaged"
-            value={<span className={encBreakdown.Mortgage ? 'text-amber-300' : ''}>{encBreakdown.Mortgage}</span>}
+            value={<span className={encBreakdown.Mortgage ? 'font-semibold text-ink' : ''}>{encBreakdown.Mortgage}</span>}
           />
           <Row
             label="Lien"
-            value={<span className={encBreakdown.Lien ? 'text-amber-300' : ''}>{encBreakdown.Lien}</span>}
+            value={<span className={encBreakdown.Lien ? 'font-semibold text-ink' : ''}>{encBreakdown.Lien}</span>}
           />
           <Row
             label="Disputed"
-            value={<span className={encBreakdown.Disputed ? 'text-red-400' : ''}>{encBreakdown.Disputed}</span>}
+            value={<span className={encBreakdown.Disputed ? 'text-dangerInk' : ''}>{encBreakdown.Disputed}</span>}
           />
         </Section>
       ) : null}
@@ -397,7 +623,7 @@ export default function DetailPanel() {
               key={sib.id}
               type="button"
               onClick={() => selectBuilding(sib.id)}
-              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left tint-hover"
             >
               <span className="row-label">building {sib.id}</span>
               <span className="row-value font-mono text-[10px]">{sib.ulpin}</span>
@@ -416,7 +642,7 @@ export default function DetailPanel() {
               key={c.id}
               type="button"
               onClick={() => selectUtility(c.utility_id)}
-              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left tint-hover"
             >
               <span className="row-value text-left">
                 {UTILITY_LABEL[c.asset_type as AssetType]}
@@ -424,7 +650,7 @@ export default function DetailPanel() {
                   · {c.authority} · level {c.level_no}
                 </span>
               </span>
-              <span className={`text-[10px] ${c.status === 'operational' ? 'text-red-400' : 'text-red-300'}`}>
+              <span className={`text-[10px] ${c.status === 'operational' ? 'text-dangerInk' : 'text-dangerInkInk/80'}`}>
                 {c.status}
               </span>
             </button>
@@ -440,7 +666,7 @@ export default function DetailPanel() {
               key={b.id}
               type="button"
               onClick={() => selectBuilding(b.id)}
-              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left hover:bg-white/5"
+              className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left tint-hover"
             >
               <span className="row-value text-left font-mono text-[10px]">
                 {b.ulpin}
@@ -458,7 +684,7 @@ export default function DetailPanel() {
 
       <ProvenanceRow source={bprops.height_source} synthetic={synthetic} />
       <p className="mt-2 text-[9px] leading-snug text-[rgb(var(--muted))]">
-        {DERIVED_PARCEL_NOTE} Owner names are synthetic placeholders.
+        {DERIVED_PARCEL_NOTE} {MOCK_BUILDING_NOTE}
       </p>
     </Panel>
   );
@@ -467,18 +693,28 @@ export default function DetailPanel() {
 function Panel({
   title,
   kicker,
+  action,
   children,
 }: {
   title: string;
   kicker: string;
+  /** Optional control in the header, e.g. the Edit button. */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="glass rounded-lg p-3">
-      <div className="panel-title">{kicker}</div>
-      <h2 className="mt-0.5 truncate text-[15px] font-semibold capitalize text-[rgb(var(--ink))]">
-        {title}
-      </h2>
+    <div data-panel="detail" className="glass rounded-lg p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="panel-title">{kicker}</div>
+          {/* `capitalize` is wrong for a proper name -- it would render
+              "AU Library" as "Au Library" -- so it is not applied here. */}
+          <h2 className="mt-0.5 truncate text-[15px] font-semibold text-[rgb(var(--ink))]">
+            {title}
+          </h2>
+        </div>
+        {action}
+      </div>
       <div className="mt-2">{children}</div>
     </div>
   );

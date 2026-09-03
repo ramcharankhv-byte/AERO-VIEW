@@ -13,7 +13,10 @@ import { useViewStore } from '@/lib/store';
  * cut, so it is disabled in city view; the axis and the plane position live in
  * the LayerPanel next to the Explode slider the two are exclusive with.
  */
-export default function NavDock() {
+export default function NavDock({
+  /** Phone layout: tighter padding and a 44px minimum tap target. */
+  compact = false,
+}: { compact?: boolean } = {}) {
   const navMode = useViewStore((s) => s.navMode);
   const setNavMode = useViewStore((s) => s.setNavMode);
   const autoSpin = useViewStore((s) => s.autoSpin);
@@ -25,7 +28,13 @@ export default function NavDock() {
   const canSlice = activeBuildingId !== null;
 
   return (
-    <div className="glass pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 py-1">
+    <div
+      data-panel="nav"
+      className={[
+        'glass pointer-events-auto flex flex-wrap items-center gap-1 rounded-lg px-1.5 py-1',
+        compact ? '[&_button]:min-h-[36px]' : '',
+      ].join(' ')}
+    >
       {(['orbit', 'pan', 'zoom'] as const).map((m) => (
         <button
           key={m}
@@ -34,8 +43,8 @@ export default function NavDock() {
           className={[
             'rounded px-2.5 py-1 text-[11px] capitalize transition-colors',
             navMode === m
-              ? 'bg-[rgb(var(--accent))] text-black'
-              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+              ? 'is-active'
+              : 'text-[rgb(var(--ink))] tint-hover',
           ].join(' ')}
         >
           {m}
@@ -47,7 +56,7 @@ export default function NavDock() {
       <button
         type="button"
         onClick={resetView}
-        className="rounded px-2.5 py-1 text-[11px] text-[rgb(var(--ink))] hover:bg-white/10"
+        className="rounded px-2.5 py-1 text-[11px] text-[rgb(var(--ink))] tint-hover"
       >
         Reset view
       </button>
@@ -57,8 +66,8 @@ export default function NavDock() {
         className={[
           'rounded px-2.5 py-1 text-[11px] transition-colors',
           autoSpin
-            ? 'bg-[rgb(var(--accent))] text-black'
-            : 'text-[rgb(var(--ink))] hover:bg-white/10',
+            ? 'is-active'
+            : 'text-[rgb(var(--ink))] tint-hover',
         ].join(' ')}
       >
         Auto-spin
@@ -81,8 +90,8 @@ export default function NavDock() {
           !canSlice
             ? 'is-disabled text-[rgb(var(--muted))]'
             : slice.enabled
-              ? 'bg-[rgb(var(--accent))] text-black'
-              : 'text-[rgb(var(--ink))] hover:bg-white/10',
+              ? 'is-active'
+              : 'text-[rgb(var(--ink))] tint-hover',
         ].join(' ')}
       >
         Slice

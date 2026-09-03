@@ -5,11 +5,10 @@ import * as Cesium from 'cesium';
 import { useEffect, useRef } from 'react';
 import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { MATERIALS } from '@/lib/cesium/materials';
+import { BUILDING_ALPHA, MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
-import { windowGrid } from '@/lib/cesium/textures';
-import { flatLonLat, orientedDims } from '@/lib/geo';
+import { flatLonLat } from '@/lib/geo';
 import type { BuildingStyle, UseType } from '@/lib/types';
 
 /**
@@ -45,7 +44,19 @@ const FADE_RATE = 0.12;   // per frame, ~600 ms to settle
 
 export default function BuildingsLayer() {
   const { viewer, ground, ready } = useViewer();
-  const buildings = useDataStore((s) => s.buildings);
+  // The EPOCH, not the collection.
+  //
+  // Editing one building's attributes gives `buildings` a new object identity.
+  // Depending on it here would tear down and rebuild all 768 entities -- with
+  // a fresh ImageMaterialProperty and a texture lookup each -- for a one-field
+  // change, which is exactly the cost this layer is built to avoid, paid the
+  // instant the user clicks Save. The epoch changes only on a genuine reload;
+  // an attribute edit is applied to the one affected building below.
+  //
+  // Reading the collection imperatively inside the effect is the same idiom
+  // useEnsureDetail documents in lib/store.ts for the same reason.
+  const buildingsEpoch = useDataStore((s) => s.buildingsEpoch);
+  const buildingsLoaded = useDataStore((s) => s.buildings !== null);
 
   const mode = useViewStore((s) => s.mode);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
@@ -72,10 +83,23 @@ export default function BuildingsLayer() {
    */
   const shadowsRef = useRef(new Cesium.ConstantProperty(Cesium.ShadowMode.DISABLED));
   const dsRef = useRef<Cesium.CustomDataSource | null>(null);
+  /**
+   * buildingId -> the entities and the constants needed to re-shape it.
+   *
+   * Populated during the build pass so a single edited building can be updated
+   * in place, without a lookup through the whole data source.
+   */
+  const entitiesRef = useRef(new Map<number, {
+    wall: Cesium.Entity;
+    cap: Cesium.Entity;
+    base: number;
+  }>());
 
   // ---- build entities once -------------------------------------------------
   useEffect(() => {
-    if (!viewer || !ready || !buildings || viewer.isDestroyed()) return;
+    if (!viewer || !ready || !buildingsLoaded || viewer.isDestroyed()) return;
+    const buildings = useDataStore.getState().buildings;
+    if (!buildings) return;
 
     const ds = new Cesium.CustomDataSource('buildings');
     dsRef.current = ds;
@@ -92,43 +116,40 @@ export default function BuildingsLayer() {
       const use = props.use_type as UseType;
       const id = props.id;
 
-      // One texture tile is one storey (textures.ts draws a 3.2 m tile, the
-      // same floor-to-floor dimension build_geometry.sql uses), so repeating
-      // it `floors` times up the wall lines the window bands up with the
-      // storeys the DetailPanel reports. The storey count is the existing
-      // inference from scripts/02_heights.py -- this reads it, it does not
-      // re-derive it, so the +/-1 provenance caveat still describes the number
-      // the user is looking at. Horizontally the repeat is derived from the
-      // footprint's oriented width so the bay rhythm is metric everywhere,
-      // including on the curved/irregular rings where a single tile used to
-      // stretch into wide stripes.
-      const storeys = Math.max(1, props.floors);
-      const dims = orientedDims(ring);
-      const baysX = Math.max(1, Math.round(dims.widthM / 4));
-      const facade = new Cesium.ImageMaterialProperty({
-        image: windowGrid(use),
-        repeat: new Cesium.Cartesian2(baysX, storeys),
-        // Alpha varies (fade, hover, the photoreal ghost), and Cesium routes a
-        // material to the opaque pass unless it is told otherwise.
-        transparent: true,
-        color: new Cesium.CallbackProperty(() => {
+      // A FLAT wall colour, not a facade texture.
+      //
+      // These masses are drawn at BUILDING_ALPHA over live satellite imagery,
+      // and a repeating window grid at that opacity beats against the pixels
+      // underneath instead of describing a building -- 384 of them turned the
+      // city view into moire. Fenestration is now the job of the architectural
+      // model of the ONE building being inspected, which is opaque and seen
+      // from close enough to resolve it (BuildingModelLayer). At city scale
+      // what has to read is the SILHOUETTE and its shadow, so that is all this
+      // draws.
+      //
+      // `fade` is clamped rather than multiplied: it is an absolute alpha for
+      // the buildings you are not inspecting, so clamping keeps "faded" below
+      // "at rest" without ever multiplying two transparencies into nothing.
+      const wallColor = new Cesium.ColorMaterialProperty(
+        new Cesium.CallbackProperty(() => {
           const s = stateRef.current;
           // Photoreal: present for picking, invisible on screen. Checked first
           // so neither hover nor fade can bring the ghost back into view.
           if (s.style === 'photoreal') return MATERIALS.buildingGhost;
-          if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.95);
-          if (s.activeId === null) return MATERIALS.buildingFacade(use);
-          if (s.activeId === id) return MATERIALS.buildingFacade(use);
-          return MATERIALS.buildingFacade(use, s.fade);
+          if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
+          if (s.activeId === null || s.activeId === id) {
+            return MATERIALS.buildingFacade(use);
+          }
+          return MATERIALS.buildingFacade(use, Math.min(BUILDING_ALPHA, s.fade));
         }, false),
-      });
+      );
 
       const entity = ds.entities.add({
         polygon: {
           hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
           height: base,
           extrudedHeight: base + Math.max(2, props.height_m),
-          material: facade,
+          material: wallColor,
           outline: false,
           shadows: shadowsRef.current,
           show: new Cesium.CallbackProperty(() => {
@@ -142,14 +163,15 @@ export default function BuildingsLayer() {
         },
       });
       tagEntity(entity, { kind: 'building', id });
+      const wallEntity = entity;
 
-      // Roof cap. Cesium stretches a polygon material over the whole extrusion
-      // -- walls AND top -- so without this the facade's window grid prints on
-      // every roof. A flat cap 0.05 m above the wall top in a muted roof tone
-      // hides the printed face; the faded callback keeps the whole building
+      // Roof cap: a flat plate 0.05 m above the wall top, one value step down
+      // from the wall. With a raking sun the cap is the face that catches the
+      // light while the walls fall into shade, which is most of what makes the
+      // height legible from above; the faded callback keeps the whole building
       // (walls + cap) dissolving together.
       const capTop = base + Math.max(2, props.height_m) + 0.05;
-      ds.entities.add({
+      const capEntity = ds.entities.add({
         polygon: {
           hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),
           height: capTop - 0.1,
@@ -158,10 +180,11 @@ export default function BuildingsLayer() {
             new Cesium.CallbackProperty(() => {
               const s = stateRef.current;
               if (s.style === 'photoreal') return MATERIALS.buildingGhost;
-              if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.95);
-              if (s.activeId === null) return MATERIALS.buildingRoofCap(use);
-              if (s.activeId === id) return MATERIALS.buildingRoofCap(use);
-              return MATERIALS.buildingRoofCap(use, s.fade);
+              if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
+              if (s.activeId === null || s.activeId === id) {
+                return MATERIALS.buildingRoofCap(use);
+              }
+              return MATERIALS.buildingRoofCap(use, Math.min(BUILDING_ALPHA, s.fade));
             }, false),
           ),
           outline: false,
@@ -174,13 +197,62 @@ export default function BuildingsLayer() {
           }, false),
         },
       });
+
+      entitiesRef.current.set(id, { wall: wallEntity, cap: capEntity, base });
     }
 
     return () => {
+      entitiesRef.current.clear();
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
       dsRef.current = null;
     };
-  }, [viewer, ready, buildings, ground]);
+  }, [viewer, ready, buildingsLoaded, buildingsEpoch, ground]);
+
+  /**
+   * Re-shape ONE building when its height or storey count is edited.
+   *
+   * Assigning a fresh ConstantProperty fires definitionChanged once and Cesium
+   * re-creates that single primitive; the other 383 keep their static geometry
+   * and are not touched. The properties deliberately stay CONSTANT rather than
+   * becoming CallbackProperties -- a non-constant geometry property would push
+   * every extrusion onto the dynamic updater and rebuild the lot every frame,
+   * which is the trap documented on `shadows` above.
+   */
+  useEffect(() => {
+    if (!viewer || viewer.isDestroyed()) return;
+    const unsubscribe = useDataStore.subscribe((state, prev) => {
+      if (state.buildings === prev.buildings) return;
+      if (state.buildingsEpoch !== prev.buildingsEpoch) return; // full reload
+      const prevById = new Map(
+        (prev.buildings?.features ?? []).map((f) => [f.properties.id, f.properties]),
+      );
+      let touched = false;
+      for (const f of state.buildings?.features ?? []) {
+        const now = f.properties;
+        const before = prevById.get(now.id);
+        if (!before) continue;
+        if (before.height_m === now.height_m && before.floors === now.floors) continue;
+        const rec = entitiesRef.current.get(now.id);
+        if (!rec) continue;
+
+        // Height only. The wall material is a flat colour now, so an edited
+        // storey count changes the panel and the floor stack but has nothing
+        // to re-tile on the extrusion itself.
+        const top = rec.base + Math.max(2, now.height_m);
+        if (rec.wall.polygon) {
+          rec.wall.polygon.extrudedHeight = new Cesium.ConstantProperty(top);
+        }
+        if (rec.cap.polygon) {
+          const capTop = top + 0.05;
+          rec.cap.polygon.height = new Cesium.ConstantProperty(capTop - 0.1);
+          rec.cap.polygon.extrudedHeight = new Cesium.ConstantProperty(capTop);
+        }
+        touched = true;
+      }
+      if (touched && !viewer.isDestroyed()) viewer.scene.requestRender();
+    });
+    return unsubscribe;
+  }, [viewer]);
 
   // ---- push store state into the render closure ----------------------------
   useEffect(() => {
@@ -208,21 +280,29 @@ export default function BuildingsLayer() {
   }, [sunHour, viewer]);
 
   // ---- one animation driver for the whole layer ---------------------------
+  // Parks itself once the fade has settled rather than spinning for the life
+  // of the page. The scene renders on demand (requestRenderMode), so a loop
+  // that keeps waking every frame to compare two equal numbers is pure cost --
+  // it kept a laptop's GPU and main thread out of idle on a static view. It is
+  // restarted by the effect above whenever fadeTarget actually moves.
+  const fadeTarget = underground ? 0.15 : activeBuildingId === null ? 1 : transparency / 100;
   useEffect(() => {
     let raf = 0;
     const step = () => {
       const s = stateRef.current;
       const delta = s.fadeTarget - s.fade;
-      if (Math.abs(delta) > 0.002) {
-        s.fade += delta * FADE_RATE;
-      } else {
+      if (Math.abs(delta) <= 0.002) {
         s.fade = s.fadeTarget;
+        raf = 0;
+        return;                       // settled: stop until the target moves
       }
+      s.fade += delta * FADE_RATE;
+      if (viewer && !viewer.isDestroyed()) viewer.scene.requestRender();
       raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+  }, [fadeTarget, viewer]);
 
   return null;
 }
