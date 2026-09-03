@@ -27,11 +27,23 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aoi import ring_area_m2, DEFAULT_GROUND_ELEV, FLOOR_HEIGHT  # noqa: E402
+import project as proj  # noqa: E402
+from project import DEFAULT_GROUND_ELEV, FLOOR_HEIGHT  # noqa: E402
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
-DEM_PATH = os.path.join(DATA, "dem.tif")
-SURVEY_PATH = os.path.join(DATA, "surveyed_plans.json")
+
+# The DEM and the survey register are per project: a raster of Visakhapatnam
+# has nothing to say about a ward in Hyderabad, and a register keyed by OSM id
+# would silently mis-attribute if it were shared. Both live in the project's
+# own work directory, which for the demo project is data/ -- exactly where they
+# have always been, so nothing moves and neither of the two optional inputs
+# changes behaviour for it.
+def dem_path(p):
+    return os.path.join(p.work_dir, "dem.tif")
+
+
+def survey_path(p):
+    return os.path.join(p.work_dir, "surveyed_plans.json")
 
 # OSM building tag -> our coarse use class
 USE_MAP = {
@@ -77,7 +89,8 @@ def classify(tags):
             return "commercial"
         if key == "office" and v:
             return "commercial"
-    # Siripuram is overwhelmingly residential; untagged 'building=yes' is that.
+    # Indian urban wards are overwhelmingly residential; an untagged
+    # 'building=yes' is that, in Siripuram and everywhere else this is pointed.
     return "residential"
 
 
@@ -117,17 +130,18 @@ def basement_count(use_type, floors, osm_id):
     return 0
 
 
-def load_dem():
+def load_dem(p):
     """Return a sampler(lon, lat) -> elevation, or None when no raster exists."""
-    if not os.path.exists(DEM_PATH):
+    path = dem_path(p)
+    if not os.path.exists(path):
         return None
     try:
         import rasterio  # optional dependency, only needed if a DEM is supplied
     except ImportError:
-        print("  data/dem.tif present but rasterio is not installed - skipping DEM")
+        print(f"  {path} present but rasterio is not installed - skipping DEM")
         return None
-    src = rasterio.open(DEM_PATH)
-    print(f"  DEM opened: {DEM_PATH} ({src.width}x{src.height})")
+    src = rasterio.open(path)
+    print(f"  DEM opened: {path} ({src.width}x{src.height})")
 
     def sample(lon, lat):
         try:
@@ -141,16 +155,17 @@ def load_dem():
     return sample
 
 
-def load_survey():
+def load_survey(p):
     """Optional survey register: {osm_id: storeys}. Absent by default.
 
     Returns (registry, is_synthetic). The synthetic flag is carried all the way
     into the UI so a fabricated demo register is never presented as if it were
     an authoritative survey.
     """
-    if not os.path.exists(SURVEY_PATH):
+    path = survey_path(p)
+    if not os.path.exists(path):
         return {}, False
-    with open(SURVEY_PATH, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
     reg = {int(k): int(v) for k, v in (doc.get("storeys") or {}).items()}
     synthetic = bool(doc.get("_synthetic"))
@@ -167,11 +182,15 @@ def centroid(ring):
 
 
 def main():
-    with open(os.path.join(DATA, "raw_buildings.geojson"), encoding="utf-8") as fh:
+    p = proj.parse_args()
+    if not os.path.exists(p.raw_buildings_path):
+        raise SystemExit(
+            f"run scripts/01_fetch_osm.py first (no {p.raw_buildings_path})")
+    with open(p.raw_buildings_path, encoding="utf-8") as fh:
         fc = json.load(fh)
 
-    dem = load_dem()
-    survey, survey_synthetic = load_survey()
+    dem = load_dem(p)
+    survey, survey_synthetic = load_survey(p)
     counts = {"osm_tag": 0, "estimated": 0, "dsm_dem": 0, "surveyed_plan": 0}
     out = []
 
@@ -179,7 +198,10 @@ def main():
         props = feat["properties"]
         osm_id = props["osm_id"]
         ring = feat["geometry"]["coordinates"][0]
-        area = ring_area_m2(ring)
+        # The project's own equirectangular projection, anchored at ITS centre.
+        # Using the demo AOI's would have mis-scaled every area outside
+        # Visakhapatnam, and area is what drives the storey estimator.
+        area = p.ring_area_m2(ring)
         if area < 12:          # sheds/awnings: too small to be a cadastral unit
             continue
 
@@ -229,19 +251,21 @@ def main():
         out.append(feat)
 
     fc["features"] = out
-    path = os.path.join(DATA, "buildings_attributed.geojson")
-    with open(path, "w", encoding="utf-8") as fh:
+    os.makedirs(p.work_dir, exist_ok=True)
+    with open(p.attributed_path, "w", encoding="utf-8") as fh:
         json.dump(fc, fh)
 
     total = len(out)
-    print(f"attributed {total} buildings -> data/buildings_attributed.geojson")
+    print(f"attributed {total} buildings -> "
+          f"{os.path.relpath(p.attributed_path, os.path.join(DATA, '..'))}")
     for k, v in counts.items():
         pct = (100.0 * v / total) if total else 0
         print(f"  height_source={k:<14} {v:>4}  ({pct:.1f}%)")
     if counts["surveyed_plan"] == 0:
-        print("  note: no survey register at data/surveyed_plans.json")
+        print(f"  note: no survey register at {survey_path(p)}")
     if counts["dsm_dem"] == 0 and not dem:
-        print(f"  note: no DEM at data/dem.tif; ground_elev defaulted to {DEFAULT_GROUND_ELEV} m")
+        print(f"  note: no DEM at {dem_path(p)}; "
+              f"ground_elev defaulted to {DEFAULT_GROUND_ELEV} m")
 
 
 if __name__ == "__main__":
