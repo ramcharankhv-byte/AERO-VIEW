@@ -1,7 +1,10 @@
 # 3D ULPIN — Vertical Property Mapper
 
-A three-dimensional cadastral viewer for **Siripuram, Visakhapatnam**
-(bbox `83.3130,17.7180,83.3245,17.7280`).
+A three-dimensional cadastral viewer, one **project** per area of interest. The
+demo project is **Siripuram, Visakhapatnam** (bbox
+`83.3130,17.7180,83.3245,17.7280`); a second, **Banjara Hills Ward, Hyderabad**
+(`78.4300,17.4100,78.4450,17.4250`), was generated from the same pipeline to
+prove nothing about the first is hardcoded. See [Projects](#projects).
 
 Land administration is normally drawn flat, but rights are not flat. This app
 models the whole vertical stack — **parcel → building → floor → unit** — plus the
@@ -23,14 +26,29 @@ which were guessed.
 npm install                # also copies Cesium assets into public/cesium
 docker compose up -d       # PostGIS 16 + PostGIS 3.4 + SFCGAL
 npm run db:schema          # only if the volume already existed
-npm run seed               # fetch OSM -> estimate -> seed -> utilities -> export
+npm run seed               # fetch OSM -> estimate -> seed -> utilities -> roads -> export
 npm run dev                # http://localhost:3000
 ```
 
+`/` is the project gallery; each project's viewer is at `/p/<slug>`, e.g.
+[`/p/siripuram`](http://localhost:3000/p/siripuram).
+
+If your PostGIS volume predates multi-project support, migrate it rather than
+re-seeding — the migration is additive and idempotent and never drops a table
+or deletes a row:
+
+```bash
+docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 \
+  -f - < db/migrations/001_multi_project.sql
+```
+
 **The database is optional at runtime.** The route handlers try PostGIS first
-and fall back to the committed snapshots in `data/api/`, so `npm run dev` alone
-renders the full app. Every response carries an `x-ulpin-backend:
-postgis|snapshot` header saying which path served it.
+and fall back to the committed snapshots in `data/api/<slug>/`, so
+`npm run dev` alone renders the full app — gallery included. Every response
+carries an `x-ulpin-backend: postgis|snapshot` header saying which path served
+it, answered **per project**: with the database up and a project that exists
+only as a snapshot, a global probe would have claimed `postgis` for a response
+the snapshot served.
 
 ### Basemap imagery
 
@@ -195,17 +213,32 @@ encoding; their agreement is asserted in `lib/ulpin.test.ts`.
 ## Architecture
 
 ```
-app/                     layout, page (composition only), 6 API route handlers
+app/                     layout; / gallery; /p/[slug] viewer; api/p/[slug]/* (7 routes)
+                         + 7 unscoped aliases and api/projects[/slug]
+components/gallery/      ProjectCard, BboxSketch
 components/globe/        CesiumRoot (viewer, imagery, terrain), CameraDirector, Picker, Scene
-components/layers/       Parcels, Buildings, FloorStack, Units, Utilities, Conflict
+components/layers/       Parcels, Roads, Buildings, FloorStack, Units, Utilities, Conflict
 components/ui/           TopBar, LayerPanel, ActionBar, FloorLadder, ElevationRuler,
                          DetailPanel, ParcelInset, NavDock, StatusBar, Legend,
                          ConflictBanner, UlpinCard, Provenance, IonNotice
-lib/                     ulpin.ts, store.ts, db.ts, types.ts, cesium/*
+lib/                     projects.ts, ulpin.ts, store.ts, db.ts, types.ts,
+                         api/handlers.ts, data/*, mock/*, cesium/*
 db/                      01_schema.sql, 02_functions.sql   (run by initdb)
-scripts/                 01-05 pipeline, build_geometry.sql, utilities.sql, verify_ui.mjs
-data/                    committed OSM snapshots + data/api/ served when the DB is down
+                         migrations/001_multi_project.sql  (for an existing volume)
+scripts/                 seed.py orchestrator, 01-05 pipeline, project.py,
+                         build_geometry.sql, utilities.sql, build_roads.mjs,
+                         verify_ui.mjs, check_roads/check_edit/shoot
+data/api/<slug>/         per-project snapshots, served when the DB is down
+data/api/projects.json   the committed registry, so the gallery renders offline
+data/projects/<slug>/    per-project inputs, the Overpass cache, and edits.json
 ```
+
+**Everything is scoped by project.** One project is one AOI: a bbox, the
+revenue codes its ULPINs are minted under, a status, and the cadastral stack
+built inside it. `parcel`, `building` and `utility` carry a `project_id`;
+`floor` and `unit` deliberately do not — they inherit one through `building`,
+and a duplicated column would be a second answer to the same question that
+nothing enforces agreement between.
 
 Four rules the code actually obeys (and `grep` can confirm):
 
@@ -215,7 +248,9 @@ Four rules the code actually obeys (and `grep` can confirm):
    Layer components read it and render.
 2. **All camera motion lives in `CameraDirector`.** No `flyTo`, `zoomTo` or
    `lookAt` exists anywhere else. (`CesiumRoot` performs a single `setView` to
-   frame the AOI at construction — the scene's initial pose, not a transition.)
+   frame the **project's bbox** at construction — the scene's initial pose, not
+   a transition. It takes the bbox as an argument; there is no AOI constant
+   left in the camera path.)
 3. **Colours are defined once**, in `lib/cesium/materials.ts`.
 4. **Every DetailPanel entity shows a provenance line.**
 
@@ -281,16 +316,35 @@ enforced in the store rather than in the two controls.
 
 ## API
 
-| Endpoint | Returns |
+Every cadastre endpoint is scoped by project. The seven unscoped paths still
+exist as **thin aliases onto the demo project** — the acceptance scripts and
+every bookmark predate projects — and share their handler body with the scoped
+route, so alias and scoped response are byte-identical by construction rather
+than by review.
+
+| Endpoint | Alias | Returns |
+|---|---|---|
+| `GET /api/p/:slug/buildings` | `/api/buildings` | GeoJSON FeatureCollection of every footprint |
+| `GET /api/p/:slug/building/:id` | `/api/building/:id` | building + floors + units, nested |
+| `PATCH /api/p/:slug/building/:id` | `/api/building/:id` | record a manual edit; returns the re-read document. `400` for a non-editable field (coordinates, ULPIN), `422` for a validation failure |
+| `POST /api/p/:slug/query {lon,lat,z}` | `/api/query` | every entity whose 3D volume contains the point, ordered parcel < building < floor < unit |
+| `GET /api/p/:slug/utilities` | `/api/utilities` | utility centrelines with depth/radius/authority |
+| `GET /api/p/:slug/conflicts` | `/api/conflicts` | flagged `ST_3DIntersects` violations |
+| `GET /api/p/:slug/parcels` | `/api/parcels` | surface parcels (beyond the brief; the parcels layer and inset need it) |
+| `GET /api/p/:slug/roads` | `/api/roads` | merged street centrelines with names, classes and lengths |
+| `GET /api/projects` | — | every project, with its stats |
+| `GET /api/projects/:slug` | — | one project |
+
+Two failures are answered differently, and the gallery renders them as
+different states:
+
+| | |
 |---|---|
-| `GET /api/buildings` | GeoJSON FeatureCollection, all 384 footprints |
-| `GET /api/building/:id` | building + floors + units, nested |
-| `POST /api/query {lon,lat,z}` | every entity whose 3D volume contains the point, ordered parcel < building < floor < unit |
-| `GET /api/utilities` | utility centrelines with depth/radius/authority |
-| `GET /api/conflicts` | flagged `ST_3DIntersects` violations |
-| `GET /api/parcels` | surface parcels (beyond the brief; the parcels layer and inset need it) |
-| `GET /api/roads` | merged street centrelines with names, classes and lengths |
-| `PATCH /api/building/:id` | record a manual edit; returns the re-read document. `400` for a non-editable field (coordinates, ULPIN), `422` for a validation failure |
+| `404` | nothing knows this slug — not the registry, not PostGIS, and there is no `data/api/<slug>/` |
+| `503` | the project is real, but it has no exported snapshot and the database is not answering |
+
+Telling a user their project does not exist when their docker is merely stopped
+is the wrong answer, so the two are never collapsed.
 
 ```console
 $ curl -s -X POST localhost:3000/api/query -H 'Content-Type: application/json' \
@@ -301,6 +355,70 @@ building  AP-VSP-3D26-0001-001        Water Resourse Block   z 12.00..28.00
 floor     AP-VSP-3D26-0001-001-01     Level 1                z 15.20..18.40
 unit      AP-VSP-3D26-0001-001-01-01  B01                    z 15.35..18.05
 ```
+
+---
+
+## Projects
+
+One project is one area of interest. The gallery at `/` lists them; each opens
+at `/p/<slug>`.
+
+| | |
+|---|---|
+| `slug` | URL segment and directory name, `^[a-z0-9][a-z0-9-]{0,63}$` |
+| `bbox` | west, south, east, north — what the camera frames and what Overpass is asked for |
+| `state_code`, `district_code`, `scheme_code` | the ULPIN prefix, e.g. `TS-HYD-3D26` |
+| `status` | `draft` / `generating` / `ready` / `failed`; only `ready` is openable |
+| `stats` | entity counts, denormalised so a card needs neither seven `COUNT(*)`s nor a database |
+
+### Generating one
+
+```bash
+npm run seed -- --slug=hyderabad-banjara --name="Banjara Hills Ward" \
+  --bbox=78.4300,17.4100,78.4450,17.4250 --state=TS --district=HYD
+```
+
+It creates or updates the project row, caches the raw Overpass response to
+`data/projects/<slug>/osm.json`, runs estimate → seed → utilities → streets →
+export scoped to that project, writes `data/api/<slug>/`, and fills in
+`projects.stats`. `npm run seed` with **no** arguments is the demo project,
+with the same bbox, the same codes and the same file paths it has always used —
+and no network at all, because its OSM extract is committed.
+
+Rejected at entry, before the first Overpass request, with a non-zero exit: a
+bbox over **4 km²**, an aspect ratio worse than **3:1**, or malformed
+coordinates. The first two are Overpass etiquette as much as ours — it is a
+free shared service — and the third is almost always two transposed numbers.
+
+### Identifiers are per project, and that is the point
+
+Parcel **numbering** restarts at 0001 in every project; it is the state and
+district prefix that keeps the identifiers distinct, exactly as the real
+identifier means it to. `AP-VSP-3D26-0001` and `TS-HYD-3D26-0001` are different
+parcels in different districts.
+
+Row **ids** are a different thing and stay globally unique, because they are
+what the foreign keys and `/api/p/<slug>/building/:id` address rows by.
+`scripts/build_geometry.sql` computes both: a per-project ordinal for the
+ULPIN, and that ordinal plus an offset for the primary key. For the first
+project seeded the offset is zero, which is why none of siripuram's identifiers
+or ids moved when this was introduced.
+
+### What a second project does not share
+
+Snapshots (`data/api/<slug>/`), manual edits
+(`data/projects/<slug>/edits.json` — the store is keyed by building id, and
+building ids are only unique within a project), the OSM extract, and the
+optional DEM and survey register, which live in the project's own work
+directory.
+
+What it *does* still share, and should be read as synthetic accordingly: the
+owner-organisation pool and the utility authorities in
+`scripts/utilities.sql` name bodies that operate in Visakhapatnam. On another
+AOI those are placeholders in the same sense every owner name has always been —
+see the truth table above — but they are placeholders that borrow a real
+body's name in the wrong city, which is worth knowing before showing a second
+project to anyone.
 
 ---
 
@@ -323,9 +441,13 @@ npm test            # ULPIN round-trip + SQL-parity assertions
 npm run verify:ui   # drives a real Chrome through all five view modes
 npm run check:roads # street picking, tolerance, deselect, building precedence
 npm run check:edit  # read-only guarantees, validation, save, persistence
-npm run check:rwd   # four viewports: layout, collisions, attribution, colour audit
-npm run build:roads # regenerate data/api/roads.json from the OSM extract
+npm run check:rwd   # four viewports x two pages: layout, collisions, colour audit
+npm run build:roads # regenerate data/api/siripuram/roads.json from the OSM extract
 ```
+
+The browser-driven checks target `/p/siripuram` by default, since `/` is the
+gallery now. `ULPIN_URL` overrides it; their API paths are unchanged, because
+they drive the unscoped aliases.
 
 `verify:ui` walks city → building → explode → floor → unit → underground,
 asserts the DOM at each step, checks the disabled controls really are disabled,
@@ -343,14 +465,26 @@ drained it. It also verifies that no two panels overlap, that none runs
 off-screen, and that Cesium's attribution container — a licence obligation — is
 never covered.
 
+`check:rwd` runs twice: once over a project's viewer, once over the gallery
+(`--gallery`). Two of its six checks cannot apply to a page with no canvas —
+the framebuffer chroma test exists to catch a drained basemap, and a gallery
+frame is monochrome by design; the attribution hit-test needs Cesium's credit
+container, which only exists where a Cesium viewer does. Both are skipped there
+with an `n/a` line stating why, rather than left permanently red. The
+attribution exemption goes away the moment a card renders map data.
+
 Both suites were run against **PostGIS and the snapshot backend**, and the
 `POST /api/query` stack is byte-identical between them.
 
 ### Current state
 
-- 384 buildings · 325 parcels · 131 streets · 1,810 floors · 6,438 units · 301 utility runs · 12 conflicts
-- `tsc --noEmit` clean, 21/21 unit tests, 46/46 UI checks, 26/26 street checks,
-  31/31 edit checks, responsive checks green at 1680/1280/834/390 px
+- **siripuram** — 384 buildings · 325 parcels · 131 streets · 1,810 floors ·
+  6,438 units · 301 utility runs · 12 conflicts
+- **hyderabad-banjara** — 2,213 buildings · 1,309 parcels · 350 streets ·
+  8,119 floors · 31,807 units · 1,214 utility runs · 80 conflicts
+- `tsc --noEmit` clean, 26/26 unit tests, 46/46 UI checks, 26/26 street checks,
+  31/31 edit checks, responsive checks green at 1680/1280/834/390 px on both
+  the viewer and the gallery
 - The chrome audit reports **0 off-palette elements** at every viewport, and the
   scene audit a frame that is roughly 45% coloured: dark green ground under
   neutral off-white massing, with Cesium's attribution logo — which may not be
