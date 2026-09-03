@@ -8,4 +8,9 @@ __pycache__/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+# Manual edits are local demonstration state, never a register, and are never
+# committed. One file per project now -- see lib/data/edits.ts. The
+# pre-multi-project global file is still ignored because it is still read once,
+# copied into the demo project's path, and deliberately left in place.
 data/edits.json
+data/projects/*/edits.json
