@@ -752,3 +752,74 @@ there, untracked and unreferenced: no registry row, no `data/api/badslug/`
 content, nothing points at it. It is inert. The removal command is in
 HANDOFF.md. I would rather leave my own mess visible with an explicit
 instruction than quietly break a rule that exists to protect your data.
+
+---
+
+## Final acceptance, and the one regression
+
+Both runs are in HANDOFF.md verbatim. Summary:
+
+| | Docker UP | Docker DOWN |
+|---|---|---|
+| `npx tsc --noEmit` | clean | clean |
+| `npm test` | 26/26 | 26/26 |
+| `npm run verify:ui` | ALL PASSED (47) | ALL PASSED |
+| `npm run check:roads` | 1 FAILED (25 pass) | 1 FAILED |
+| `npm run check:edit` | ALL PASSED (39) | **1 FAILED** |
+| `npm run check:rwd` viewer | ALL PASSED | ALL PASSED |
+| `npm run check:rwd` gallery | ALL PASSED | ALL PASSED |
+
+**DF.1 — `check:roads` is the pre-existing failure, unchanged.**
+Identical assertion, identical message, identical offset as the baseline run
+recorded at the top of this file: *"the widened pick recovers the street off the
+line — no recovery up to 31px at offset 8,0"*. Not touched, per the brief.
+
+**DF.2 — `check:edit`'s `success is confirmed` is a regression I introduced and
+did not isolate. This is the one thing in this branch I am not happy about.**
+
+Established by measurement:
+
+- PostGIS backend, this branch: **passes**, three separate runs.
+- Snapshot backend, this branch: **fails**, three separate runs, including
+  standalone on a freshly started dev server.
+- Snapshot backend, step-0 baseline (`git checkout c3a4481`, DB stopped,
+  `ULPIN_EDITS_PATH` pointed at a fresh file): **passes**. So it is mine.
+- Every other assertion in the suite passes on the failing runs, including all
+  eight of `[7] PERSISTENCE` and the `[6] THE SCENE WAS NOT REBUILT`
+  entity-count assertion (768 -> 768). The save itself is correct: the store is
+  written with exactly the right fields, no read-only field leaks, and the
+  edited values survive a re-read.
+
+The assertion is a race against a self-clearing acknowledgement. `DetailPanel`
+renders `Saved · revision N` and clears it with `setTimeout(clearSaved, 2600)`.
+`check_edit` waits for it with `page.waitForFunction` — which polls on **rAF**,
+starved by Cesium on software WebGL — then re-reads the DOM **1,200 ms later**.
+Instrumented on this branch against the snapshot backend:
+
+```
+final save clicked
+  <- PATCH 200 /api/building/1
+toast APPEARED at 1757 ms
+toast GONE at 4465 ms          (2,708 ms visible — the 2,600 ms timer)
+name present: true
+form closed: true
+```
+
+So there is roughly 1.4 s of slack between the toast appearing and the check's
+read, and something in my changes consumed it.
+
+**Not established:** which change lengthened the click-to-toast latency. It is
+not the API — the PATCH measured **28–46 ms** over the wire on the snapshot
+backend across three probes. It is client-side, between the response landing
+and the panel painting.
+
+**Deliberately not "fixed" by loosening the assertion.** Editing an acceptance
+script until it goes green is the one repair that makes the branch look better
+and the system worse. It is reported as red, with the repro, in HANDOFF.md.
+
+**DF.3 — The one invariant that came out stronger than asked.**
+The brief allowed `data/api/siripuram/` to differ from today's `data/api/` by
+"an added `project_id` field". It differs by **nothing**: all six files are
+100% renames, zero bytes changed. The export queries do not emit `project_id`
+into feature properties — it is a scoping column, not a fact about a building —
+so the files never needed to move.
