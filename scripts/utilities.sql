@@ -25,8 +25,11 @@ DELETE FROM conflict c
    AND u.project_id = (SELECT project_id FROM seed_ctx);
 DELETE FROM utility WHERE project_id = (SELECT project_id FROM seed_ctx);
 
-ALTER TABLE seed_ctx ADD COLUMN IF NOT EXISTS utility_off int;
-UPDATE seed_ctx SET utility_off = COALESCE((SELECT max(id) FROM utility), 0);
+ALTER TABLE seed_ctx ADD COLUMN IF NOT EXISTS utility_off  int;
+ALTER TABLE seed_ctx ADD COLUMN IF NOT EXISTS conflict_off int;
+UPDATE seed_ctx SET
+  utility_off  = COALESCE((SELECT max(id) FROM utility), 0),
+  conflict_off = COALESCE((SELECT max(id) FROM conflict), 0);
 
 -- Local ground datum. Every building in this AOI currently shares the default
 -- 12.0 m (no DEM supplied), but averaging keeps this correct if one is added.
@@ -137,8 +140,16 @@ UPDATE utility u
 -- Both sides are constrained to this project. The floor side goes through
 -- building because floor has no project_id of its own -- it inherits one, and
 -- inheriting it is the whole reason the column is not duplicated there.
-INSERT INTO conflict (a_id, a_type, b_id, b_type, kind)
-SELECT u.id, 'utility', f.id, 'floor', 'utility_through_basement'
+-- conflict.id is assigned here rather than left to the serial, for the same
+-- reason parcel and building ids are: it has to stay globally unique across
+-- projects, and re-seeding must not walk it forward. The scoped DELETE above
+-- cannot RESTART IDENTITY the way the old TRUNCATE did -- that would renumber
+-- another AOI's conflicts -- so the offset does the same job safely, and for a
+-- single-project database it is zero, which restores the original 1..n.
+INSERT INTO conflict (id, a_id, a_type, b_id, b_type, kind)
+SELECT (row_number() OVER (ORDER BY u.id, f.id)
+          + (SELECT conflict_off FROM seed_ctx))::int,
+       u.id, 'utility', f.id, 'floor', 'utility_through_basement'
 FROM utility u
 JOIN floor f
   ON f.level_no < 0
@@ -148,6 +159,11 @@ WHERE u.envelope_3d IS NOT NULL
   AND u.project_id = (SELECT project_id FROM seed_ctx)
   AND fb.project_id = (SELECT project_id FROM seed_ctx)
   AND ST_3DIntersects(ST_MakeSolid(u.envelope_3d), ST_MakeSolid(f.geom));
+
+-- Keep the serial ahead of the ids just written by hand, so anything that
+-- later inserts without specifying one does not collide.
+SELECT setval(pg_get_serial_sequence('conflict', 'id'),
+              GREATEST((SELECT COALESCE(max(id), 0) FROM conflict), 1));
 
 COMMIT;
 
