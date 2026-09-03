@@ -34,10 +34,12 @@ postgis|snapshot` header saying which path served it.
 
 ### Basemap imagery
 
-The basemap is **Esri World Imagery** and needs no key. It is dimmed by a
-colour treatment applied to the imagery layer so it reads as context beneath
-the buildings rather than competing with them; the buildings themselves are
-never dimmed, and the contrast between the two is the point.
+The basemap is **Esri World Imagery** and needs no key. It keeps its own
+colour: a treatment on the imagery layer pushes the exposure back and lifts
+saturation, which over this AOI lands the ground on a deep green. The buildings
+are never tinted with it -- they are neutral off-white, drawn at 45% so the
+imagery under each block stays readable -- and the contrast between dark green
+ground and neutral massing is the point of the scheme.
 
 Both controls live in the Layers panel under the Basemap checkbox:
 
@@ -97,6 +99,14 @@ This distinction is enforced in the data model, not just in the prose.
 | Parcel boundaries | Voronoi plots around clustered footprints | **Derived, not surveyed** |
 | Owners, tenure, encumbrances | generated placeholders | **Synthetic** |
 | Utility alignments | offsets from road centrelines | **Representative, not as-built** |
+| Street geometry + class | OpenStreetMap (ODbL) | **Real** |
+| Street names, 10 of 131 | OSM `name` tag | **Real** (`name_source: osm_name`) |
+| Street names, 121 of 131 | derived from position + nearest named street | **Derived** (`name_source: derived`) |
+| Street IDs (`STR-###`), lengths | computed by `scripts/build_roads.mjs` | **Derived** |
+| Building names, 59 of 384 | OSM `name` tag | **Real** (`name_source: osm_tag`) |
+| Building names, 325 of 384 | `lib/mock/` name banks, seeded by building id | **Synthetic** (`generated`) |
+| Building type, area, occupancy, owner, status | `lib/mock/`, derived from real floors/units | **Synthetic demo register** |
+| Manual edits | typed into the viewer, stored in `data/edits.json` | **Local, no authority** |
 
 `data/surveyed_plans.json` carries a `_synthetic: true` flag, and that flag is
 threaded through the `building.survey_synthetic` column all the way to the
@@ -106,6 +116,61 @@ survey.
 
 `dsm_dem` provenance is implemented but yields **zero rows**, because no DSM/DEM
 raster is supplied. Drop a `data/dem.tif` in and `02_heights.py` will use it.
+
+### Streets
+
+`data/raw_highways.geojson` has always been in the repository as an input to the
+utility-corridor generator; it is now also a rendered, clickable layer.
+`scripts/build_roads.mjs` merges the 265 OSM ways into 131 logical streets —
+named ways grouped by name, unnamed ways by shared endpoints within a class —
+computes a geodesic length for each, and freezes the result as
+`data/api/roads.json` so the `STR-###` references are stable and reviewable in a
+diff rather than recomputed per request.
+
+The 121 streets OSM never named are **not** labelled "Road 1". Each is named
+from its position relative to the nearest named street in the convention
+Visakhapatnam actually uses — *Harbour Park Road 1st Cross*, *Chinna Waltair 1st
+Main Road* — and carries `name_source: 'derived'` plus the anchor it was named
+from. The panel says so, and points the user at `STR-###` as the reference that
+claims nothing.
+
+### The synthetic building register
+
+`lib/mock/` attaches a register-style record to every building: a name, a
+`BLD-####` reference, a type, a built-up area, an occupancy, an owner and a
+status. It is deterministic — seeded from the building's integer id via
+mulberry32, with a separate salt per field — so a building shows the same name
+on every reload, in either backend, after a restart.
+
+It never overwrites sourced data. Floors, height, ULPIN, parcel, footprint and
+coordinates are passed through untouched; built-up area is *summed from the real
+unit rows*; the building type is chosen only from the subtypes the real use type
+and storey count permit. The 59 buildings that carry a real OSM name and the 6
+with a real address keep them verbatim, marked `osm` in the panel while
+generated values are marked `demo`.
+
+Deleting `lib/mock/` and its one call site in `lib/db.ts` returns the
+application to sourced-data-only, with no component changes: the fields are
+merged in as `Partial<BuildingMock>`, so every consumer already handles absence.
+
+### Manual edit
+
+Nine attributes are editable — name, type, floors, height, built-up area,
+occupancy, address, owner, status. **Coordinates and ULPIN are not**, and that
+is enforced by the type rather than by a `disabled` attribute: they are absent
+from `BuildingEdit`, so `PATCH /api/building/:id` answers `400` for them.
+
+`lib/data/building-schema.ts` is imported by both the form and the route
+handler, so a rule cannot pass in the browser and fail on the server, and a
+server-only rejection renders in the same per-field slot as a local one. Saves
+are pessimistic and round-trip to `data/edits.json` (gitignored; override the
+location with `ULPIN_EDITS_PATH`). The edit overlay is applied as a pure
+function over the pristine snapshot on each read, so the file cache never goes
+stale and there is no invalidation to get wrong.
+
+Editing storeys or height updates **one** building in the scene through a
+`ConstantProperty` assignment rather than rebuilding all 768 entities; the
+acceptance check asserts the entity count is unchanged across a save.
 
 ### The identifier
 
@@ -224,6 +289,8 @@ enforced in the store rather than in the two controls.
 | `GET /api/utilities` | utility centrelines with depth/radius/authority |
 | `GET /api/conflicts` | flagged `ST_3DIntersects` violations |
 | `GET /api/parcels` | surface parcels (beyond the brief; the parcels layer and inset need it) |
+| `GET /api/roads` | merged street centrelines with names, classes and lengths |
+| `PATCH /api/building/:id` | record a manual edit; returns the re-read document. `400` for a non-editable field (coordinates, ULPIN), `422` for a validation failure |
 
 ```console
 $ curl -s -X POST localhost:3000/api/query -H 'Content-Type: application/json' \
@@ -252,26 +319,55 @@ Underground mode pulses them red and names the planted one first.
 ## Verifying
 
 ```bash
-npm test           # ULPIN round-trip + SQL-parity assertions
-npm run verify:ui  # drives a real Chrome through all five view modes
+npm test            # ULPIN round-trip + SQL-parity assertions
+npm run verify:ui   # drives a real Chrome through all five view modes
+npm run check:roads # street picking, tolerance, deselect, building precedence
+npm run check:edit  # read-only guarantees, validation, save, persistence
+npm run check:rwd   # four viewports: layout, collisions, attribution, colour audit
+npm run build:roads # regenerate data/api/roads.json from the OSM extract
 ```
 
 `verify:ui` walks city → building → explode → floor → unit → underground,
 asserts the DOM at each step, checks the disabled controls really are disabled,
 fails on any console error, and writes screenshots to `docs/shots/`.
 
+`check:rwd` renders each viewport and audits it twice, because the colour rule
+has two halves. The **chrome** must stay monochrome: every element inside a
+floating panel is read back from its computed styles and reported if it carries
+any hue but the sanctioned alert red — which a class-name grep cannot fool, and
+which still works now that the panels float over a colour scene, where a
+rectangle of pixels no longer belongs to the chrome alone. The **scene** must
+stay in colour: the composited frame is measured for chroma and fails below 3%,
+which is what catches an imagery treatment or a texture pass that has quietly
+drained it. It also verifies that no two panels overlap, that none runs
+off-screen, and that Cesium's attribution container — a licence obligation — is
+never covered.
+
 Both suites were run against **PostGIS and the snapshot backend**, and the
 `POST /api/query` stack is byte-identical between them.
 
 ### Current state
 
-- 384 buildings · 325 parcels · 1,810 floors · 6,438 units · 301 utility runs · 12 conflicts
-- `npm run build` clean, `tsc --noEmit` clean, 21/21 unit tests, 46/46 UI checks
+- 384 buildings · 325 parcels · 131 streets · 1,810 floors · 6,438 units · 301 utility runs · 12 conflicts
+- `tsc --noEmit` clean, 21/21 unit tests, 46/46 UI checks, 26/26 street checks,
+  31/31 edit checks, responsive checks green at 1680/1280/834/390 px
+- The chrome audit reports **0 off-palette elements** at every viewport, and the
+  scene audit a frame that is roughly 45% coloured: dark green ground under
+  neutral off-white massing, with Cesium's attribution logo — which may not be
+  restyled — excluded from the count
 
 ### Not implemented
 
 **Measurements, Share and Split view** are rendered visibly disabled rather than
 hidden, so their absence is explicit rather than implied.
+
+**Editing a storey count does not regenerate floor and unit records.** Those are
+cadastral child rows; fabricating them would be a far larger invention than a
+name. The panel says so whenever the two disagree.
+
+**Streets are snapshot-only.** `db/01_schema.sql` has no road table, so unlike
+buildings and parcels there is no PostGIS path for `lib/db.ts` to prefer;
+`GET /api/roads` sends `x-ulpin-roads: derived` to say so on the wire.
 
 ---
 

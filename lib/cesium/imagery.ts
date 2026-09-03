@@ -191,20 +191,37 @@ interface Treatment {
   hue: number;
 }
 
+/**
+ * THE BASEMAP KEEPS ITS COLOUR. Vegetation reads green, tin roofs read blue,
+ * bare plots read ochre -- that is what makes a satellite image legible as
+ * ground, and stripping it turned the AOI into a grey smear.
+ *
+ * Black is for the CHROME only (top bar, dock, panels -- see
+ * app/globals.css). The two treatments therefore differ by EXPOSURE, not by
+ * hue: how far the imagery is pushed back behind the building geometry.
+ *
+ * The imagery itself is untouched at source; this is a display transform on
+ * the layer, so the attribution obligations are unaffected.
+ */
 export const TREATMENTS: Record<TreatmentId, Treatment> = {
-  // Default. Pushes the imagery back so it reads as context beneath the
-  // building geometry: dark, largely desaturated, contrast lifted just enough
-  // that roads and plot edges survive the dimming. Gamma < 1 keeps shadow
-  // detail -- pure darkening at this level used to crush the AOI's lane
-  // pattern into a flat wash.
+  // Default. Pushes the imagery back so it reads as ground beneath the
+  // building masses, and pushes it GREEN: this AOI is dense vegetation, so
+  // dimming the exposure while lifting saturation lands the terrain on a deep
+  // green that the neutral off-white buildings separate from by value AND by
+  // chroma at once. That double separation is what lets the buildings sit at
+  // 45% opacity and still read as objects rather than as haze.
+  //
+  // Gamma < 1 keeps shadow detail: with a low sun the ground is already half
+  // in shadow, and pure darkening crushed the AOI's lane pattern to a wash.
+  // Contrast is lifted just enough that roads and plot edges survive both.
   gisDark: {
-    brightness: 0.62,
-    saturation: 0.42,
-    contrast: 1.22,
-    gamma: 0.92,
+    brightness: 1.0,
+    saturation: 1.45,
+    contrast: 1.1,
+    gamma: 0.94,
     hue: 0.0,
   },
-  // Raw imagery, for when a reviewer asks to see what the source looks like.
+  // Full-exposure imagery, exactly as the provider serves it.
   natural: {
     brightness: 1.0,
     saturation: 1.0,
@@ -229,15 +246,25 @@ export function applyTreatment(layer: Cesium.ImageryLayer, treatment: TreatmentI
  *
  * Dimming the imagery layer alone leaves an untextured globe and a horizon
  * that are both too bright for it, so the base colour, fog and atmosphere are
- * pulled down to match. Lighting stays off and HDR stays off: both would
- * re-brighten the ground and undo the treatment.
+ * pulled down to match -- pulled DOWN, not drained: the sky keeps its hue for
+ * the same reason the ground does.
+ *
+ * Lighting is pinned OFF here and HDR stays off, but read that narrowly: HDR
+ * would re-brighten the ground and undo the exposure, while lighting is simply
+ * not this function's to set. lib/cesium/sun.ts owns it, runs immediately
+ * after configureScene(), and turns it back on at SUN_DEFAULT_HOUR -- so the
+ * scene you actually see is this treatment under a low afternoon sun.
  */
 export function applyGisDarkScene(scene: Cesium.Scene): void {
-  scene.globe.baseColor = Cesium.Color.fromCssColorString('#0d1219');
+  // What shows through before a tile lands. Green, so the gap reads as ground
+  // rather than as a hole in the mosaic -- but dark, because at city altitude
+  // the un-tiled wedge is large and anything lighter glows through it.
+  scene.globe.baseColor = Cesium.Color.fromCssColorString('#0D1710');
   scene.fog.enabled = true;
   scene.fog.density = 0.0002;
-  scene.skyAtmosphere.brightnessShift = -0.35;
-  scene.skyAtmosphere.saturationShift = -0.3;
+  scene.skyAtmosphere.brightnessShift = -0.2;
+  // Left at 0. The horizon band belongs to the scene, not to the chrome.
+  scene.skyAtmosphere.saturationShift = 0.0;
   scene.globe.enableLighting = false;
   scene.highDynamicRange = false;
 }

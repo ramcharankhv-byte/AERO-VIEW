@@ -154,6 +154,7 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
         store.setBuildings(data.buildings);
         store.setParcels(data.parcels);
         store.setUtilities(data.utilities);
+        store.setRoads(data.roads);
         store.setConflicts(data.conflicts);
 
         const ground = await sampleGroundUnder(terrainProvider, data.buildings);
@@ -368,11 +369,16 @@ export default function CesiumRoot({ children }: { children?: React.ReactNode })
 
   return (
     <Ctx.Provider value={ctx}>
-      <div ref={containerRef} className="absolute inset-0" />
+      {/* touch-none: Cesium installs its own pointer handlers for pan,
+          pinch and rotate. Without this the browser claims a two-finger
+          gesture as page zoom before Cesium ever sees it, and the globe
+          becomes undraggable on a phone. select-none stops a drag over the
+          canvas from starting a text selection. */}
+      <div ref={containerRef} className="absolute inset-0 touch-none select-none" />
       {ctx.ready ? children : null}
       {loading ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <div className="glass rounded-lg px-4 py-2 text-sm text-slate-200">
+          <div className="glass rounded-lg px-4 py-2 text-sm text-ink">
             Loading cadastre…
           </div>
         </div>

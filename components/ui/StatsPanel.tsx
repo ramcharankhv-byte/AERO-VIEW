@@ -32,7 +32,7 @@ function Bars({
     <svg
       width="100%"
       viewBox={`0 0 ${BAR_W} ${rows.length * ROW_H}`}
-      className="mt-1 text-[rgb(var(--accent))]"
+      className="mt-1 text-[rgb(var(--ink))]"
       role="img"
     >
       {rows.map((r, i) => (
@@ -114,7 +114,7 @@ export default function StatsPanel() {
       + `${mix.pct.surveyed_plan}% plan (${mix.synthetic} of those a demo register).`;
 
   return (
-    <div className="glass pointer-events-auto max-h-[calc(100vh-140px)] w-[268px] overflow-y-auto rounded-lg p-3">
+    <div data-panel="stats" className="glass pointer-events-auto max-h-full w-full overflow-y-auto rounded-lg p-3">
       <div className="text-[13px] font-semibold text-[rgb(var(--ink))]">
         Area statistics
       </div>
