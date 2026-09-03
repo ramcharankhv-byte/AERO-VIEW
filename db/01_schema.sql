@@ -22,20 +22,78 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
-DROP TABLE IF EXISTS conflict, utility, unit, floor, building, parcel CASCADE;
+DROP TABLE IF EXISTS conflict, utility, unit, floor, building, parcel, projects CASCADE;
+
+-- ---------------------------------------------------------------- projects
+-- One AOI. Everything below is scoped to one of these.
+--
+-- Parcel NUMBERING is per project: the parcel numbered 0001 exists in every
+-- project, and it is the state/district prefix in the ULPIN that keeps the
+-- identifiers distinct. That is why state_code and district_code live here
+-- rather than in a constant -- see ulpin_fmt() in 02_functions.sql and
+-- lib/ulpin.ts, which mirror each other.
+--
+-- Row IDs are a different thing and stay globally unique, because they are the
+-- primary keys the FKs and the API address rows by. scripts/build_geometry.sql
+-- therefore computes two numbers per parcel: a per-project ordinal for the
+-- ULPIN, and that ordinal plus an offset for the id. For the first project
+-- seeded the offset is zero, which is what keeps siripuram's identifiers AND
+-- its ids byte-identical to what they have always been.
+--
+-- floor and unit deliberately carry NO project_id. They reach one through
+-- building, and duplicating it would create a second, de-normalised answer to
+-- "which project is this floor in" that nothing enforces agreement between.
+--
+-- Named in the plural, unlike every other table here. That is the one place
+-- this schema breaks its own convention, and it is deliberate: "project" is
+-- also the name of the per-row concept threaded through the TypeScript, the
+-- Python and the CLI, and having the table differ from the type by more than a
+-- case fold makes every reference unambiguous.
+CREATE TABLE projects (
+  id            serial PRIMARY KEY,
+  slug          text UNIQUE NOT NULL CHECK (slug ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
+  name          text NOT NULL,
+  bbox_geom     geometry(Polygon, 4326) NOT NULL,
+  state_code    text NOT NULL,
+  district_code text NOT NULL,
+  scheme_code   text NOT NULL DEFAULT '3D26',
+  status        text NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft','generating','ready','failed')),
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  -- Entity counts, written by 05_export_static.py. Denormalised on purpose:
+  -- the gallery renders one line of counts per card and must not run seven
+  -- COUNT(*) queries per card -- nor need the database at all, since the
+  -- committed data/api/projects.json carries the same numbers.
+  stats         jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+-- The demo AOI. Present from initdb so the pipeline has a project to seed into
+-- and the gallery has a card before anything has been generated.
+-- created_at is pinned rather than defaulted to now(): data/api/projects.json
+-- is a committed snapshot of this row, and a value that changed with every
+-- initdb would make the two disagree about the same project every time the
+-- volume was rebuilt. The timestamp is when the demo AOI's data first entered
+-- the repository.
+INSERT INTO projects (slug, name, bbox_geom, state_code, district_code, status,
+                      created_at)
+VALUES ('siripuram', 'Siripuram, Visakhapatnam',
+        ST_MakeEnvelope(83.3130, 17.7180, 83.3245, 17.7280, 4326),
+        'AP', 'VSP', 'ready', '2026-09-01T04:49:47Z');
 
 -- ---------------------------------------------------------------- parcel
 CREATE TABLE parcel (
-  id       integer PRIMARY KEY,
-  ulpin    text UNIQUE NOT NULL,
-  geom     geometry(Polygon, 4326) NOT NULL,
-  area_m2  double precision NOT NULL,
-  owner    text NOT NULL
+  id         integer PRIMARY KEY,
+  project_id integer NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  ulpin      text UNIQUE NOT NULL,
+  geom       geometry(Polygon, 4326) NOT NULL,
+  area_m2    double precision NOT NULL,
+  owner      text NOT NULL
 );
 
 -- ---------------------------------------------------------------- building
 CREATE TABLE building (
   id            integer PRIMARY KEY,
+  project_id    integer NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   parcel_id     integer NOT NULL REFERENCES parcel(id) ON DELETE CASCADE,
   ulpin         text UNIQUE NOT NULL,
   footprint     geometry(Polygon, 4326) NOT NULL,
@@ -90,6 +148,7 @@ CREATE TABLE unit (
 -- ---------------------------------------------------------------- utility
 CREATE TABLE utility (
   id          integer PRIMARY KEY,
+  project_id  integer NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   asset_type  text NOT NULL CHECK (asset_type IN ('water','sewer','power','metro')),
   geom_3d     geometry(LineStringZ, 4326) NOT NULL,  -- centreline, drawn as a PolylineVolume
   envelope_3d geometry(PolyhedralSurfaceZ, 4326),    -- solid corridor, used for 3D conflict tests
@@ -111,7 +170,11 @@ CREATE TABLE conflict (
 );
 
 -- ---------------------------------------------------------------- indexes
+CREATE INDEX projects_bbox_gix  ON projects USING gist (bbox_geom);
 CREATE INDEX parcel_geom_gix    ON parcel   USING gist (geom);
+CREATE INDEX parcel_project_ix  ON parcel   (project_id);
+CREATE INDEX building_project_ix ON building (project_id);
+CREATE INDEX utility_project_ix ON utility  (project_id);
 CREATE INDEX building_fp_gix    ON building USING gist (footprint);
 CREATE INDEX building_parcel_ix ON building (parcel_id);
 CREATE INDEX floor_geom_gix     ON floor    USING gist (geom);

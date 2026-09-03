@@ -77,14 +77,25 @@ END
 $fn$;
 
 
--- ULPIN: AP-VSP-3D26-<parcel4>-<bldg3>-<floor2>-<unit2>, right-truncated.
--- Floor codes: '00' ground, '01'..'99' above, 'B1'..'B9' basements.
--- Mirrored byte-for-byte in lib/ulpin.ts.
+-- ULPIN: <state>-<district>-<scheme>-<parcel4>-<bldg3>-<floor2>-<unit2>,
+-- right-truncated. Floor codes: '00' ground, '01'..'99' above, 'B1'..'B9'
+-- basements. Mirrored byte-for-byte in lib/ulpin.ts.
+--
+-- The revenue codes come from the project row (projects.state_code,
+-- district_code, scheme_code) and are passed in by the caller. They DEFAULT to
+-- AP/VSP/3D26, and that default is load-bearing rather than a convenience: a
+-- call site that passes only (p, b, f, u) produces exactly the string it
+-- produced when the prefix was a literal, which is what keeps every identifier
+-- already minted for siripuram -- and every ULPIN in data/api/siripuram/ --
+-- byte-identical across this signature change.
 CREATE OR REPLACE FUNCTION ulpin_fmt(p int, b int DEFAULT NULL,
-                                     f int DEFAULT NULL, u int DEFAULT NULL)
+                                     f int DEFAULT NULL, u int DEFAULT NULL,
+                                     st text DEFAULT 'AP',
+                                     di text DEFAULT 'VSP',
+                                     sc text DEFAULT '3D26')
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $fn$
-  SELECT 'AP-VSP-3D26-' || lpad(p::text, 4, '0')
+  SELECT st || '-' || di || '-' || sc || '-' || lpad(p::text, 4, '0')
     || CASE WHEN b IS NULL THEN '' ELSE '-' || lpad(b::text, 3, '0') END
     || CASE WHEN b IS NULL OR f IS NULL THEN ''
             WHEN f < 0 THEN '-B' || abs(f)::text

@@ -1,47 +1,41 @@
-"""Shared AOI constants and a local metric projection.
+"""Back-compatible AOI constants for the demo project.
 
-The AOI is small (~1.2 x 1.1 km), so an equirectangular projection anchored at
-the AOI centre is accurate to well under a metre here -- fine for the area and
-height heuristics in 02_heights.py. All *authoritative* metric geometry is
-still built in EPSG:32644 inside PostGIS; this is only for the estimator.
+The AOI is no longer a constant: it is a project, and scripts/project.py owns
+it. This module survives so that the demo project's numbers are still stated
+somewhere obvious, and so that anything reaching for `BBOX` or `AOI_NAME` gets
+siripuram rather than an ImportError.
+
+New code should take a `Project` and use its methods -- `p.ring_area_m2(ring)`,
+`p.to_local(lon, lat)`, `p.overpass_bbox` -- because those are correct for
+whichever AOI is being seeded. The module-level values here are correct only
+for siripuram, which is exactly the assumption multi-project support removes.
 """
-import math
+from project import (  # noqa: F401  (re-exported on purpose)
+    DEFAULT_GROUND_ELEV,
+    FLOOR_HEIGHT,
+    M_PER_DEG_LAT,
+    default_project,
+)
 
-# Siripuram, Visakhapatnam
-BBOX = (83.3130, 17.7180, 83.3245, 17.7280)   # west, south, east, north
-AOI_NAME = "Siripuram, Visakhapatnam"
+_P = default_project()
+
+BBOX = _P.bbox                      # west, south, east, north
+AOI_NAME = _P.name
 WEST, SOUTH, EAST, NORTH = BBOX
-LAT0 = (SOUTH + NORTH) / 2.0
-LON0 = (WEST + EAST) / 2.0
+LAT0 = _P.lat0
+LON0 = _P.lon0
 
 # Overpass wants (south, west, north, east)
-OVERPASS_BBOX = f"{SOUTH},{WEST},{NORTH},{EAST}"
+OVERPASS_BBOX = _P.overpass_bbox
 
-M_PER_DEG_LAT = 110574.0
-M_PER_DEG_LON = 111320.0 * math.cos(math.radians(LAT0))
-
-DEFAULT_GROUND_ELEV = 12.0
-FLOOR_HEIGHT = 3.2
+M_PER_DEG_LON = _P.m_per_deg_lon
 
 
 def to_local(lon, lat):
-    """lon/lat degrees -> metres east/north of the AOI centre."""
-    return ((lon - LON0) * M_PER_DEG_LON, (lat - LAT0) * M_PER_DEG_LAT)
+    """lon/lat degrees -> metres east/north of the demo AOI's centre."""
+    return _P.to_local(lon, lat)
 
 
 def ring_area_m2(coords):
-    """Shoelace area in m^2 for a lon/lat ring."""
-    pts = [to_local(x, y) for x, y in coords]
-    if len(pts) < 3:
-        return 0.0
-    s = 0.0
-    for i in range(len(pts) - 1):
-        x1, y1 = pts[i]
-        x2, y2 = pts[i + 1]
-        s += x1 * y2 - x2 * y1
-    # close the ring if the source did not
-    if pts[0] != pts[-1]:
-        x1, y1 = pts[-1]
-        x2, y2 = pts[0]
-        s += x1 * y2 - x2 * y1
-    return abs(s) / 2.0
+    """Shoelace area in m^2 for a lon/lat ring, in the demo AOI's projection."""
+    return _P.ring_area_m2(coords)
