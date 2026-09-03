@@ -14,3 +14,10 @@ next-env.d.ts
 # copied into the demo project's path, and deliberately left in place.
 data/edits.json
 data/projects/*/edits.json
+
+# The verbatim Overpass responses. A local cache so a re-seed never has to ask
+# Overpass again -- and a record of exactly what the pipeline was handed, which
+# is worth having on disk. Not committed: it is a byte-for-byte duplicate of
+# the raw_*.geojson files beside it, which ARE committed, and it is the largest
+# file in a project's work directory.
+data/projects/*/osm.json

@@ -649,6 +649,9 @@ export async function getBuildings(slug: string): Promise<GeoFC<EnrichedBuilding
   const [fc, units, streets, edits] = await Promise.all([
     buildingsFC(slug), unitIndex(slug), streetIndex(slug), allEdits(slug),
   ]);
+  // The project's own name, so a generated address says where the building
+  // actually is. It rides on the FeatureCollection from both backends.
+  const locality = fc.aoi ?? null;
   const pre: GeoFC<BuildingProps> = edits.size === 0 ? fc : {
     ...fc,
     features: fc.features.map((f) => ({
@@ -656,7 +659,7 @@ export async function getBuildings(slug: string): Promise<GeoFC<EnrichedBuilding
       properties: preEnrich(f.properties, edits.get(f.properties.id) ?? null),
     })),
   };
-  const enriched = enrichCollection(pre, units, nearestStreetFactory(streets));
+  const enriched = enrichCollection(pre, units, nearestStreetFactory(streets), locality);
   const out: GeoFC<EnrichedBuilding> = edits.size === 0 ? enriched : {
     ...enriched,
     features: enriched.features.map((f) => ({
@@ -743,8 +746,8 @@ export async function getBuildingDetail(
   // Same generator, same seeds and the same unit index getBuildings uses, so
   // the header rows the panel reads from the FeatureCollection and the rows it
   // reads from here can never disagree.
-  const [units, streets, edit] = await Promise.all([
-    unitIndex(slug), streetIndex(slug), editsFor(slug, id),
+  const [units, streets, edit, collection] = await Promise.all([
+    unitIndex(slug), streetIndex(slug), editsFor(slug, id), buildingsFC(slug),
   ]);
   const ring = (raw.building.footprint?.coordinates as number[][][] | undefined)?.[0];
   let lon = 0;
@@ -758,6 +761,9 @@ export async function getBuildingDetail(
       footprint: raw.building.footprint,
       units: units.get(id) ?? null,
       nearestStreet: nearestStreetFactory(streets)(lon, lat),
+      // Same locality the collection path uses, so the panel's header rows and
+      // its detail rows cannot disagree about which city the building is in.
+      locality: collection.aoi ?? null,
     }),
     edit,
   );
