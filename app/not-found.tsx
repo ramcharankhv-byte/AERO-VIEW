@@ -1,5 +1,3 @@
-import Link from 'next/link';
-
 /**
  * An unknown project slug.
  *
@@ -19,12 +17,12 @@ export default function NotFound() {
           for it under <code className="font-mono text-ink">data/api/</code> and
           PostGIS has no rows for it either.
         </p>
-        <Link
+        <a
           href="/"
           className="tint-hover mt-4 inline-block rounded border border-edge px-2 py-1 text-[11px] text-ink"
         >
           ← All projects
-        </Link>
+        </a>
       </div>
     </main>
   );
