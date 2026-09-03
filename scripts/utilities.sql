@@ -57,6 +57,33 @@ WHERE doc -> 'properties' ->> 'highway' IN
 DELETE FROM road WHERE ST_Length(geom_utm) < 40;
 
 -- ---------------------------------------------------------------------------
+-- The longest LINESTRING component of a geometry, or NULL if it has none.
+--
+-- ST_OffsetCurve can return a MULTILINESTRING from a perfectly valid
+-- LINESTRING: offsetting a hairpin or a tight loop makes the curve cross
+-- itself and the result comes back as separate pieces. utility.geom_3d is
+-- declared LineStringZ, so that is a hard insert failure --
+--   ERROR: Geometry type (MultiLineString) does not match column type
+--   (LineString)
+-- -- and it aborts the whole transaction.
+--
+-- Siripuram's street network never triggered it, which is exactly why this was
+-- not found until a second AOI was seeded. Taking the longest component is the
+-- right answer rather than merely a safe one: the short pieces an offset
+-- sheds are the inside of the hairpin, and a service corridor is laid along
+-- the run of the road, not around the tightest part of its geometry.
+CREATE OR REPLACE FUNCTION longest_line(g geometry)
+RETURNS geometry
+LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT d.geom
+    FROM (SELECT (ST_Dump(g)).geom AS geom) d
+   WHERE ST_GeometryType(d.geom) = 'ST_LineString'
+     AND ST_NPoints(d.geom) >= 2
+   ORDER BY ST_Length(d.geom) DESC
+   LIMIT 1;
+$fn$;
+
+-- ---------------------------------------------------------------------------
 -- One run per (road, asset type). Lateral offset keeps services in their own
 -- corridor instead of stacked on the centreline, which is how they are actually
 -- laid: potable water and power on one verge, sewer on the other, metro deep
@@ -70,7 +97,8 @@ SELECT (row_number() OVER (ORDER BY a.asset_type, r.osm_id)
        a.asset_type,
        ST_Transform(
          ST_Force3D(
-           COALESCE(ST_OffsetCurve(ST_LineMerge(r.geom_utm), a.offset_m), r.geom_utm),
+           COALESCE(longest_line(ST_OffsetCurve(ST_LineMerge(r.geom_utm), a.offset_m)),
+                    r.geom_utm),
            (SELECT z0 FROM ground_ref) + a.depth_m),
          4326),
        a.depth_m,
