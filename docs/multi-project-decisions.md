@@ -542,3 +542,54 @@ hydration mismatch — and `shoot.mjs` fails a viewport on any console error.
 
 **D6.6 — No "New Project" card, disabled or otherwise.** As instructed. The
 empty state names the CLI instead, which is the thing that actually works.
+
+**D6.7 — `check:rwd` gained a gallery mode, because two of its checks cannot
+apply to a page with no canvas.**
+`scripts/shoot.mjs` was written for the viewer. Run unchanged against the
+gallery, two of its six checks fail *structurally*, not because of anything the
+gallery does:
+
+- **scene colour** asserts the framebuffer carries real chroma, to catch a
+  drained basemap. A gallery frame is monochrome by design — that check exists
+  to fail exactly this picture.
+- **attribution visible** hit-tests Cesium's credit container, which only
+  exists where a Cesium viewer does.
+
+Rather than let those stand red — a permanently failing run is one everyone
+learns to ignore — `--gallery` skips those two and prints `n/a` with the
+reason, and keeps the half the gallery is actually being asked to pass: the
+computed-style monochrome audit over every element inside a floating panel, the
+viewport-overflow and collision checks, and console errors. `check:rwd` now runs
+both pages. The exemption is written down at the point of use, and the note says
+that if a card ever renders map data the attribution exemption goes with it.
+
+Result, all four viewports:
+
+```
+=== 1680x950 (gallery) ===   chrome elements: 23   PASS: chrome is monochrome
+=== 1280x800 (gallery) ===   chrome elements: 23   PASS: chrome is monochrome
+=== 834x1112 (gallery) ===   chrome elements: 23   PASS: chrome is monochrome
+=== 390x844  (gallery) ===   chrome elements: 23   PASS: chrome is monochrome
+ALL CHECKS PASSED
+```
+
+**D6.8 — `app/not-found.tsx` uses a plain `<a>`, not `next/link`, and that is a
+workaround for a bundler bug.**
+The first gallery audit failed all four viewports on one console error:
+`SyntaxError: Unexpected token '**'`. It was not in any source file. Bisecting
+found the emitted dev chunk `/_next/static/chunks/app/not-found.js` genuinely
+malformed at its last line:
+
+```
+104  /******/ }
+105  ]);*****/ }
+```
+
+— webpack's `/******/` comment framing, corrupted around a module id containing
+`C%3A%5C%5CAero%20View`, i.e. **the space in this repository's own path**. The
+chunk exists only because `app/not-found.tsx` imports `next/link`; the same
+import in `app/page.tsx` and `app/p/[slug]/page.tsx` bundles cleanly. Swapping
+it for an `<a href="/">` removes the chunk's client boundary and the error with
+it, and a 404 page linking home wants a full navigation anyway rather than a
+soft one. Worth knowing if this repository is ever moved to a path without a
+space — the workaround would then be unnecessary, though it is harmless.

@@ -19,7 +19,7 @@
     "build:roads": "node scripts/build_roads.mjs",
     "check:roads": "node scripts/check_roads.mjs",
     "check:edit": "node scripts/check_edit.mjs",
-    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844"
+    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844"
   },
   "dependencies": {
     "cesium": "1.126.0",

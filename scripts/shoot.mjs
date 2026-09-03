@@ -21,10 +21,29 @@
  * and provenance keys, and they are coloured on purpose -- they render the
  * scene's palette, they do not invent one.
  *
+ * GALLERY MODE (--gallery) audits the project gallery at `/` instead of a
+ * project's viewer. Two of the checks above do not apply to a page with no
+ * canvas on it, and pretending otherwise would mean a permanently red run that
+ * everyone learns to ignore:
+ *
+ *   - the SCENE colour check is skipped, because there is no scene. A gallery
+ *     frame is monochrome by design, which is the exact opposite of what the
+ *     framebuffer test asserts.
+ *   - the ATTRIBUTION check is skipped, because Cesium's credit container only
+ *     exists where a Cesium viewer does. The gallery renders no map data, so
+ *     it incurs no attribution obligation; the moment it did -- a basemap
+ *     thumbnail, say -- this exemption would have to go with it.
+ *
+ * Everything that DOES apply is kept, and it is the half the gallery is being
+ * asked to pass: the computed-style monochrome audit over every element inside
+ * a floating panel, the viewport-overflow and collision checks, and console
+ * errors.
+ *
  * Usage:
  *   node scripts/shoot.mjs                       # default desktop viewport
  *   node scripts/shoot.mjs 390x844 834x1112      # named sizes
  *   node scripts/shoot.mjs --out docs/shots/rwd  # output directory
+ *   node scripts/shoot.mjs --gallery             # audit / instead of a viewer
  */
 import puppeteer from 'puppeteer-core';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -46,12 +65,15 @@ const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 
 const argv = process.argv.slice(2);
 let OUT = path.join(process.cwd(), 'docs', 'shots', 'rwd');
+let GALLERY = false;
 const sizes = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--out') { OUT = path.resolve(argv[++i]); continue; }
+  if (argv[i] === '--gallery') { GALLERY = true; continue; }
   const m = /^(\d+)x(\d+)$/.exec(argv[i]);
   if (m) sizes.push({ width: +m[1], height: +m[2] });
 }
+if (GALLERY && OUT.endsWith('rwd')) OUT = path.join(path.dirname(OUT), 'rwd-gallery');
 if (sizes.length === 0) sizes.push({ width: 1680, height: 950 });
 
 mkdirSync(OUT, { recursive: true });
@@ -93,7 +115,7 @@ let failures = 0;
 try {
   for (const size of sizes) {
     const label = `${size.width}x${size.height}`;
-    console.log(`\n=== ${label} ===`);
+    console.log(`\n=== ${label}${GALLERY ? ' (gallery)' : ''} ===`);
     const page = await browser.newPage();
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
 
@@ -101,20 +123,34 @@ try {
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
     page.on('pageerror', (e) => errors.push(`PAGEERROR ${String(e)}`));
 
-    await page.goto(URL, { waitUntil: 'networkidle2', timeout: 120000 });
-    // The status bar reports the real count only once /api/buildings has
-    // resolved and the scene is live, so it doubles as the readiness signal.
-    await page
-      .waitForFunction(
-        (n) => new RegExp(`${n} 3D buildings`).test(document.body.innerText),
-        { timeout: 240000 },
-        BUILDING_COUNT,
-      )
-      .catch(() => console.log('  ! never reached the ready state'));
-    // Terrain sampling + the first imagery LODs. Raise it with ULPIN_SETTLE
-    // when the network is slow: a frame captured mid-load shows the globe's
-    // base colour, which reads as a scene that lost its imagery.
-    await sleep(SETTLE);
+    // Origin of URL, plus '/'. Built with a regex rather than `new URL`
+    // because the module-level `URL` const shadows the global constructor.
+    const target = GALLERY ? URL.replace(/^(https?:\/\/[^/]+).*$/, '$1/') : URL;
+    await page.goto(target, { waitUntil: 'networkidle2', timeout: 120000 });
+    if (GALLERY) {
+      // The gallery is server-rendered and has no async readiness signal; the
+      // heading is present in the first response. Wait for it anyway so a 500
+      // is a timeout here rather than an audit of an error page.
+      await page
+        .waitForFunction(() => /Projects/.test(document.body.innerText),
+          { timeout: 60000 })
+        .catch(() => console.log('  ! gallery never rendered'));
+      await sleep(500);
+    } else {
+      // The status bar reports the real count only once /api/buildings has
+      // resolved and the scene is live, so it doubles as the readiness signal.
+      await page
+        .waitForFunction(
+          (n) => new RegExp(`${n} 3D buildings`).test(document.body.innerText),
+          { timeout: 240000 },
+          BUILDING_COUNT,
+        )
+        .catch(() => console.log('  ! never reached the ready state'));
+      // Terrain sampling + the first imagery LODs. Raise it with ULPIN_SETTLE
+      // when the network is slow: a frame captured mid-load shows the globe's
+      // base colour, which reads as a scene that lost its imagery.
+      await sleep(SETTLE);
+    }
 
     // The Cesium ion logo is the one thing on screen we are not allowed to
     // restyle -- it is part of the attribution. Its bounding box is measured
@@ -192,6 +228,12 @@ try {
     // Read from the PNG, not from the live canvas: Cesium runs with
     // preserveDrawingBuffer false, so the WebGL backbuffer reads back empty.
     // The screenshot is the composited frame, which is what a reviewer sees.
+    //
+    // Skipped in gallery mode: there is no scene, and a page that is
+    // monochrome by design is exactly what this check exists to fail.
+    if (GALLERY) {
+      console.log('  scene colour audit   : n/a (no canvas on this page)');
+    } else {
     const px = decodePng(readFileSync(file));
     {
       const hues = new Map();
@@ -227,6 +269,7 @@ try {
         console.log(`  FAIL: scene has lost its colour (floor ${FLOOR}%)`);
         failures++;
       } else console.log('  PASS: scene is in colour');
+    }
     }
 
     const real = errors.filter(
@@ -321,8 +364,16 @@ try {
     else console.log('  PASS: all panels within the viewport');
     if (layout.collisions.length) { console.log(`  FAIL: ${layout.collisions.length} panel collision(s): ${layout.collisions.join(' | ')}`); failures++; }
     else console.log('  PASS: no panel collisions');
-    if (layout.creditCovered) { console.log(`  FAIL: attribution covered by "${layout.creditCovered}"`); failures++; }
-    else console.log('  PASS: attribution visible');
+    if (GALLERY) {
+      // Cesium's credit container only exists where a Cesium viewer does. The
+      // gallery renders no map data and so incurs no attribution obligation;
+      // if that ever changes -- a basemap thumbnail on a card -- this
+      // exemption has to change with it.
+      console.log('  attribution          : n/a (no map data on this page)');
+    } else if (layout.creditCovered) {
+      console.log(`  FAIL: attribution covered by "${layout.creditCovered}"`);
+      failures++;
+    } else console.log('  PASS: attribution visible');
 
     await page.close();
   }
