@@ -35,7 +35,7 @@ try {
     }
   });
 
-  await page.goto('http://localhost:3000/', {
+  await page.goto('http://localhost:3000/p/siripuram', {
     waitUntil: 'networkidle2',
     timeout: 90000,
   });

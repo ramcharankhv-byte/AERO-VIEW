@@ -419,3 +419,126 @@ up in the wrong directory says so about itself.
 
 **D4.5 — No fallback needed.** The namespaced-key fallback (`<slug>:<id>` in
 one global file) was not used.
+
+---
+
+## Step 5 — Routing and viewer parameterisation
+
+**Done.** `/` is the gallery (rendered, not redirected); `/p/[slug]` is the
+viewer, unchanged in behaviour.
+
+**D5.1 — `projectSlug` is written in a `useState` initialiser, not an effect.**
+The brief says written once on mount by the page and by nothing else. An effect
+would not have satisfied "before anything reads it": React runs effects
+child-first, so `CesiumRoot`'s mount effect — which is what issues the boot
+fetches — would have run against a `null` slug and been told the right one
+afterwards. A `useState` initialiser runs during the parent's first render,
+before any child mounts. Under StrictMode React may invoke it twice; writing
+the same slug twice is idempotent and there is no other writer.
+
+There is deliberately **no setter** on the store for it. Adding one would
+invite a second writer, and "which project am I looking at" changing under a
+live scene is a page navigation, not a state change.
+
+**D5.2 — The scene takes the project as a prop as well.**
+Belt and braces, and it is the prop that actually carries the data:
+`Scene -> CesiumRoot -> ViewerCtx`. The store field exists for chrome that sits
+*outside* the Cesium tree (`DataErrorNotice` needs it to retry the right
+project's fetch), where there is no viewer context to read.
+
+**D5.3 — `frameInitialCamera(viewer, bbox)`, still the only `setView`.**
+It takes the project's bbox instead of reading a module constant. The height it
+frames at is `frameHeightFor(bbox)`, which returns exactly **1200** for a bbox
+the size of Siripuram's — so the demo project opens on the identical pose — and
+scales with the larger dimension for anything else, so a smaller ward does not
+open as a speck.
+
+**D5.4 — `CameraDirector`'s `AOI_CENTRE` constant is gone.**
+It was `{ lon: 83.31875, lat: 17.723 }`, used by the city and underground
+poses. Pressing Reset on a Hyderabad project would have flown the camera to
+Visakhapatnam. It now derives the centre from `project.bbox` off the viewer
+context, and the city pose reads its height from the same `frameHeightFor` the
+initial pose does, so Reset still returns to exactly the opening pose. **No new
+camera call sites**; the grep is below and in HANDOFF.md.
+
+**D5.5 — `lib/cesium/setup.ts`'s `AOI` constant survives, on purpose.**
+`lib/cesium/imagery.ts` bounds the optional drone-orthophoto provider to it,
+and that tile pyramid is a flight over Siripuram specifically — feeding it
+another project's bbox would ask a tile server for photographs that do not
+exist. Documented at the constant.
+
+**D5.6 — StatusBar reads the project name from the data, not from a new store
+field.**
+The brief allows the store exactly one new field and it is `projectSlug`. The
+buildings FeatureCollection already carries the project's name in `aoi`, on
+both backends, so the status bar reads it there — where it cannot disagree with
+the data on screen. `verify_ui.mjs`'s `AOI named` assertion passes unchanged
+for the demo project.
+
+The brief describes this as "alongside the existing backend indicator". There
+is no postgis/snapshot indicator in the StatusBar — that lives on the wire as
+`x-ulpin-backend`; what the bar shows next to the place name is the imagery and
+terrain sources. The project name sits where the hardcoded
+`"Siripuram, Visakhapatnam"` used to, which is that position.
+
+**D5.7 — The acceptance scripts' default URL moved to `/p/siripuram`.**
+`/` is the gallery now, so a script pointed at it would drive a page with no
+globe. `ULPIN_URL` still overrides. The API paths inside those scripts are
+untouched — they use the unscoped aliases, which is exactly why the aliases
+exist.
+
+**D5.8 — The camera grep, verbatim.**
+
+```console
+$ grep -rn 'flyTo\|zoomTo\|lookAt' --include=*.ts --include=*.tsx \
+    app components lib | grep -v 'components/globe/CameraDirector.tsx'
+$ echo $?
+1
+```
+
+Nothing. Widening it to `scripts/` returns one line, and it is a comment in a
+test harness, not a call:
+
+```
+scripts/check_basemap.mjs:241:  // digits. An actual camera move -- a stray flyTo or re-frame on swap, the
+```
+
+`setView` across `app`, `components` and `lib` is one call, in
+`lib/cesium/setup.ts:102` — `frameInitialCamera`, the documented
+construction-time exception. Everything else the grep finds is `setViewMode` /
+`resetView`, which are store actions.
+
+---
+
+## Step 6 — Gallery
+
+**Done.** A card grid, monochrome, no new dependency.
+
+**D6.1 — Every class is one the chrome already defines.**
+`glass`, `panel-title`, `row-label`, `chip`, `tint-hover`, and the
+`ink`/`muted`/`edge`/`edgeStrong` tokens from `tailwind.config.ts`. No new CSS
+was authored for the gallery — not a rule, not a token.
+
+**D6.2 — `--danger` appears once, and it is sanctioned.**
+On the status chip of a project whose generation *failed*. That is the same use
+the conflict count in the StatusBar makes of it: a state the user must not
+miss. Every other chip is grey.
+
+**D6.3 — The bbox sketch is inline SVG in `currentColor`.**
+No MapLibre, no tile fetch, no dependency. It draws the bbox at its **real**
+aspect ratio — metres, not degrees, so at 17.7 N a square in degrees does not
+render as a square — with a fixed 4x4 graticule for scale and corner ticks.
+Everything inherits the card's ink, so it introduces no hue by construction
+rather than by inspection.
+
+**D6.4 — A project that is not `ready` is not a link.**
+Rendering a draft / generating / failed card as a link and then landing the
+user on an error page is worse than saying so on the card.
+
+**D6.5 — Dates are formatted from UTC parts by hand.**
+`toLocaleDateString` renders differently on the server and in the browser
+whenever the two disagree about locale or time zone, which React reports as a
+hydration mismatch — and `shoot.mjs` fails a viewport on any console error.
+
+**D6.6 — No "New Project" card, disabled or otherwise.** As instructed. The
+empty state names the CLI instead, which is the thing that actually works.
