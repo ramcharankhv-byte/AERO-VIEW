@@ -1,19 +1,15 @@
-import { NextResponse } from 'next/server';
-import { backend, getConflicts } from '@/lib/db';
+import { conflictsRoute } from '@/lib/api/handlers';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/conflicts -> utility/basement intersections found by ST_3DIntersects. */
+/**
+ * GET /api/conflicts -> the demo project.
+ *
+ * A thin alias onto /api/p/siripuram/conflicts. It exists because the acceptance
+ * scripts, the README's curl examples and any bookmarked URL all predate
+ * projects, and an unscoped path that 404s would break every one of them. The
+ * handler body is shared, so alias and scoped route are byte-identical.
+ */
 export async function GET() {
-  try {
-    const rows = await getConflicts();
-    return NextResponse.json(rows, {
-      headers: { 'x-ulpin-backend': await backend() },
-    });
-  } catch (err) {
-    return NextResponse.json(
-      { error: 'failed to load conflicts', detail: String(err) },
-      { status: 500 },
-    );
-  }
+  return conflictsRoute('siripuram');
 }

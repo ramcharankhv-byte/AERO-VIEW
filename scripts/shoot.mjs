@@ -49,7 +49,7 @@ if (sizes.length === 0) sizes.push({ width: 1680, height: 950 });
 mkdirSync(OUT, { recursive: true });
 
 const BUILDING_COUNT = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 ).features.length;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
