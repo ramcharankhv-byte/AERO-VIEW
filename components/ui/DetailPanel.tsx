@@ -261,7 +261,14 @@ export default function DetailPanel() {
 
   if (!bprops || mode === 'city' || (underground && selectedUtilityId === null)) {
     return (
-      <Panel title="Siripuram, Visakhapatnam" kicker="Area of interest">
+      // The title is the project's own name, read off the FeatureCollection's
+      // `aoi` field -- the same source the StatusBar uses, so the two cannot
+      // disagree. It was hardcoded, which meant every project's summary panel
+      // claimed to be Siripuram.
+      <Panel
+        title={buildings?.aoi ?? 'Area of interest'}
+        kicker="Area of interest"
+      >
         {/* All three figures wait on the same boot fetch, so they are gated
             together: counting conflicts up to zero while that array is still
             unset would animate a number that is not yet true. */}

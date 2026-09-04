@@ -3,28 +3,46 @@ import path from 'node:path';
 import { Pool } from 'pg';
 import type {
   BuildingDetail, BuildingProps, ConflictRow, EnrichedBuilding, GeoFC,
-  ParcelInfo, RoadProps, StackHit, UtilityProps,
+  ParcelInfo, Project, ProjectStats, RoadProps, StackHit, UtilityProps,
 } from './types';
 import { enrichBuilding, enrichCollection, type UnitFacts } from './mock/building';
 import { allEdits, editsFor, editsRev } from './data/edits';
 import type { BuildingEdit } from './data/building-schema';
+import { API_DIR, DEFAULT_SLUG, isValidSlug } from './projects';
 
 /**
- * Data access with two backends.
+ * Data access with two backends, scoped by project.
  *
  * PostGIS is the source of truth and does the real spatial work (ST_3DIntersects
  * over PolyhedralSurface solids). When it is unreachable -- typically because
  * docker-compose is not running -- we serve the committed snapshots in
- * data/api/, which scripts/05_export_static.py generated FROM that same
+ * data/api/<slug>/, which scripts/05_export_static.py generated FROM that same
  * database. The snapshot is never an alternative implementation of the spatial
  * logic; it is a cache of its output, so the two cannot drift in behaviour.
  *
  * The one genuine difference is /api/query: the point-in-volume test runs in
  * SQL when the DB is up, and as an equivalent prism test in JS when it is not.
  * Both are exact for vertical prisms, which is all this schema stores.
+ *
+ * SCOPING. Every exported reader takes a slug first. On the snapshot path that
+ * selects a directory; on the PostGIS path it selects a `projects.id` that is
+ * pushed into the WHERE clause. Three cases, resolved once per slug by
+ * scopeFor():
+ *
+ *   scoped   the projects table exists and knows this slug -> filter on
+ *            project_id, which is the normal multi-project case
+ *   legacy   the projects table does NOT exist (a pre-migration volume) and
+ *            the slug is the demo project -- every row in such a database is
+ *            siripuram, so the unfiltered query is the correct one
+ *   none     neither -- there is no PostGIS answer for this project, and the
+ *            snapshot serves. This is also what a database that is simply not
+ *            running looks like.
+ *
+ * `legacy` is what lets an existing ulpin_pgdata volume keep working without
+ * running db/migrations/001_multi_project.sql first, rather than silently
+ * falling back to the snapshot while the header still claimed `postgis`.
  */
 
-const DATA_DIR = path.join(process.cwd(), 'data', 'api');
 const CONNECT_TIMEOUT_MS = 1500;
 
 let pool: Pool | null = null;
@@ -59,8 +77,63 @@ async function usingDb(): Promise<boolean> {
   return dbUsable;
 }
 
+async function q<T = Record<string, unknown>>(
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  const res = await getPool().query(sql, params as never[]);
+  return res.rows as T[];
+}
+
+// ---------------------------------------------------------------------------
+// Project scope
+// ---------------------------------------------------------------------------
+
+interface Scope {
+  /** projects.id, or null in `legacy` mode where the column does not exist. */
+  id: number | null;
+  /** The AOI name that goes in the FeatureCollection's `aoi` field. */
+  name: string;
+}
+
 /**
- * Run a PostGIS query, or report that the snapshot should serve instead.
+ * Memoised per slug for the life of the process.
+ *
+ * The pipeline runs as a separate process and the dev server reloads its
+ * modules when files change, so a stale entry cannot outlive a re-seed in
+ * practice. A long-lived production server that gained a project would need a
+ * restart, which is the same contract the snapshot file cache below has always
+ * had.
+ */
+const scopeCache = new Map<string, Scope | null>();
+
+async function scopeFor(slug: string): Promise<Scope | null> {
+  if (scopeCache.has(slug)) return scopeCache.get(slug)!;
+  const resolved = await resolveScope(slug);
+  scopeCache.set(slug, resolved);
+  return resolved;
+}
+
+async function resolveScope(slug: string): Promise<Scope | null> {
+  if (!isValidSlug(slug)) return null;
+  if (!(await usingDb())) return null;
+  try {
+    const rows = await q<{ id: number; name: string }>(
+      'SELECT id, name FROM projects WHERE slug = $1', [slug]);
+    if (!rows.length) return null;
+    return { id: rows[0].id, name: rows[0].name };
+  } catch {
+    // No projects table: a volume seeded before this feature existed. Every
+    // row in it is the demo AOI, so the unfiltered queries are correct for
+    // that slug and only that slug.
+    return slug === DEFAULT_SLUG
+      ? { id: null, name: 'Siripuram, Visakhapatnam' }
+      : null;
+  }
+}
+
+/**
+ * Run a PostGIS query for a project, or report that the snapshot should serve.
  *
  * A failed QUERY is treated exactly like a failed probe. The pool is small and
  * deliberately short-timeouted so a missing database is detected fast, which
@@ -74,41 +147,144 @@ async function usingDb(): Promise<boolean> {
  * must not be confused with "the database could not answer".
  */
 async function viaDb<T>(
-  run: () => Promise<T>,
+  slug: string,
+  run: (scope: Scope) => Promise<T>,
 ): Promise<{ ok: true; value: T } | { ok: false }> {
-  if (!(await usingDb())) return { ok: false };
+  const scope = await scopeFor(slug);
+  if (!scope) return { ok: false };
   try {
-    return { ok: true, value: await run() };
+    return { ok: true, value: await run(scope) };
   } catch {
     return { ok: false };
   }
 }
 
-async function q<T = Record<string, unknown>>(
-  sql: string,
-  params: unknown[] = [],
-): Promise<T[]> {
-  const res = await getPool().query(sql, params as never[]);
-  return res.rows as T[];
+/**
+ * The project filter, as a SQL fragment plus the parameters that precede it.
+ *
+ * Returned together so a call site cannot get the placeholder number and the
+ * parameter array out of step, which is the one way this could go wrong
+ * quietly: a mismatched $n does not error, it filters on the wrong value.
+ */
+function filter(scope: Scope, expr: string, priorParams: unknown[] = []): {
+  clause: string;
+  params: unknown[];
+} {
+  if (scope.id === null) return { clause: '', params: priorParams };
+  return {
+    clause: expr.replace('$P', `$${priorParams.length + 1}`),
+    params: [...priorParams, scope.id],
+  };
 }
 
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
+
 const fileCache = new Map<string, unknown>();
-async function snapshot<T>(name: string): Promise<T> {
-  if (fileCache.has(name)) return fileCache.get(name) as T;
-  const raw = await fs.readFile(path.join(DATA_DIR, name), 'utf-8');
+
+/**
+ * Read data/api/<slug>/<name>, cached for the life of the process.
+ *
+ * The slug is validated by isValidSlug() before it is joined onto a directory
+ * path, so a crafted slug cannot walk out of data/api/. resolveProject() gates
+ * every route ahead of this, but this is the function that actually touches
+ * the filesystem and it does not rely on a caller having checked.
+ */
+async function snapshot<T>(slug: string, name: string): Promise<T> {
+  if (!isValidSlug(slug)) throw new Error(`invalid project slug: ${slug}`);
+  const key = `${slug}/${name}`;
+  if (fileCache.has(key)) return fileCache.get(key) as T;
+  const raw = await fs.readFile(path.join(API_DIR, slug, name), 'utf-8');
   const parsed = JSON.parse(raw);
-  fileCache.set(name, parsed);
+  fileCache.set(key, parsed);
   return parsed as T;
 }
 
-export async function backend(): Promise<'postgis' | 'snapshot'> {
-  return (await usingDb()) ? 'postgis' : 'snapshot';
+/**
+ * Which backend actually answered for this project.
+ *
+ * Asking per project rather than globally, because the two can disagree: with
+ * PostGIS up and a second project that exists only as a snapshot, a global
+ * probe would report `postgis` for a response the snapshot served. For the
+ * demo project with the database running this still returns `postgis`, which
+ * is what it has always returned and what the acceptance scripts assert.
+ */
+export async function backend(slug: string): Promise<'postgis' | 'snapshot'> {
+  return (await scopeFor(slug)) ? 'postgis' : 'snapshot';
 }
 
-const BUILDINGS_SQL = `
+// ---------------------------------------------------------------------------
+// The registry, read from PostGIS. lib/projects.ts owns the snapshot half.
+// ---------------------------------------------------------------------------
+
+const PROJECTS_SQL = `
+  SELECT p.slug, p.name, p.state_code, p.district_code, p.scheme_code,
+         p.status, p.created_at, p.stats,
+         ST_XMin(p.bbox_geom) AS west,  ST_YMin(p.bbox_geom) AS south,
+         ST_XMax(p.bbox_geom) AS east,  ST_YMax(p.bbox_geom) AS north
+    FROM projects p ORDER BY p.created_at, p.id`;
+
+interface ProjectRow {
+  slug: string; name: string; state_code: string; district_code: string;
+  scheme_code: string; status: Project['status']; created_at: Date | string;
+  stats: ProjectStats | null;
+  west: number; south: number; east: number; north: number;
+}
+
+/**
+ * Registry rows from PostGIS, or null when there is no PostGIS answer.
+ *
+ * Null and [] are different: null means "ask the snapshot", [] means "the
+ * database is up and there genuinely are no projects".
+ */
+export async function projectsFromDb(): Promise<Project[] | null> {
+  if (!(await usingDb())) return null;
+  try {
+    const rows = await q<ProjectRow>(PROJECTS_SQL);
+    return rows.map((r) => ({
+      slug: r.slug,
+      name: r.name,
+      bbox: [r.west, r.south, r.east, r.north] as [number, number, number, number],
+      state_code: r.state_code,
+      district_code: r.district_code,
+      scheme_code: r.scheme_code,
+      status: r.status,
+      created_at: new Date(r.created_at).toISOString(),
+      stats: r.stats && Object.keys(r.stats).length ? r.stats : null,
+    }));
+  } catch {
+    // No projects table -- a pre-migration volume. The snapshot registry is
+    // the right answer there, and it names the demo project.
+    return null;
+  }
+}
+
+/** True when PostGIS holds rows for this project. Used by the 404/503 gate. */
+export async function projectHasRows(slug: string): Promise<boolean> {
+  const scope = await scopeFor(slug);
+  if (!scope) return false;
+  const r = await viaDb(slug, async (s) => {
+    const f = filter(s, 'WHERE b.project_id = $P');
+    const rows = await q<{ n: number }>(
+      `SELECT count(*)::int AS n FROM building b ${f.clause}`, f.params);
+    return rows[0].n > 0;
+  });
+  return r.ok && r.value;
+}
+
+// ---------------------------------------------------------------------------
+// Cadastre SQL. Each is a function of the scope so the project filter and its
+// placeholder number are generated together.
+// ---------------------------------------------------------------------------
+
+function buildingsSql(scope: Scope) {
+  const f = filter(scope, 'WHERE b.project_id = $P');
+  return {
+    sql: `
   SELECT json_build_object(
     'type','FeatureCollection',
-    'aoi','Siripuram, Visakhapatnam',
+    'aoi',$${f.params.length + 1}::text,
     'features', COALESCE(json_agg(json_build_object(
       'type','Feature','id',b.id,
       'geometry', ST_AsGeoJSON(b.footprint, 7)::json,
@@ -118,9 +294,15 @@ const BUILDINGS_SQL = `
         'ground_elev',b.ground_elev,'use_type',b.use_type,
         'height_source',b.height_source,'survey_synthetic',b.survey_synthetic,'name',b.name,'address',b.address,
         'osm_id',b.osm_id))),'[]'::json)) AS fc
-  FROM building b`;
+  FROM building b ${f.clause}`,
+    params: [...f.params, scope.name],
+  };
+}
 
-const PARCELS_SQL = `
+function parcelsSql(scope: Scope) {
+  const f = filter(scope, 'WHERE p.project_id = $P');
+  return {
+    sql: `
   SELECT json_build_object(
     'type','FeatureCollection',
     'features', COALESCE(json_agg(json_build_object(
@@ -128,9 +310,15 @@ const PARCELS_SQL = `
       'geometry', ST_AsGeoJSON(p.geom, 7)::json,
       'properties', json_build_object(
         'id',p.id,'ulpin',p.ulpin,'area_m2',p.area_m2,'owner',p.owner))),'[]'::json)) AS fc
-  FROM parcel p`;
+  FROM parcel p ${f.clause}`,
+    params: f.params,
+  };
+}
 
-const UTILITIES_SQL = `
+function utilitiesSql(scope: Scope) {
+  const f = filter(scope, 'WHERE u.project_id = $P');
+  return {
+    sql: `
   SELECT json_build_object(
     'type','FeatureCollection',
     'features', COALESCE(json_agg(json_build_object(
@@ -141,9 +329,18 @@ const UTILITIES_SQL = `
         'radius_m',u.radius_m,'authority',u.authority,'status',u.status,
         'in_conflict', EXISTS (SELECT 1 FROM conflict c
                                 WHERE c.a_type='utility' AND c.a_id=u.id)))),'[]'::json)) AS fc
-  FROM utility u`;
+  FROM utility u ${f.clause}`,
+    params: f.params,
+  };
+}
 
-const CONFLICTS_SQL = `
+// The conflict table has no project_id of its own: a conflict is a relation
+// between a utility and a floor, and both already belong to a project. It is
+// scoped through the building join it already had.
+function conflictsSql(scope: Scope) {
+  const f = filter(scope, 'WHERE b.project_id = $P');
+  return {
+    sql: `
   SELECT COALESCE(json_agg(json_build_object(
     'id',c.id,'kind',c.kind,'detected_at',c.detected_at,
     'utility_id',u.id,'asset_type',u.asset_type,'authority',u.authority,
@@ -154,9 +351,15 @@ const CONFLICTS_SQL = `
   FROM conflict c
   JOIN utility u  ON u.id = c.a_id
   JOIN floor f    ON f.id = c.b_id
-  JOIN building b ON b.id = f.building_id`;
+  JOIN building b ON b.id = f.building_id ${f.clause}`,
+    params: f.params,
+  };
+}
 
-const DETAIL_SQL = `
+function detailSql(scope: Scope, id: number) {
+  const f = filter(scope, 'AND b.project_id = $P', [id]);
+  return {
+    sql: `
   SELECT json_build_object(
     'building', json_build_object(
       'id',b.id,'ulpin',b.ulpin,'parcel_id',b.parcel_id,'height_m',b.height_m,
@@ -184,9 +387,12 @@ const DETAIL_SQL = `
        FROM unit u JOIN floor f2 ON f2.id = u.floor_id
        WHERE f2.building_id = b.id),'[]'::json)
   ) AS doc
-  FROM building b WHERE b.id = $1`;
+  FROM building b WHERE b.id = $1 ${f.clause}`,
+    params: f.params,
+  };
+}
 
-// Two subtleties here:
+// Three subtleties here:
 //
 // 1. PostgreSQL only allows output column names or ordinals in a UNION's ORDER
 //    BY, so the ranking expression sits outside the union rather than on it.
@@ -196,14 +402,30 @@ const DETAIL_SQL = `
 //    a solid so the test becomes real volume containment. The `&&` prefilter
 //    runs first on the 2D GIST index, so ST_MakeSolid only ever evaluates for
 //    the handful of candidates under the cursor.
-const QUERY_SQL = `
+//
+// 3. floor and unit have no project_id -- they inherit one through building --
+//    so they are scoped by an extra join rather than an extra predicate. The
+//    join is on the indexed FK and runs after the `&&` prefilter, so it costs
+//    a lookup on the handful of candidates rather than a scan.
+function querySql(scope: Scope, lon: number, lat: number, z: number) {
+  const f = filter(scope, '$P', [lon, lat, z]);
+  const p = f.clause; // '' in legacy mode, '$4' when scoped
+  const parcelF = p ? `AND p.project_id = ${p}` : '';
+  const buildingF = p ? `AND b.project_id = ${p}` : '';
+  const floorJoin = p
+    ? `JOIN building fb ON fb.id = f.building_id AND fb.project_id = ${p}` : '';
+  const unitJoin = p
+    ? `JOIN floor uf ON uf.id = u.floor_id
+       JOIN building ub ON ub.id = uf.building_id AND ub.project_id = ${p}` : '';
+  return {
+    sql: `
   WITH pt AS (SELECT ST_SetSRID(ST_MakePoint($1,$2,$3),4326) AS g,
                      ST_SetSRID(ST_MakePoint($1,$2),4326)    AS g2)
   SELECT s.level, s.id, s.ulpin, s.label, s.z_min, s.z_max, s.provenance
   FROM (
     SELECT 'parcel' AS level, p.id, p.ulpin, p.owner AS label,
            NULL::float8 AS z_min, NULL::float8 AS z_max, NULL::text AS provenance
-      FROM parcel p, pt WHERE ST_Intersects(p.geom, pt.g2)
+      FROM parcel p, pt WHERE ST_Intersects(p.geom, pt.g2) ${parcelF}
     UNION ALL
     SELECT 'building', b.id, b.ulpin,
            COALESCE(b.name, initcap(b.use_type) || ' building'),
@@ -211,28 +433,56 @@ const QUERY_SQL = `
       FROM building b, pt
      WHERE ST_Intersects(b.footprint, pt.g2)
        AND $3 BETWEEN b.ground_elev - b.basements * 3.2 AND b.ground_elev + b.height_m
+       ${buildingF}
     UNION ALL
     SELECT 'floor', f.id, f.ulpin, 'Level ' || f.level_no, f.z_min, f.z_max, f.detect_source
-      FROM floor f, pt
+      FROM floor f ${floorJoin}, pt
      WHERE f.geom && pt.g2 AND ST_3DIntersects(ST_MakeSolid(f.geom), pt.g)
     UNION ALL
     SELECT 'unit', u.id, u.ulpin, u.unit_no, u.z_min, u.z_max, NULL
-      FROM unit u, pt
+      FROM unit u ${unitJoin}, pt
      WHERE u.geom_3d && pt.g2 AND ST_3DIntersects(ST_MakeSolid(u.geom_3d), pt.g)
   ) s
   ORDER BY CASE s.level WHEN 'parcel' THEN 1 WHEN 'building' THEN 2
-                        WHEN 'floor' THEN 3 ELSE 4 END, s.id`;
+                        WHEN 'floor' THEN 3 ELSE 4 END, s.id`,
+    params: f.params,
+  };
+}
 
 /** Raw footprints, from PostGIS or the snapshot. NOT enriched. */
-async function buildingsFC(): Promise<GeoFC<BuildingProps>> {
-  const r = await viaDb(async () =>
-    (await q<{ fc: GeoFC<BuildingProps> }>(BUILDINGS_SQL))[0].fc);
+async function buildingsFC(slug: string): Promise<GeoFC<BuildingProps>> {
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = buildingsSql(scope);
+    return (await q<{ fc: GeoFC<BuildingProps> }>(sql, params))[0].fc;
+  });
   if (r.ok) return r.value;
-  return snapshot<GeoFC<BuildingProps>>('buildings.json');
+  return snapshot<GeoFC<BuildingProps>>(slug, 'buildings.json');
 }
 
 /**
- * buildingId -> real unit totals, memoised for the process.
+ * A memo whose entries expire when the project's edits change.
+ *
+ * Used three times below with three different value types, which is the only
+ * reason it is a helper rather than three pairs of module-level variables --
+ * those were what made the single-project version of this file hard to reason
+ * about once a second key had to be added to each of them.
+ */
+function editAwareCache<T>() {
+  const store = new Map<string, { rev: number; value: T }>();
+  return {
+    get(slug: string): T | null {
+      const hit = store.get(slug);
+      return hit && hit.rev === editsRev(slug) ? hit.value : null;
+    },
+    set(slug: string, value: T): T {
+      store.set(slug, { rev: editsRev(slug), value });
+      return value;
+    },
+  };
+}
+
+/**
+ * buildingId -> real unit totals, memoised per project.
  *
  * THE CONSISTENCY TRAP THIS SOLVES. getBuildings() has no unit rows in hand,
  * so a naive implementation would estimate built_up_m2 from the footprint
@@ -243,53 +493,59 @@ async function buildingsFC(): Promise<GeoFC<BuildingProps>> {
  *
  * On the snapshot path this walks detail.json once. That file is already
  * parsed and held by `fileCache` for getBuildingDetail, so the cost is paid
- * once per process and never again.
+ * once per project per process and never again.
  */
-let unitIndexCache: Map<number, UnitFacts> | null = null;
-let unitIndexRev = -1;
-async function unitIndex(): Promise<Map<number, UnitFacts>> {
-  // Keyed on the edit revision so a save invalidates the memo with an integer
-  // comparison rather than a deep check.
-  if (unitIndexCache && unitIndexRev === editsRev()) return unitIndexCache;
-  unitIndexRev = editsRev();
+const unitIndexCache = editAwareCache<Map<number, UnitFacts>>();
+
+async function unitIndex(slug: string): Promise<Map<number, UnitFacts>> {
+  const hit = unitIndexCache.get(slug);
+  if (hit) return hit;
   const out = new Map<number, UnitFacts>();
 
-  const viaSql = await viaDb(async () =>
-    q<{ building_id: number; built: string; n: number }>(
+  const viaSql = await viaDb(slug, async (scope) => {
+    const f = filter(scope, 'WHERE b.project_id = $P');
+    return q<{ building_id: number; built: string; n: number }>(
       'SELECT f.building_id, sum(u.built_m2) AS built, count(*)::int AS n '
-      + 'FROM unit u JOIN floor f ON f.id = u.floor_id GROUP BY f.building_id'));
+      + 'FROM unit u JOIN floor f ON f.id = u.floor_id '
+      + `JOIN building b ON b.id = f.building_id ${f.clause} `
+      + 'GROUP BY f.building_id', f.params);
+  });
   if (viaSql.ok) {
     for (const row of viaSql.value) {
       out.set(row.building_id, { builtM2: Number(row.built) || 0, unitCount: row.n });
     }
-    unitIndexCache = out;
-    return out;
+    return unitIndexCache.set(slug, out);
   }
 
-  const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
+  const all = await snapshot<Record<string, BuildingDetail>>(slug, 'detail.json');
   for (const [key, doc] of Object.entries(all)) {
     let builtM2 = 0;
     for (const u of doc.units ?? []) builtM2 += u.built_m2;
     out.set(Number(key), { builtM2, unitCount: doc.units?.length ?? 0 });
   }
-  unitIndexCache = out;
-  return out;
+  return unitIndexCache.set(slug, out);
 }
 
 /**
- * Vertices of every street, for the nearest-street lookup the generated
- * addresses use.
+ * Vertices of every street in a project, for the nearest-street lookup the
+ * generated addresses use.
  *
  * A generated address should at least name a street that really runs past the
  * building. Built from the same derived artefact the map draws, and degrades
- * to an empty list (the generator then says "Siripuram") when it is absent.
+ * to an empty list (the generator then falls back to the project name) when it
+ * is absent -- which is the normal state for a project whose roads artefact
+ * has not been built.
  */
-let streetIndexCache: { lon: number; lat: number; name: string }[] | null = null;
-async function streetIndex(): Promise<{ lon: number; lat: number; name: string }[]> {
-  if (streetIndexCache) return streetIndexCache;
+const streetIndexCache = new Map<string, { lon: number; lat: number; name: string }[]>();
+
+async function streetIndex(
+  slug: string,
+): Promise<{ lon: number; lat: number; name: string }[]> {
+  const hit = streetIndexCache.get(slug);
+  if (hit) return hit;
+  let pts: { lon: number; lat: number; name: string }[] = [];
   try {
-    const fc = await snapshot<GeoFC<RoadProps>>('roads.json');
-    const pts: { lon: number; lat: number; name: string }[] = [];
+    const fc = await snapshot<GeoFC<RoadProps>>(slug, 'roads.json');
     for (const f of fc.features) {
       const parts = f.geometry.type === 'MultiLineString'
         ? (f.geometry.coordinates as number[][][])
@@ -302,11 +558,11 @@ async function streetIndex(): Promise<{ lon: number; lat: number; name: string }
         }
       }
     }
-    streetIndexCache = pts;
   } catch {
-    streetIndexCache = [];
+    pts = [];
   }
-  return streetIndexCache;
+  streetIndexCache.set(slug, pts);
+  return pts;
 }
 
 function nearestStreetFactory(pts: { lon: number; lat: number; name: string }[]) {
@@ -374,24 +630,28 @@ function postEnrich(
  * The enrichment is the LAST transform before the data leaves this module and
  * it is applied on both backends, so PostGIS and the snapshot serve identical
  * records. See lib/mock/building.ts for what it may and may not invent.
+ *
+ * Memoised per project on the edit revision.
+ *
+ * Enrichment walks 384 buildings and, for each, scans ~3,800 street vertices
+ * to find the one its generated address should name -- about 1.5M distance
+ * comparisons. Cheap once, wasteful on every request, and queryPoint calls
+ * this too, so a point query was paying for the whole collection. The result
+ * is a pure function of (raw data, unit index, streets, edits), and only the
+ * last of those can change at runtime.
  */
-let enrichedCache: GeoFC<EnrichedBuilding> | null = null;
-let enrichedRev = -1;
+const enrichedCache = editAwareCache<GeoFC<EnrichedBuilding>>();
 
-export async function getBuildings(): Promise<GeoFC<EnrichedBuilding>> {
-  // Memoised on the edit revision.
-  //
-  // Enrichment walks 384 buildings and, for each, scans ~3,800 street vertices
-  // to find the one its generated address should name -- about 1.5M distance
-  // comparisons. Cheap once, wasteful on every request, and queryPoint calls
-  // this too, so a point query was paying for the whole collection. The result
-  // is a pure function of (raw data, unit index, streets, edits), and only the
-  // last of those can change at runtime.
-  if (enrichedCache && enrichedRev === editsRev()) return enrichedCache;
+export async function getBuildings(slug: string): Promise<GeoFC<EnrichedBuilding>> {
+  const hit = enrichedCache.get(slug);
+  if (hit) return hit;
 
   const [fc, units, streets, edits] = await Promise.all([
-    buildingsFC(), unitIndex(), streetIndex(), allEdits(),
+    buildingsFC(slug), unitIndex(slug), streetIndex(slug), allEdits(slug),
   ]);
+  // The project's own name, so a generated address says where the building
+  // actually is. It rides on the FeatureCollection from both backends.
+  const locality = fc.aoi ?? null;
   const pre: GeoFC<BuildingProps> = edits.size === 0 ? fc : {
     ...fc,
     features: fc.features.map((f) => ({
@@ -399,7 +659,7 @@ export async function getBuildings(): Promise<GeoFC<EnrichedBuilding>> {
       properties: preEnrich(f.properties, edits.get(f.properties.id) ?? null),
     })),
   };
-  const enriched = enrichCollection(pre, units, nearestStreetFactory(streets));
+  const enriched = enrichCollection(pre, units, nearestStreetFactory(streets), locality);
   const out: GeoFC<EnrichedBuilding> = edits.size === 0 ? enriched : {
     ...enriched,
     features: enriched.features.map((f) => ({
@@ -407,23 +667,25 @@ export async function getBuildings(): Promise<GeoFC<EnrichedBuilding>> {
       properties: postEnrich(f.properties, edits.get(f.properties.id) ?? null),
     })),
   };
-  enrichedCache = out;
-  enrichedRev = editsRev();
-  return out;
+  return enrichedCache.set(slug, out);
 }
 
-export async function getParcels(): Promise<GeoFC<ParcelInfo>> {
-  const r = await viaDb(async () =>
-    (await q<{ fc: GeoFC<ParcelInfo> }>(PARCELS_SQL))[0].fc);
+export async function getParcels(slug: string): Promise<GeoFC<ParcelInfo>> {
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = parcelsSql(scope);
+    return (await q<{ fc: GeoFC<ParcelInfo> }>(sql, params))[0].fc;
+  });
   if (r.ok) return r.value;
-  return snapshot<GeoFC<ParcelInfo>>('parcels.json');
+  return snapshot<GeoFC<ParcelInfo>>(slug, 'parcels.json');
 }
 
-export async function getUtilities(): Promise<GeoFC<UtilityProps>> {
-  const r = await viaDb(async () =>
-    (await q<{ fc: GeoFC<UtilityProps> }>(UTILITIES_SQL))[0].fc);
+export async function getUtilities(slug: string): Promise<GeoFC<UtilityProps>> {
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = utilitiesSql(scope);
+    return (await q<{ fc: GeoFC<UtilityProps> }>(sql, params))[0].fc;
+  });
   if (r.ok) return r.value;
-  return snapshot<GeoFC<UtilityProps>>('utilities.json');
+  return snapshot<GeoFC<UtilityProps>>(slug, 'utilities.json');
 }
 
 /**
@@ -434,26 +696,49 @@ export async function getUtilities(): Promise<GeoFC<UtilityProps>> {
  * unlike buildings and parcels there is no PostGIS answer to prefer here, and
  * wrapping this in viaDb() would only imply one exists. The centrelines are
  * merged, named and measured at build time by scripts/build_roads.mjs.
+ *
+ * A project whose artefact has not been built answers with an empty collection
+ * that says so, rather than a 500. Streets are orientation context; their
+ * absence must not read as "this project is broken", and it is the same
+ * honest caveat streets have always carried.
  */
-export async function getRoads(): Promise<GeoFC<RoadProps>> {
-  return snapshot<GeoFC<RoadProps>>('roads.json');
+export async function getRoads(slug: string): Promise<GeoFC<RoadProps>> {
+  try {
+    return await snapshot<GeoFC<RoadProps>>(slug, 'roads.json');
+  } catch {
+    return {
+      type: 'FeatureCollection',
+      features: [],
+      _disclaimer:
+        `No street artefact has been built for "${slug}". Streets are derived `
+        + 'at build time by scripts/build_roads.mjs and written to '
+        + `data/api/${slug}/roads.json; until that runs this project has no `
+        + 'centrelines to draw. Nothing else about the project is affected.',
+    } as GeoFC<RoadProps>;
+  }
 }
 
-export async function getConflicts(): Promise<ConflictRow[]> {
-  const r = await viaDb(async () =>
-    (await q<{ rows: ConflictRow[] }>(CONFLICTS_SQL))[0].rows);
+export async function getConflicts(slug: string): Promise<ConflictRow[]> {
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = conflictsSql(scope);
+    return (await q<{ rows: ConflictRow[] }>(sql, params))[0].rows;
+  });
   if (r.ok) return r.value;
-  return snapshot<ConflictRow[]>('conflicts.json');
+  return snapshot<ConflictRow[]>(slug, 'conflicts.json');
 }
 
-export async function getBuildingDetail(id: number): Promise<BuildingDetail | null> {
+export async function getBuildingDetail(
+  slug: string,
+  id: number,
+): Promise<BuildingDetail | null> {
   const raw = await (async () => {
-    const r = await viaDb(async () => {
-      const rows = await q<{ doc: BuildingDetail }>(DETAIL_SQL, [id]);
+    const r = await viaDb(slug, async (scope) => {
+      const { sql, params } = detailSql(scope, id);
+      const rows = await q<{ doc: BuildingDetail }>(sql, params);
       return rows[0]?.doc ?? null;
     });
     if (r.ok) return r.value;
-    const all = await snapshot<Record<string, BuildingDetail>>('detail.json');
+    const all = await snapshot<Record<string, BuildingDetail>>(slug, 'detail.json');
     return all[String(id)] ?? null;
   })();
   if (!raw) return null;
@@ -461,8 +746,8 @@ export async function getBuildingDetail(id: number): Promise<BuildingDetail | nu
   // Same generator, same seeds and the same unit index getBuildings uses, so
   // the header rows the panel reads from the FeatureCollection and the rows it
   // reads from here can never disagree.
-  const [units, streets, edit] = await Promise.all([
-    unitIndex(), streetIndex(), editsFor(id),
+  const [units, streets, edit, collection] = await Promise.all([
+    unitIndex(slug), streetIndex(slug), editsFor(slug, id), buildingsFC(slug),
   ]);
   const ring = (raw.building.footprint?.coordinates as number[][][] | undefined)?.[0];
   let lon = 0;
@@ -476,6 +761,9 @@ export async function getBuildingDetail(id: number): Promise<BuildingDetail | nu
       footprint: raw.building.footprint,
       units: units.get(id) ?? null,
       nearestStreet: nearestStreetFactory(streets)(lon, lat),
+      // Same locality the collection path uses, so the panel's header rows and
+      // its detail rows cannot disagree about which city the building is in.
+      locality: collection.aoi ?? null,
     }),
     edit,
   );
@@ -486,15 +774,24 @@ export async function getBuildingDetail(id: number): Promise<BuildingDetail | nu
  * Every entity whose 3D volume contains (lon, lat, z), coarse to fine.
  * ST_3DIntersects against a POINT Z is the containment test on the DB path.
  */
-export async function queryPoint(lon: number, lat: number, z: number): Promise<StackHit[]> {
-  const hits = (await usingDb())
-    ? await q<StackHit>(QUERY_SQL, [lon, lat, z])
-    : await queryPointFromSnapshot(lon, lat, z);
+export async function queryPoint(
+  slug: string,
+  lon: number,
+  lat: number,
+  z: number,
+): Promise<StackHit[]> {
+  const scope = await scopeFor(slug);
+  const hits = scope
+    ? await (async () => {
+      const { sql, params } = querySql(scope, lon, lat, z);
+      return q<StackHit>(sql, params);
+    })()
+    : await queryPointFromSnapshot(slug, lon, lat, z);
 
-  // The building label is built inside QUERY_SQL (and its JS twin), neither of
-  // which can reach the TypeScript enrichment. Reconciled here so this third
-  // read path names a building the same way the other two do.
-  const named = await getBuildings();
+  // The building label is built inside the query SQL (and its JS twin),
+  // neither of which can reach the TypeScript enrichment. Reconciled here so
+  // this third read path names a building the same way the other two do.
+  const named = await getBuildings(slug);
   const byId = new Map(named.features.map((f) => [f.properties.id, f.properties]));
   return hits.map((h) => {
     const p = h.level === 'building' ? byId.get(h.id) : undefined;
@@ -532,13 +829,14 @@ interface SnapBuilding {
 }
 
 async function queryPointFromSnapshot(
+  slug: string,
   lon: number,
   lat: number,
   z: number,
 ): Promise<StackHit[]> {
   const out: StackHit[] = [];
-  const parcels = await snapshot<{ features: SnapParcel[] }>('parcels.json');
-  const buildings = (await buildingsFC()) as unknown as { features: SnapBuilding[] };
+  const parcels = await snapshot<{ features: SnapParcel[] }>(slug, 'parcels.json');
+  const buildings = (await buildingsFC(slug)) as unknown as { features: SnapBuilding[] };
 
   for (const f of parcels.features) {
     if (inRing(firstRing(f.geometry), lon, lat)) {
@@ -563,7 +861,7 @@ async function queryPointFromSnapshot(
       provenance: p.height_source as StackHit['provenance'],
     });
 
-    const detail = await getBuildingDetail(p.id);
+    const detail = await getBuildingDetail(slug, p.id);
     if (!detail) continue;
     for (const fl of detail.floors) {
       if (z >= fl.z_min && z <= fl.z_max) {

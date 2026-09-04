@@ -7,6 +7,14 @@ real driver (node-postgres); this is only for one-shot seeding.
 
 Prefers `docker exec` into the compose container, falls back to a psql on PATH
 driven by DATABASE_URL.
+
+EVERY subprocess here decodes as UTF-8 explicitly. `text=True` alone uses the
+locale codec, which on Windows is cp1252, and psql echoes back whatever it was
+given -- including an OSM `name` tag in Telugu or Devanagari. That threw
+UnicodeDecodeError from a reader thread, which does not propagate as a clean
+failure: the call returned an empty stdout and the stage failed several lines
+later with an unrelated message. It never surfaced while the only AOI was
+Siripuram, whose names happen to be Latin-1 clean.
 """
 import csv
 import io
@@ -28,7 +36,7 @@ def _docker_available():
         return False
     probe = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return probe.returncode == 0 and probe.stdout.strip() == "true"
 
@@ -50,6 +58,7 @@ def run(sql, quiet=False):
     proc = subprocess.run(
         _cmd(["-v", "ON_ERROR_STOP=1", "-f", "-"]),
         input=sql, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:
         raise SystemExit(f"psql failed:\n{proc.stderr.strip()}")
@@ -67,6 +76,7 @@ def scalar(sql):
     """Run a query and return the single value as text."""
     proc = subprocess.run(
         _cmd(["-tAc", sql]), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:
         raise SystemExit(f"psql failed:\n{proc.stderr.strip()}")
@@ -77,6 +87,7 @@ def rows(sql):
     """Run a query, return list of tuples of text values (tab separated)."""
     proc = subprocess.run(
         _cmd(["-tAF", "\t", "-c", sql]), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:
         raise SystemExit(f"psql failed:\n{proc.stderr.strip()}")

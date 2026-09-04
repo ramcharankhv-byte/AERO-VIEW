@@ -63,7 +63,10 @@ export default function TopBar({
       ownerByParcel.set(p.properties.id, p.properties.owner);
     }
 
-    const parsed = parse(term.toUpperCase());
+    // 'any' codes: the search box is looking at the project already on
+    // screen, and validating a typed ULPIN's district against a constant
+    // would reject the only project it could possibly match.
+    const parsed = parse(term.toUpperCase(), 'any');
     const out: Hit[] = [];
 
     for (const f of buildings.features) {

@@ -34,6 +34,15 @@ export default function StatusBar({
   const camHeight = useCameraHeight(viewer);
 
   const count = buildings?.features.length ?? 0;
+  /**
+   * The project's name.
+   *
+   * Read off the FeatureCollection rather than added to the view store: the
+   * buildings query already returns it in `aoi` on BOTH backends, so it is
+   * here for free and cannot disagree with the data on screen. The store
+   * gained exactly one field for projects, and this is not it.
+   */
+  const projectName = buildings?.aoi ?? null;
   const activeProps = activeBuildingId !== null
     ? buildings?.features.find((f) => f.properties.id === activeBuildingId)?.properties
     : null;
@@ -46,7 +55,7 @@ export default function StatusBar({
     >
       <span className="font-medium text-[rgb(var(--ink))]">{count} 3D buildings</span>
       <Sep />
-      <span>Siripuram, Visakhapatnam</span>
+      {projectName ? <span>{projectName}</span> : null}
       {dense ? null : (
         <>
           <Sep />

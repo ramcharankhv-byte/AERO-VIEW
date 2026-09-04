@@ -17,17 +17,25 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const OUT = path.join(process.cwd(), 'docs', 'shots', 'roads');
-const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/';
+/**
+ * The viewer, for the demo project.
+ *
+ * `/` is the project gallery now, so the default target is the demo project's
+ * own page. Override with ULPIN_URL to point at another project or another
+ * port; the unscoped /api/... endpoints this script fetches are aliases onto
+ * the same project, so nothing else here had to change.
+ */
+const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 const CHROME = process.env.CHROME_PATH
   ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 mkdirSync(OUT, { recursive: true });
 
 const ROADS = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'roads.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'roads.json'), 'utf-8'),
 );
 const BUILDING_COUNT = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 ).features.length;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

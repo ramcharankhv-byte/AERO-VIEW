@@ -13,29 +13,41 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pg  # noqa: E402
+import project as proj  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.join(HERE, "..", "data")
 
+# The staging tables are per-run scratch, not per-project state: they are
+# truncated and refilled by copy_json below on every invocation. What used to
+# sit here -- a TRUNCATE of the whole cadastre -- has moved into
+# build_geometry.sql, which deletes ONE project's rows instead. Truncating
+# every table here would have wiped a sibling AOI the moment a second one
+# existed.
 STAGE_DDL = """
 CREATE UNLOGGED TABLE IF NOT EXISTS stage_building (doc jsonb);
 CREATE UNLOGGED TABLE IF NOT EXISTS stage_highway  (doc jsonb);
-TRUNCATE parcel, building, floor, unit, conflict RESTART IDENTITY CASCADE;
 """
 
 
 def main():
-    path = os.path.join(DATA, "buildings_attributed.geojson")
+    p = proj.parse_args()
+    print(f"seeding {p.describe()}")
+
+    path = p.attributed_path
     if not os.path.exists(path):
-        raise SystemExit("run scripts/02_heights.py first")
+        raise SystemExit(f"run scripts/02_heights.py first (no {path})")
     with open(path, encoding="utf-8") as fh:
         buildings = json.load(fh)["features"]
 
-    hw_path = os.path.join(DATA, "raw_highways.geojson")
+    hw_path = p.raw_highways_path
     highways = []
     if os.path.exists(hw_path):
         with open(hw_path, encoding="utf-8") as fh:
             highways = json.load(fh)["features"]
+
+    # Publishes the project row and the seed_ctx table that build_geometry.sql
+    # reads its scope from. Must happen before the SQL file runs.
+    proj.make_seed_ctx(p)
 
     print(f"staging {len(buildings)} buildings, {len(highways)} road ways")
     pg.run(STAGE_DDL, quiet=True)
@@ -45,18 +57,28 @@ def main():
     print("building cadastral geometry (this does the metric work in UTM 44N)...")
     pg.run_file(os.path.join(HERE, "build_geometry.sql"))
 
-    # sanity gate: the pipeline must not silently produce an empty cadastre
-    counts = {
-        name: int(pg.scalar(f"SELECT count(*) FROM {name}"))
-        for name in ("parcel", "building", "floor", "unit")
+    # sanity gate: the pipeline must not silently produce an empty cadastre.
+    # Counted for THIS project only -- a sibling AOI's rows would otherwise
+    # mask an empty seed and turn this gate into a no-op.
+    scoped = {
+        "parcel":   "SELECT count(*) FROM parcel WHERE project_id = (SELECT project_id FROM seed_ctx)",
+        "building": "SELECT count(*) FROM building WHERE project_id = (SELECT project_id FROM seed_ctx)",
+        "floor":    "SELECT count(*) FROM floor f JOIN building b ON b.id = f.building_id"
+                    " WHERE b.project_id = (SELECT project_id FROM seed_ctx)",
+        "unit":     "SELECT count(*) FROM unit u JOIN floor f ON f.id = u.floor_id"
+                    " JOIN building b ON b.id = f.building_id"
+                    " WHERE b.project_id = (SELECT project_id FROM seed_ctx)",
     }
+    counts = {name: int(pg.scalar(sql)) for name, sql in scoped.items()}
     print("\nseeded:", ", ".join(f"{k}={v}" for k, v in counts.items()))
     for name, n in counts.items():
         if n == 0:
             raise SystemExit(f"FAILED: {name} table is empty")
 
     sources = pg.rows(
-        "SELECT height_source, count(*) FROM building GROUP BY 1 ORDER BY 2 DESC")
+        "SELECT height_source, count(*) FROM building"
+        " WHERE project_id = (SELECT project_id FROM seed_ctx)"
+        " GROUP BY 1 ORDER BY 2 DESC")
     print("provenance:", ", ".join(f"{s}={n}" for s, n in sources))
 
 

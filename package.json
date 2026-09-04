@@ -10,7 +10,7 @@
     "postinstall": "node scripts/copy-cesium.mjs",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
-    "seed": "python scripts/01_fetch_osm.py && python scripts/02_heights.py && python scripts/03_seed_db.py && python scripts/04_utilities.py && python scripts/05_export_static.py",
+    "seed": "python scripts/seed.py",
     "test": "node --test lib/ulpin.test.ts lib/geo.test.ts",
     "verify:ui": "node scripts/verify_ui.mjs",
     "check:basemap": "node scripts/check_basemap.mjs",
@@ -19,7 +19,7 @@
     "build:roads": "node scripts/build_roads.mjs",
     "check:roads": "node scripts/check_roads.mjs",
     "check:edit": "node scripts/check_edit.mjs",
-    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844"
+    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844"
   },
   "dependencies": {
     "cesium": "1.126.0",

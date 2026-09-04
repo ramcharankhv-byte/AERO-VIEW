@@ -27,7 +27,28 @@ import type {
  * address_source = 'osm_tag'.
  */
 
-const PIN = '530003'; // Siripuram's real PIN code.
+/**
+ * The locality a generated address is written into.
+ *
+ * A PIN code cannot be derived from a bbox, and inventing one would attach a
+ * real postal district to buildings that are not in it -- so only the demo
+ * AOI, whose PIN is known, gets one. Every other project's generated addresses
+ * name the project and stop there, which is honest about being a locality
+ * label rather than a postal address.
+ *
+ * Before this was parameterised, every building in every project was addressed
+ * "…, Siripuram, Visakhapatnam 530003" -- including 2,213 of them in
+ * Hyderabad. The values are synthetic and the UI says so, but a synthetic
+ * value that is confidently wrong about *where the building is* is a different
+ * kind of wrong from one that is merely invented.
+ */
+const DEMO_LOCALITY = 'Siripuram, Visakhapatnam';
+const DEMO_PIN = '530003';
+
+function localitySuffix(locality: string | null | undefined): string {
+  const name = (locality ?? DEMO_LOCALITY).trim() || DEMO_LOCALITY;
+  return name === DEMO_LOCALITY ? `${name} ${DEMO_PIN}` : name;
+}
 
 const STATUS_BY_USE: Record<string, readonly (readonly [BuildingStatus, number])[]> = {
   residential: [
@@ -117,7 +138,8 @@ function doorNumber(rng: () => number): string {
 /**
  * Enrich one building.
  *
- * `nearestStreet` is supplied by the caller so the generated address sits on a
+ * `locality` is the project's own name, so a generated address says where the
+ * building actually is. `nearestStreet` is supplied by the caller so it sits on a
  * street that really runs past the building rather than on an invented one.
  * `units` carries the real unit totals when the detail document is in hand.
  */
@@ -127,10 +149,12 @@ export function enrichBuilding(
     footprint?: Ring | null;
     units?: UnitFacts | null;
     nearestStreet?: string | null;
+    /** The project's name. Defaults to the demo AOI's, with its PIN code. */
+    locality?: string | null;
     takenNames?: Set<string>;
   } = {},
 ): EnrichedBuilding {
-  const { footprint, units, nearestStreet, takenNames } = opts;
+  const { footprint, units, nearestStreet, locality, takenNames } = opts;
   const id = b.id;
   const useType = b.use_type;
   const floors = Math.max(1, b.floors);
@@ -206,8 +230,11 @@ export function enrichBuilding(
   if (!address) {
     address_source = 'generated';
     const addrRng = rngFor('addr', id);
-    const street = nearestStreet ?? 'Siripuram';
-    address = `${doorNumber(addrRng)}, ${street}, Siripuram, Visakhapatnam ${PIN}`;
+    const place = localitySuffix(locality);
+    // Falls back to the locality when there is no street artefact, rather than
+    // to a street name from another city.
+    const street = nearestStreet ?? place.split(',')[0];
+    address = `${doorNumber(addrRng)}, ${street}, ${place}`;
   }
 
   return {
@@ -241,6 +268,7 @@ export function enrichCollection(
   fc: GeoFC<BuildingProps>,
   unitIndex: Map<number, UnitFacts>,
   streetFor: (lon: number, lat: number) => string | null,
+  locality?: string | null,
 ): GeoFC<EnrichedBuilding> {
   const taken = new Set<string>();
   const order = fc.features
@@ -259,6 +287,7 @@ export function enrichCollection(
         footprint: ring,
         units: unitIndex.get(f.properties.id) ?? null,
         nearestStreet: streetFor(centre.lon, centre.lat),
+        locality,
         takenNames: taken,
       }),
     };
