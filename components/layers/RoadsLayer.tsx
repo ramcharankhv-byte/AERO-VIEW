@@ -9,6 +9,7 @@ import {
   ROAD_CASING, ROAD_CASING_EXTRA_PX, ROAD_COLOR, ROAD_HOVER, ROAD_SELECTED,
   ROAD_SELECTED_EXTRA_PX, ROAD_STYLE,
 } from '@/lib/cesium/materials';
+import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { tagEntity } from '@/lib/cesium/tag';
 import type { RoadClass, RoadProps } from '@/lib/types';
 
@@ -93,7 +94,7 @@ export default function RoadsLayer() {
     dsRef.current = ds;
     viewer.dataSources.add(ds);
 
-    for (const feature of roads.features) {
+    const addStreet = (feature: (typeof roads.features)[number]) => {
       const props = feature.properties as RoadProps;
       const cls = props.cls;
       const style = ROAD_STYLE[cls] ?? ROAD_STYLE.residential;
@@ -159,9 +160,24 @@ export default function RoadsLayer() {
         });
         tagEntity(entity, { kind: 'road', id });
       }
-    }
+    };
+
+    // 131 streets, but each is a MultiLineString whose parts each become a
+    // casing and a line -- 406 ground-clamped polylines, every one of which
+    // needs a terrain-classification geometry built. Sliced for the same
+    // reason as the other layers: this used to run inside the same task as
+    // 12,101 other entities.
+    const cancelBuild = buildIncrementally({
+      items: roads.features,
+      step: addStreet,
+      firstSlice: 40,
+      onSlice: () => {
+        if (!viewer.isDestroyed()) viewer.scene.requestRender();
+      },
+    });
 
     return () => {
+      cancelBuild();
       if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
       dsRef.current = null;
     };

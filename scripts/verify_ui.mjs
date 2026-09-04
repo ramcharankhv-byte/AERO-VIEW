@@ -472,7 +472,13 @@ try {
   // Throttle only /api/building/:id so the in-flight window is long enough to
   // observe; everything else is left at full speed.
   const slowDetail = (req) => {
-    if (/\/api\/building\/\d+/.test(req.url())) {
+    // BOTH URL SHAPES. The application asks for the project-scoped
+    // /api/p/<slug>/building/<id>; the unscoped /api/building/<id> alias is
+    // what the other acceptance scripts drive. Matching only the alias meant
+    // this throttle stopped applying to the app, the detail arrived at full
+    // speed, and the skeleton was gone before it could be sampled -- a green
+    // feature reported as red.
+    if (/\/api\/(p\/[a-z0-9-]+\/)?building\/\d+/.test(req.url())) {
       setTimeout(() => req.continue(), 1500);
       return;
     }

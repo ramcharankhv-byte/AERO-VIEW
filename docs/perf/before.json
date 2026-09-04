@@ -1,0 +1,163 @@
+{
+  "label": "before",
+  "at": "2026-09-04T02:48:38.765Z",
+  "url": "http://localhost:3000/",
+  "paint": {
+    "fcpMs": 924,
+    "lcpMs": 3856,
+    "domContentLoadedMs": 593,
+    "canvasPresentMs": 3554
+  },
+  "boot": {
+    "boot-start": 1797,
+    "terrain-ready": 3152,
+    "viewer-created": 3291,
+    "scene-configured": 3316,
+    "data-fetched": 6173,
+    "ground-sampled": 6961,
+    "context-ready": 6961,
+    "buildings-built": 8476
+  },
+  "cpu": {
+    "longTaskCount": 15,
+    "longTaskTotalMs": 8185,
+    "worstLongTaskMs": 3744,
+    "totalBlockingTimeMs": 7435,
+    "longTasksBeforeReady": 11,
+    "top5": [
+      {
+        "atMs": 8614,
+        "durMs": 3744
+      },
+      {
+        "atMs": 6951,
+        "durMs": 1662
+      },
+      {
+        "atMs": 12380,
+        "durMs": 556
+      },
+      {
+        "atMs": 1276,
+        "durMs": 337
+      },
+      {
+        "atMs": 5421,
+        "durMs": 291
+      }
+    ],
+    "scriptSeconds": 27.86,
+    "taskSeconds": 39.04
+  },
+  "network": {
+    "totalRequests": 218,
+    "startupRequests": 218,
+    "totalTransferredMB": 9.07,
+    "byCategory": {
+      "app-api": {
+        "n": 5,
+        "kb": 4408
+      },
+      "imagery-tiles": {
+        "n": 120,
+        "kb": 1926
+      },
+      "app-js": {
+        "n": 7,
+        "kb": 1071
+      },
+      "cesium-asset": {
+        "n": 11,
+        "kb": 1002
+      },
+      "ion": {
+        "n": 63,
+        "kb": 439
+      },
+      "css": {
+        "n": 1,
+        "kb": 6
+      },
+      "document": {
+        "n": 1,
+        "kb": 6
+      },
+      "other": {
+        "n": 1,
+        "kb": 1
+      },
+      "cesium-worker": {
+        "n": 9,
+        "kb": 0
+      }
+    },
+    "duplicatedUrls": [
+      {
+        "n": 5,
+        "url": "http://localhost:3000/cesium/Workers/createGeometry.js"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11983/4902.terrain?extensions=octv"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11984/4902.terrain?extensions=octv"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/layer.json"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/0/1/0.terrain?extensions=octvertexnor"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/0/0/0.terrain?extensions=octvertexnor"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/10/1498/612.terrain?extensions=octver"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/10/1497/612.terrain?extensions=octver"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/1/2/1.terrain?extensions=octvertexnor"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/8/374/153.terrain?extensions=octverte"
+      }
+    ]
+  },
+  "scene": {
+    "entities": 12101,
+    "byDataSource": {
+      "parcels": 4902,
+      "roads": 406,
+      "buildings": 5194,
+      "utilities": 1515,
+      "conflicts": 84
+    },
+    "primitives": 1,
+    "imageryLayers": 1
+  },
+  "motion": {
+    "frames": 126,
+    "medianMs": 118,
+    "p95Ms": 165.2,
+    "worstMs": 482.4,
+    "fpsMedian": 8.5
+  },
+  "memory": {
+    "afterSettleMB": 225.1,
+    "afterSelectCyclesMB": 270.2,
+    "growthMB": 45.1,
+    "requestsAddedByCycles": 4
+  },
+  "wallClockMs": 42239
+}

@@ -179,29 +179,73 @@ export async function fetchInitialData(slug: string): Promise<{
 export function useCameraHeight(viewer: Cesium.Viewer | null): number {
   const [height, setHeight] = useState(0);
   useEffect(() => {
-    if (!viewer || viewer.isDestroyed()) return;
+    if (!viewer || viewer.isDestroyed()) return undefined;
     const scene = viewer.scene;
     let raf = 0;
-    const handler = () => {
+    // Last value handed to React, so the threshold below compares against what
+    // is actually on screen rather than against the previous frame.
+    let published = 0;
+
+    /**
+     * Publish the height, but only when the scale bar could actually change.
+     *
+     * THIS USED TO CALL setHeight ON EVERY RENDERED FRAME. During a drag that
+     * is a React re-render of the whole StatusBar at frame rate -- and the
+     * StatusBar re-reads the building collection, the conflict list and the
+     * detail cache on every one of them -- to redraw a bar whose width is an
+     * INTEGER number of pixels and whose label is one of eight fixed ticks.
+     * Almost every one of those renders produced identical output.
+     *
+     * The bar is at most 180 px wide and its width is linear in 1/height, so a
+     * 0.2% change in height moves it by at most ~0.4 px. Below that threshold
+     * there is nothing to redraw.
+     */
+    const publish = (value: number) => {
+      if (Math.abs(value - published) / Math.max(1, published) < 0.002) return;
+      published = value;
+      setHeight(value);
+    };
+
+    const sample = () => {
       const carto = scene.camera.positionCartographic;
       if (!carto) return;
-      setHeight(carto.height);
+      publish(carto.height);
     };
+
     // Camera moves, including gestures, request a render; reading the height
-    // on the following preRender keeps the bar live without a render loop of
-    // its own.
+    // on the following frame keeps the bar live without a render loop of its
+    // own.
     const onChange = () => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(handler);
+      raf = requestAnimationFrame(sample);
     };
+
+    /**
+     * Exact on arrival.
+     *
+     * The threshold above means the value can be up to 0.2% stale while the
+     * camera is moving, which is invisible mid-gesture but would be a
+     * permanently slightly-wrong scale bar once it stops. moveEnd forces the
+     * true value through, so the bar is approximate only while it is moving
+     * and exact whenever anyone can study it.
+     */
+    const onMoveEnd = () => {
+      const carto = scene.camera.positionCartographic;
+      if (!carto) return;
+      published = carto.height;
+      setHeight(carto.height);
+    };
+
     scene.camera.changed.addEventListener(onChange);
+    scene.camera.moveEnd.addEventListener(onMoveEnd);
     // Seed once so the bar renders before the first camera event.
-    handler();
-    scene.postRender.addEventListener(handler);
+    onMoveEnd();
+    scene.postRender.addEventListener(sample);
     return () => {
       cancelAnimationFrame(raf);
       scene.camera.changed.removeEventListener(onChange);
-      if (!scene.isDestroyed()) scene.postRender.removeEventListener(handler);
+      scene.camera.moveEnd.removeEventListener(onMoveEnd);
+      if (!scene.isDestroyed()) scene.postRender.removeEventListener(sample);
     };
   }, [viewer]);
   return height;

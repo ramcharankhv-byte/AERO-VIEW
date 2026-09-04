@@ -19,6 +19,12 @@ import type { BuildingProps, GeoFC } from '@/lib/types';
 
 export type GroundMap = Map<number, number>;
 
+/**
+ * Tile level used to sample ground heights. See the note in
+ * sampleGroundHeights() for why this is bounded rather than "most detailed".
+ */
+const GROUND_SAMPLE_LEVEL = 13;
+
 export interface SamplePoint {
   id: number;
   lon: number;
@@ -43,8 +49,40 @@ export async function sampleGroundHeights(
     return out;
   }
 
+  const cartos = points.map((p) => Cesium.Cartographic.fromDegrees(p.lon, p.lat));
+
   try {
-    const cartos = points.map((p) => Cesium.Cartographic.fromDegrees(p.lon, p.lat));
+    // A BOUNDED level, not "most detailed".
+    //
+    // sampleTerrainMostDetailed() walks the tile pyramid to the deepest tile
+    // available under every point. Over an AOI with 2,597 footprints that
+    // fanned out into dozens of tile requests and ~0.8 s of boot, several of
+    // them duplicated (docs/perf/before.json lists the same .terrain URL
+    // fetched four times) -- all to place a datum shift.
+    //
+    // What this value is FOR sets how precise it needs to be: it reconciles a
+    // stored nominal ground elevation against the surface actually being
+    // drawn, and the result is a vertical offset for a whole building. Level 13
+    // of Cesium World Terrain is roughly a 10 m posting, which over a footprint
+    // is finer than the footprint itself; going deeper buys sub-metre accuracy
+    // on a quantity whose input (`ground_elev`) is a DEM sample or a flat 12 m
+    // placeholder to begin with.
+    //
+    // At this level the whole AOI is a handful of tiles, so the sampling cost
+    // stops scaling with the number of buildings altogether.
+    const sampled = await Cesium.sampleTerrain(terrainProvider, GROUND_SAMPLE_LEVEL, cartos);
+    sampled.forEach((c, i) => {
+      const h = c.height;
+      out.set(points[i].id, Number.isFinite(h) ? h : 0);
+    });
+    return out;
+  } catch {
+    // The requested level may not exist for this provider or this region.
+    // Falling back to the exhaustive walk is slower but always answers, and a
+    // wrong datum is far more visible than a slow one.
+  }
+
+  try {
     const sampled = await Cesium.sampleTerrainMostDetailed(terrainProvider, cartos);
     sampled.forEach((c, i) => {
       const h = c.height;
