@@ -147,8 +147,20 @@ try {
   // -------------------------------------------------------- ENTER EDIT
   console.log('\n[2] EDIT MODE');
   const entityCountBefore = await page.evaluate(() => {
-    const ds = window.__ulpinViewer.dataSources.getByName('buildings')[0];
-    return ds ? ds.entities.values.length : -1;
+    // The buildings layer is a GRID of data sources -- buildings#0,
+    // buildings#1, ... -- so Cesium can frustum-cull it (see
+    // lib/cesium/spatial-buckets.ts). Summing across the prefix keeps this
+    // check independent of the grid resolution.
+    const v = window.__ulpinViewer;
+    let n = 0;
+    let found = false;
+    for (let i = 0; i < v.dataSources.length; i++) {
+      const ds = v.dataSources.get(i);
+      if (!ds.name.startsWith('buildings')) continue;
+      found = true;
+      n += ds.entities.values.length;
+    }
+    return found ? n : -1;
   });
 
   const editReady = await page
@@ -265,8 +277,16 @@ try {
   // ----------------------------------------------- SCENE NOT REBUILT
   console.log('\n[6] THE SCENE WAS NOT REBUILT');
   const after = await page.evaluate(() => {
-    const ds = window.__ulpinViewer.dataSources.getByName('buildings')[0];
-    return ds ? ds.entities.values.length : -1;
+    const v = window.__ulpinViewer;
+    let n = 0;
+    let found = false;
+    for (let i = 0; i < v.dataSources.length; i++) {
+      const ds = v.dataSources.get(i);
+      if (!ds.name.startsWith('buildings')) continue;
+      found = true;
+      n += ds.entities.values.length;
+    }
+    return found ? n : -1;
   });
   check('building entity count is unchanged', after === entityCountBefore,
     `${entityCountBefore} -> ${after}`);

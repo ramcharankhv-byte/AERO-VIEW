@@ -19,7 +19,11 @@
     "build:roads": "node scripts/build_roads.mjs",
     "check:roads": "node scripts/check_roads.mjs",
     "check:edit": "node scripts/check_edit.mjs",
-    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844"
+    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844",
+    "smoke": "node scripts/smoke.mjs",
+    "perf": "node scripts/perf_probe.mjs --label after --out docs/perf",
+    "perf:frame": "node scripts/perf_frame_js.mjs",
+    "perf:bisect": "node scripts/perf_bisect.mjs"
   },
   "dependencies": {
     "cesium": "1.126.0",

@@ -11,11 +11,11 @@ export const dynamic = 'force-dynamic';
  * only unique within one.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ slug: string; id: string }> },
 ) {
   const { slug, id } = await ctx.params;
-  return buildingDetailRoute(slug, id);
+  return buildingDetailRoute(slug, id, req);
 }
 
 export async function PATCH(

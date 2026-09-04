@@ -235,10 +235,15 @@ try {
   console.log('\n[6] STREETS MUST NOT STEAL A BUILDING CLICK');
   const bpts = await page.evaluate(() => {
     const v = window.__ulpinViewer;
-    const ds = v.dataSources.getByName('buildings')[0];
+    // buildings#0, buildings#1, ... -- see lib/cesium/spatial-buckets.ts.
+    const entities = [];
+    for (let i = 0; i < v.dataSources.length; i++) {
+      const ds = v.dataSources.get(i);
+      if (ds.name.startsWith('buildings')) entities.push(...ds.entities.values);
+    }
     const now = v.clock.currentTime;
     const out = [];
-    for (const e of ds.entities.values) {
+    for (const e of entities) {
       if (e.tag?.kind !== 'building') continue;
       const h = e.polygon?.hierarchy?.getValue(now);
       const pos = h?.positions ?? [];
