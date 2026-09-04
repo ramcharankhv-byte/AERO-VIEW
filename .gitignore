@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 public/cesium/
+.env
 .env.local
 __pycache__/
 *.pyc
@@ -27,3 +28,9 @@ data/projects/*/osm.json
 .vercel
 .env*
 !.env.example
+
+# Local perf artifacts: sha256 baselines, sample bodies, RWD gallery screenshots.
+# None of these are inputs to the build -- they are by-products of probes and
+# acceptance runs, and a fresh checkout regenerates them.
+.dist/
+docs/shots/rwd-gallery/

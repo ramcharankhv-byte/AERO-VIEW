@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import {
-  backend, getBuildingDetail, getBuildings, getConflicts, getParcels,
-  getRoads, getUtilities, queryPoint,
+  backend, getBuildingDetail, getBuildings, getParcels,
+  getRoads, getUtilities,
 } from '@/lib/db';
 import { applyEdit } from '@/lib/data/edits';
 import { coerceEdit, validateEdit, warningsFor } from '@/lib/data/building-schema';
 import { resolveProject, unavailableMessage } from '@/lib/projects';
 import { editsRev } from '@/lib/data/edits';
 import { jsonPayload } from '@/lib/http/payload';
-import { cachedDetail, warmProject } from '@/lib/server-cache';
+import { warmProject } from '@/lib/server-cache';
+import {
+  cachedDetail, cachedConflicts, cachedQueryPoint, type CacheStatus,
+} from '@/lib/cache/store';
 
 /**
  * The seven cadastre endpoints, written once.
@@ -40,6 +43,22 @@ async function baseHeaders(slug: string): Promise<Record<string, string>> {
     'x-ulpin-backend': await backend(slug),
     'x-ulpin-project': slug,
   };
+}
+
+/**
+ * Add the `x-ulpin-cache: hit|miss|bypass` header to a header bag.
+ *
+ * The brief is explicit: "Add one additive header, leaving x-ulpin-backend
+ * and x-ulpin-roads untouched in name, value and conditions." So this is
+ * the ONLY place the new header is composed, and the existing two are
+ * never re-stamped by it -- they are owned by baseHeaders() and the
+ * roads handler, respectively.
+ */
+function withCacheHeader(
+  headers: Record<string, string>,
+  status: CacheStatus,
+): Record<string, string> {
+  return { ...headers, 'x-ulpin-cache': status };
 }
 
 /** The 404/503 gate. Returns null when the project may be served. */
@@ -129,8 +148,22 @@ export function utilitiesRoute(slug: string, req: Request) {
 }
 
 /** GET .../conflicts -> utility/basement intersections found by ST_3DIntersects. */
-export function conflictsRoute(slug: string, req: Request) {
-  return serve(slug, 'conflicts', getConflicts, req);
+export async function conflictsRoute(slug: string, req: Request) {
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  try {
+    const { value, cache } = await cachedConflicts(slug);
+    return await jsonPayload(req, value, {
+      resource: `${slug}:conflicts`,
+      rev: String(editsRev(slug)),
+      headers: withCacheHeader(await baseHeaders(slug), cache),
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'failed to load conflicts', detail: String(err) },
+      { status: 500 },
+    );
+  }
 }
 
 /**
@@ -164,14 +197,24 @@ export async function buildingDetailRoute(
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
-    const detail = await cachedDetail(slug, id);
+    const { value: detail, cache } = await cachedDetail(slug, id);
     if (!detail) {
-      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+      // A null result here is either "not found" (genuine 404) or "the
+      // project was unknown" (handled by the gate above). A genuine 404
+      // is NOT cached -- the pristine store skips the write when the
+      // underlying getter returns null, and the route does not serve
+      // a header that would tell an operator a building exists when it
+      // does not. bypass is the honest label: the value is correct, it
+      // just never went near Redis.
+      return NextResponse.json(
+        { error: 'building not found' },
+        { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
+      );
     }
     return await jsonPayload(req, detail, {
       resource: `${slug}:building:${id}`,
       rev: String(editsRev(slug)),
-      headers: await baseHeaders(slug),
+      headers: withCacheHeader(await baseHeaders(slug), cache),
     });
   } catch (err) {
     return NextResponse.json(
@@ -207,11 +250,17 @@ export async function buildingSummaryRoute(
   if (gate) return gate;
   // The first building-scoped call a session makes, and it does not await the
   // warm-up: the landmarks are pulled in while this response is written.
+  // NOTE: warmProject is the in-process LRU warm-up; the Redis cache has
+  // its own first-request behaviour. The two coexist for now; the in-process
+  // warm path is documented as redundant in the decisions log.
   warmProject(slug);
   try {
-    const detail = await cachedDetail(slug, id);
+    const { value: detail, cache } = await cachedDetail(slug, id);
     if (!detail) {
-      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'building not found' },
+        { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
+      );
     }
     return await jsonPayload(
       req,
@@ -224,7 +273,7 @@ export async function buildingSummaryRoute(
       {
         resource: `${slug}:building-summary:${id}`,
         rev: String(editsRev(slug)),
-        headers: await baseHeaders(slug),
+        headers: withCacheHeader(await baseHeaders(slug), cache),
       },
     );
   } catch (err) {
@@ -247,14 +296,17 @@ export async function buildingFloorsRoute(
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
-    const detail = await cachedDetail(slug, id);
+    const { value: detail, cache } = await cachedDetail(slug, id);
     if (!detail) {
-      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'building not found' },
+        { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
+      );
     }
     return await jsonPayload(req, { building_id: id, floors: detail.floors }, {
       resource: `${slug}:building-floors:${id}`,
       rev: String(editsRev(slug)),
-      headers: await baseHeaders(slug),
+      headers: withCacheHeader(await baseHeaders(slug), cache),
     });
   } catch (err) {
     return NextResponse.json(
@@ -300,9 +352,12 @@ export async function buildingUnitsRoute(
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
-    const detail = await cachedDetail(slug, id);
+    const { value: detail, cache } = await cachedDetail(slug, id);
     if (!detail) {
-      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'building not found' },
+        { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
+      );
     }
     const matching = level === null
       ? detail.units
@@ -322,7 +377,7 @@ export async function buildingUnitsRoute(
         // same building are different resources and must not share an ETag.
         resource: `${slug}:building-units:${id}:${level ?? 'all'}:${offset}:${limit}`,
         rev: String(editsRev(slug)),
-        headers: await baseHeaders(slug),
+        headers: withCacheHeader(await baseHeaders(slug), cache),
       },
     );
   } catch (err) {
@@ -398,7 +453,16 @@ export async function buildingPatchRoute(
     }
 
     const record = await applyEdit(slug, id, coerced.value);
-    const updated = await getBuildingDetail(slug, id);
+    // The read-back goes through the same cache as a GET would, with the
+    // new edit visible on the very next request. The cache key is the
+    // PRISTINE document, not the edited one; the overlay applies the
+    // edit on top. This is the "no invalidation to get wrong" property:
+    // a PATCH never touches Redis, and the response body is exactly
+    // what the next GET would have returned.
+    const { value: updated, cache } = await cachedDetail(slug, id);
+    if (!updated) {
+      return NextResponse.json({ error: 'building vanished' }, { status: 500 });
+    }
 
     return NextResponse.json(
       {
@@ -408,10 +472,10 @@ export async function buildingPatchRoute(
         warnings: warningsFor(coerced.value, ctxValues),
       },
       {
-        headers: {
-          ...(await baseHeaders(slug)),
-          'x-ulpin-edit-rev': String(record.rev),
-        },
+        headers: withCacheHeader(
+          { ...(await baseHeaders(slug)), 'x-ulpin-edit-rev': String(record.rev) },
+          cache,
+        ),
       },
     );
   } catch (err) {
@@ -457,18 +521,27 @@ export async function queryRoute(slug: string, req: Request): Promise<NextRespon
   // the stack under somebody else's cursor. A point query is also a few
   // hundred bytes about one click: there is nothing here worth compressing or
   // revalidating, so it answers directly.
+  //
+  // The Redis cache, by contrast, keys each point query by (slug, lon, lat, z)
+  // at 7-decimal precision, so distinct clicks land on distinct keys. The
+  // CACHE_HIT cost is one map lookup; the CACHE_MISS cost is one ST_3DIntersects
+  // run. The TTL is short (60 s) because queries are session-local: a user
+  // clicking the same point twice in 60 s gets the same response in 1 ms
+  // instead of 30 ms.
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
-    const stack = await queryPoint(slug, lon, lat, z);
+    const { value: stack, cache } = await cachedQueryPoint(slug, lon, lat, z);
     return NextResponse.json(
       { point: { lon, lat, z }, count: stack.length, stack },
       {
-        headers: {
-          ...(await baseHeaders(slug)),
-          // A click is not a cacheable resource.
-          'cache-control': 'no-store',
-        },
+        headers: withCacheHeader(
+          { ...(await baseHeaders(slug)),
+            // A click is not an HTTP-cacheable resource.
+            'cache-control': 'no-store',
+          },
+          cache,
+        ),
       },
     );
   } catch (err) {

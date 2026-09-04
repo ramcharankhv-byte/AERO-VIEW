@@ -1,0 +1,162 @@
+{
+  "label": "after-step3-hyd",
+  "at": "2026-09-04T09:55:19.889Z",
+  "url": "http://localhost:3000/p/hyderabad-banjara",
+  "paint": {
+    "fcpMs": 3456,
+    "lcpMs": 5208,
+    "domContentLoadedMs": 2768,
+    "canvasPresentMs": 4931
+  },
+  "boot": {
+    "boot-start": 4333,
+    "viewer-created": 4532,
+    "scene-configured": 4548,
+    "data-fetched": 5328,
+    "terrain-ready": 6421,
+    "ground-sampled": 7792,
+    "context-ready": 7792
+  },
+  "cpu": {
+    "longTaskCount": 26,
+    "longTaskTotalMs": 5466,
+    "worstLongTaskMs": 722,
+    "totalBlockingTimeMs": 4166,
+    "longTasksBeforeReady": 9,
+    "top5": [
+      {
+        "atMs": 8380,
+        "durMs": 722
+      },
+      {
+        "atMs": 6389,
+        "durMs": 680
+      },
+      {
+        "atMs": 7770,
+        "durMs": 605
+      },
+      {
+        "atMs": 13263,
+        "durMs": 413
+      },
+      {
+        "atMs": 3812,
+        "durMs": 379
+      }
+    ],
+    "scriptSeconds": 37.07,
+    "taskSeconds": 43.12
+  },
+  "network": {
+    "totalRequests": 202,
+    "startupRequests": 202,
+    "totalTransferredMB": 5.61,
+    "byCategory": {
+      "imagery-tiles": {
+        "n": 119,
+        "kb": 2472
+      },
+      "app-js": {
+        "n": 8,
+        "kb": 1077
+      },
+      "cesium-asset": {
+        "n": 11,
+        "kb": 1002
+      },
+      "app-api": {
+        "n": 5,
+        "kb": 574
+      },
+      "ion": {
+        "n": 49,
+        "kb": 335
+      },
+      "document": {
+        "n": 1,
+        "kb": 7
+      },
+      "css": {
+        "n": 1,
+        "kb": 6
+      },
+      "other": {
+        "n": 1,
+        "kb": 1
+      },
+      "cesium-worker": {
+        "n": 7,
+        "kb": 0
+      }
+    },
+    "duplicatedUrls": [
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11761/4888.terrain?extensions=octv"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11762/4888.terrain?extensions=octv"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11761/4889.terrain?extensions=octv"
+      },
+      {
+        "n": 3,
+        "url": "http://localhost:3000/cesium/Workers/createGeometry.js"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/layer.json"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11762/4889.terrain?extensions=octv"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/0/1/0.terrain?extensions=octvertexnor"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/0/0/0.terrain?extensions=octvertexnor"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/10/1470/611.terrain?extensions=octver"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/10/1470/610.terrain?extensions=octver"
+      }
+    ]
+  },
+  "scene": {
+    "entities": 2876,
+    "byDataSource": {
+      "parcels": 741,
+      "roads": 696,
+      "buildings": 950,
+      "utilities": 416,
+      "conflicts": 73
+    },
+    "primitives": 1,
+    "imageryLayers": 1
+  },
+  "motion": {
+    "frames": 260,
+    "medianMs": 49.1,
+    "p95Ms": 77.9,
+    "worstMs": 485.5,
+    "fpsMedian": 20.4
+  },
+  "memory": {
+    "afterSettleMB": 98.4,
+    "afterSelectCyclesMB": 140.8,
+    "growthMB": 42.4,
+    "requestsAddedByCycles": 53
+  },
+  "wallClockMs": 47354
+}

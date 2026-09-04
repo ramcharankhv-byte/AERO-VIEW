@@ -188,7 +188,13 @@ export async function jsonPayload(
 
   let entry = take(key, opts.rev);
   if (!entry) {
-    const raw = Buffer.from(JSON.stringify(data), 'utf-8');
+    // Round coordinates at the serialisation boundary. PostGIS already emits
+    // 7 decimals (ST_AsGeoJSON(geom, 7)) and snapshots are committed at 7
+    // decimals, so this is a no-op against current data; it exists so a future
+    // source that drifts to higher precision cannot widen the wire silently
+    // and break the byte-identical guarantee on /api/buildings. ULPINs are
+    // strings and pass through untouched.
+    const raw = Buffer.from(JSON.stringify(roundCoordsDeep(data)), 'utf-8');
     const body = await compress(raw, encoding);
     entry = { body, encoding, etag: etagFor(raw, encoding), rev: opts.rev };
     put(key, entry);
@@ -228,4 +234,34 @@ export function invalidatePayloads(): void {
 /** Cache occupancy, for diagnostics. */
 export function payloadCacheStats(): { entries: number; bytes: number } {
   return { entries: cache.size, bytes: cachedBytes };
+}
+
+/**
+ * Walk a serialisable value and round every number that lives inside a
+ * GeoJSON `coordinates` array to 7 decimals.
+ *
+ * Only descends through `coordinates` keys -- height_m, area_m2, ground_elev,
+ * z_min, z_max, lat/lon on properties and every other numeric field is left
+ * alone. ULPINs are strings, not numbers, so they pass through verbatim.
+ *
+ * No-op against the current data: both backends already emit 7 decimals
+ * (PostGIS via ST_AsGeoJSON(geom, 7); snapshots committed at the same).
+ */
+function roundCoordsDeep(v: unknown): unknown {
+  return roundCoordsInner(v, false);
+}
+
+function roundCoordsInner(v: unknown, inCoords: boolean): unknown {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) {
+    if (inCoords && v.length > 0 && v.every((x) => typeof x === 'number')) {
+      return v.map((x) => Number((x as number).toFixed(7)));
+    }
+    return v.map((x) => roundCoordsInner(x, inCoords));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    out[k] = roundCoordsInner(val, inCoords || k === 'coordinates');
+  }
+  return out;
 }
