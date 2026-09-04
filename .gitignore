@@ -21,3 +21,9 @@ data/projects/*/edits.json
 # the raw_*.geojson files beside it, which ARE committed, and it is the largest
 # file in a project's work directory.
 data/projects/*/osm.json
+# Added when the project was linked to Vercel. `.env*` would otherwise shadow
+# .env.example, which IS committed as the documented list of settings, so the
+# example is negated back in.
+.vercel
+.env*
+!.env.example
