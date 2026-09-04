@@ -60,33 +60,34 @@ const sceneState = (page) =>
       const p = prims.get(i);
       if (p && p.constructor && p.constructor.name === 'Cesium3DTileset') tilesets++;
     }
+    const firstBuildingEntity = (viewer) => {
+      for (let i = 0; i < viewer.dataSources.length; i++) {
+        const ds = viewer.dataSources.get(i);
+        if (!ds.name.startsWith('buildings')) continue;
+        const e = ds.entities.values[0];
+        if (e) return e;
+      }
+      return null;
+    };
     return {
       tilesets,
       globeShow: v.scene.globe.show,
       terrain: v.terrainProvider.constructor.name,
-      // The building extrusions live on the 'buildings' data source; read the
-      // alpha the material callback is actually producing this frame.
+      // The building extrusions live on the buildings#N grid of data sources
+      // (lib/cesium/spatial-buckets.ts); read the alpha the material callback
+      // is actually producing this frame off the first entity in the first
+      // non-empty bucket.
       buildingAlpha: (() => {
-        for (let i = 0; i < v.dataSources.length; i++) {
-          const ds = v.dataSources.get(i);
-          if (ds.name !== 'buildings') continue;
-          const e = ds.entities.values[0];
-          if (!e) return null;
-          const c = e.polygon.material.color.getValue(v.clock.currentTime);
-          return Math.round(c.alpha * 1000) / 1000;
-        }
-        return null;
+        const e = firstBuildingEntity(v);
+        if (!e) return null;
+        const c = e.polygon.material.color.getValue(v.clock.currentTime);
+        return Math.round(c.alpha * 1000) / 1000;
       })(),
       // Proves the facade texture is on, and repeats once per storey.
       repeat: (() => {
-        for (let i = 0; i < v.dataSources.length; i++) {
-          const ds = v.dataSources.get(i);
-          if (ds.name !== 'buildings') continue;
-          const e = ds.entities.values[0];
-          const r = e?.polygon?.material?.repeat?.getValue(v.clock.currentTime);
-          return r ? { x: r.x, y: r.y } : null;
-        }
-        return null;
+        const e = firstBuildingEntity(v);
+        const r = e?.polygon?.material?.repeat?.getValue(v.clock.currentTime);
+        return r ? { x: r.x, y: r.y } : null;
       })(),
     };
   });

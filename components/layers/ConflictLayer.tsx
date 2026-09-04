@@ -40,12 +40,25 @@ export default function ConflictLayer() {
     viewer.dataSources.add(ds);
 
     // One clock-driven pulse shared by every flagged segment.
+    //
+    // Two details matter at frame rate. The lerp writes into a SCRATCH colour
+    // rather than allocating -- this runs once per flagged entity per frame,
+    // and `new Cesium.Color()` inside it made the pulse a steady source of
+    // garbage. And the phase is computed once per frame, not once per entity:
+    // every segment must pulse in step anyway, so re-deriving it per entity was
+    // both wasted work and a way for two segments either side of a millisecond
+    // boundary to disagree.
+    const scratch = new Cesium.Color();
+    let phaseFrame = -1;
+    let phase = 0;
     const pulse = () => {
-      const t = (Date.now() % 1400) / 1400;
-      const k = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
-      return Cesium.Color.lerp(
-        CONFLICT_COLOR_DIM, CONFLICT_COLOR, k, new Cesium.Color(),
-      );
+      const now = Date.now();
+      if (now !== phaseFrame) {
+        phaseFrame = now;
+        const t = (now % 1400) / 1400;
+        phase = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+      }
+      return Cesium.Color.lerp(CONFLICT_COLOR_DIM, CONFLICT_COLOR, phase, scratch);
     };
 
     for (const feature of utilities.features) {

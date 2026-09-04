@@ -28,7 +28,20 @@ export default function StatusBar({
   const imageryActive = useViewStore((s) => s.imageryActive);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
-  const detail = useDataStore((s) => s.detail);
+  /**
+   * The one field this bar needs out of the detail cache, selected as a
+   * PRIMITIVE.
+   *
+   * Subscribing to `s.detail` re-rendered the StatusBar every time any
+   * building document landed anywhere in the app, because putDetail replaces
+   * the record. Selecting the string means zustand compares `undefined` to
+   * `undefined` and does not re-render at all.
+   */
+  const parcelUlpin = useDataStore((s) => (
+    activeBuildingId === null
+      ? null
+      : s.detail[activeBuildingId]?.parcel?.ulpin ?? null
+  ));
 
   const { viewer } = useViewer();
   const camHeight = useCameraHeight(viewer);
@@ -46,7 +59,7 @@ export default function StatusBar({
   const activeProps = activeBuildingId !== null
     ? buildings?.features.find((f) => f.properties.id === activeBuildingId)?.properties
     : null;
-  const parcelUlpin = activeBuildingId !== null ? detail[activeBuildingId]?.parcel?.ulpin : null;
+
 
   return (
     <div

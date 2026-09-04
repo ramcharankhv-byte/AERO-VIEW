@@ -21,6 +21,7 @@ import {
   applyPerformanceProfile, attachAdaptiveResolution, detectWeakGpu,
 } from '@/lib/cesium/perf';
 import { useUrlState } from '@/lib/url-state';
+import { mark } from '@/lib/boot-marks';
 
 /**
  * Viewer lifecycle and one-time data load.
@@ -92,15 +93,46 @@ export default function CesiumRoot(
     let disposed = false;
 
     (async () => {
+      mark('boot-start');
       const hasIon = hasIonToken();
       if (hasIon) Cesium.Ion.defaultAccessToken = process.env.NEXT_PUBLIC_CESIUM_TOKEN!.trim();
 
-      const terrainProvider = await createTerrain(hasIon);
-      baseTerrainRef.current = terrainProvider;
+      // THREE THINGS ARE STARTED AT ONCE, AND NONE OF THEM WAITS FOR ANOTHER.
+      //
+      // This used to be a strict chain: ask ion for World Terrain, wait ~1.4 s,
+      // build the Viewer, then fetch the cadastre, then sample terrain, then
+      // publish a context -- and the imagery effect, which hangs off that
+      // context, could not even begin requesting basemap tiles until the whole
+      // chain finished at ~7 s. Every one of those waits was avoidable:
+      //
+      //   - the cadastre fetch touches no Cesium at all, so it can run from the
+      //     first instant;
+      //   - the Viewer does not need World Terrain to exist -- it needs *a*
+      //     terrain provider, and the ellipsoid is a correct one. Swapping in
+      //     the real surface when it arrives is a one-line assignment that
+      //     Cesium is designed for, and it is what the photoreal toggle already
+      //     does at runtime;
+      //   - the basemap is the single biggest thing on screen, so the sooner
+      //     its effect can run, the sooner the map looks like a map.
+      //
+      // So the fetch and the terrain request are kicked off unawaited, the
+      // Viewer is constructed immediately against the ellipsoid, and the
+      // context is published in two stages (see below).
+      //
+      // The overlay is raised here rather than beside the fetch below: the
+      // cadastre is already in flight from this point, so that is when the app
+      // is honestly "loading" it.
+      useDataStore.getState().setLoading(true);
+      const dataPromise = fetchInitialData(project.slug);
+      // A rejection here is handled at the await below; attaching a no-op
+      // catch now keeps it from being reported as unhandled in the gap.
+      dataPromise.catch(() => {});
+      const terrainPromise = createTerrain(hasIon);
+
       if (disposed || !containerRef.current) return;
 
       const viewer = new Cesium.Viewer(containerRef.current, {
-        terrainProvider,
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
         // Suppress the default ion base layer. Without this the Viewer fires a
         // request for ion asset 2 using Cesium's built-in demo token before we
         // ever get to swap imagery, which 401s when no token is configured.
@@ -128,6 +160,7 @@ export default function CesiumRoot(
         maximumRenderTimeChange: 2.0,
       });
       viewerRef.current = viewer;
+      mark('viewer-created');
 
       // GPU profile: probe once, configure once. The adaptive-resolution
       // watchdog only re-renders when it changes the scale, so in
@@ -137,12 +170,16 @@ export default function CesiumRoot(
       applyPerformanceProfile(viewer, profile);
       stopAdaptiveRef.current = attachAdaptiveResolution(viewer);
 
-      // Test seam for scripts/check_photoreal.mjs. Scene state such as
+      // Test seam for scripts/check_photoreal.mjs and scripts/perf_probe.mjs. Scene state such as
       // globe.show, the live terrain provider and the tileset primitive has no
       // DOM representation, so an acceptance check has no other way to assert
       // it. Development only -- this is not part of the app's API and is
-      // compiled out of a production build.
-      if (process.env.NODE_ENV !== 'production') {
+      // compiled out of a production build unless NEXT_PUBLIC_ULPIN_PROBE=1 is
+      // set at build time, which is how a perf run measures the real bundle.
+      if (
+        process.env.NODE_ENV !== 'production'
+        || process.env.NEXT_PUBLIC_ULPIN_PROBE === '1'
+      ) {
         (window as unknown as { __ulpinViewer?: Cesium.Viewer }).__ulpinViewer = viewer;
       }
 
@@ -153,7 +190,6 @@ export default function CesiumRoot(
       // Imagery is not added here. The provider effect below owns layer 0 and
       // runs on mount like any other, so there is one code path for the first
       // basemap and every subsequent swap.
-      setIonFallback(!hasIon || terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
 
       configureScene(viewer);
       // The on-demand render loop must know what counts as "changed". 0.5
@@ -161,12 +197,35 @@ export default function CesiumRoot(
       // and the tail of a camera flight, so every real move requests a frame.
       viewer.scene.camera.percentageChanged = 0.01;
       frameInitialCamera(viewer, project.bbox);
+      mark('scene-configured');
+
+      // STAGE ONE of the context: the viewer exists, so every effect that
+      // configures the SCENE may run now -- imagery above all, but also sun,
+      // navigation mode and globe visibility. `ready` stays false, so the data
+      // layers below still do not mount; they have nothing to draw yet.
+      //
+      // This is the single change that moves the first basemap tile request
+      // from after the cadastre fetch to alongside it.
+      setCtx({ viewer, ground: new Map(), ready: false, project });
+
+      // ---- terrain arrives on its own schedule --------------------------
+      // The scene is already live and interactive by the time this resolves.
+      // Assigning the provider re-tiles the globe, which is exactly what the
+      // photoreal toggle does; nothing else has to know it happened.
+      const terrainProvider = await terrainPromise;
+      mark('terrain-ready');
+      if (disposed || viewer.isDestroyed()) return;
+      baseTerrainRef.current = terrainProvider;
+      if (!(terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
+        viewer.terrainProvider = terrainProvider;
+      }
+      setIonFallback(!hasIon || terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
 
       // ---- one-time data load -------------------------------------------
       const store = useDataStore.getState();
-      store.setLoading(true);
       try {
-        const data = await fetchInitialData(project.slug);
+        const data = await dataPromise;
+        mark('data-fetched');
         if (disposed) return;
         store.setBuildings(data.buildings);
         store.setParcels(data.parcels);
@@ -175,8 +234,11 @@ export default function CesiumRoot(
         store.setConflicts(data.conflicts);
 
         const ground = await sampleGroundUnder(terrainProvider, data.buildings);
+        mark('ground-sampled');
         if (disposed) return;
+        // STAGE TWO: the heights are reconciled, so the layers may build.
         setCtx({ viewer, ground, ready: true, project });
+        mark('context-ready');
       } catch (err) {
         store.setError(String(err));
         if (!disposed) setCtx({ viewer, ground: new Map(), ready: true, project });
