@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 public/cesium/
+.env
 .env.local
 __pycache__/
 *.pyc
@@ -21,3 +22,9 @@ data/projects/*/edits.json
 # the raw_*.geojson files beside it, which ARE committed, and it is the largest
 # file in a project's work directory.
 data/projects/*/osm.json
+
+# Local perf artifacts: sha256 baselines, sample bodies, RWD gallery screenshots.
+# None of these are inputs to the build -- they are by-products of probes and
+# acceptance runs, and a fresh checkout regenerates them.
+.dist/
+docs/shots/rwd-gallery/
