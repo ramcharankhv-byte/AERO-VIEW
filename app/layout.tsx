@@ -38,6 +38,33 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="dark">
       <head>
+        {/*
+          Open the connections the scene is about to need, before it needs them.
+
+          Measured: with the cadastre now fetched in under a second, the
+          critical path to the first building is the Cesium ion round trip --
+          an asset lookup on api.cesium.com followed by terrain tiles from
+          assets.ion.cesium.com -- and it varied between 1.8 s and 3.9 s across
+          runs (docs/perf/findings.md). A meaningful part of that is DNS, TCP
+          and TLS to origins the browser has never spoken to, and all of it is
+          paid before the first byte.
+
+          preconnect does exactly that handshake early, in parallel with the
+          bundle still downloading, so the terrain request starts on a warm
+          connection. It cannot make anything slower: the worst case is an idle
+          socket the browser closes.
+
+          Three origins, deliberately -- browsers de-prioritise long preconnect
+          lists, and these are the only cross-origin hosts on the boot path:
+          ion's API, ion's tile CDN, and the default basemap. crossOrigin is
+          required on all three because Cesium fetches them with CORS; without
+          it the browser opens a second, anonymous connection and the hint is
+          wasted.
+        */}
+        <link rel="preconnect" href="https://api.cesium.com" crossOrigin="" />
+        <link rel="preconnect" href="https://assets.ion.cesium.com" crossOrigin="" />
+        <link rel="preconnect" href="https://services.arcgisonline.com" crossOrigin="" />
+
         {/* Served from public/cesium (copied on postinstall) rather than
             imported, so the bundler never has to process Cesium's CSS. */}
         <link rel="stylesheet" href="/cesium/Widgets/widgets.css" />

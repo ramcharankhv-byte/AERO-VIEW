@@ -72,10 +72,33 @@ function pickTag(
    * highlight the user did not ask for.
    */
   widen: boolean,
+  /**
+   * Whether a UNIT could possibly be under this cursor.
+   *
+   * The drill below exists for two things: seeing past untagged geometry
+   * (Google's photoreal mesh), and preferring a unit to whatever is in front
+   * of it. In city mode the second reason cannot apply -- UnitsLayer has
+   * drawn nothing -- so when the first hit is already a tagged solid, the
+   * drill is pure cost.
+   *
+   * And it is not a small cost. scene.drillPick(6) renders the scene into the
+   * pick framebuffer up to six times; measured at 88 ms here against 15 ms for
+   * a single scene.pick. Paid every 30 ms while the pointer is over the city,
+   * it was the single largest source of main-thread blocking during
+   * interaction -- 4.3 s of blocking across one camera drag
+   * (docs/perf/findings.md).
+   */
+  unitsPossible = true,
 ): EntityTag | null {
   const picked = scene.pick(position);
   const first = tagOf(picked);
   if (first?.kind === 'unit') return first;
+
+  // The fast path: a tagged solid, and nothing better could be hiding behind
+  // it. One pick render instead of seven.
+  if (!unitsPossible && first && first.kind !== 'road' && first.kind !== 'parcel') {
+    return first;
+  }
 
   // Ground-classified kinds are draped on the terrain, so they are behind every
   // solid by construction -- but they are also the only things under a click on
@@ -145,16 +168,81 @@ export default function Picker() {
   const roadsVisibleRef = useRef(roadsVisible);
   useEffect(() => { roadsVisibleRef.current = roadsVisible; }, [roadsVisible]);
 
+  /**
+   * City mode means UnitsLayer has drawn nothing, so no drill is needed to
+   * find a unit. Read through a ref for the same reason as roadsVisible:
+   * making it a dependency would rebuild the event handler on every mode
+   * change.
+   */
+  const mode = useViewStore((s) => s.mode);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
     let lastPick = 0;
+    /**
+     * True between mouse-down and mouse-up: the user is driving the camera.
+     *
+     * NOT HOVERING DURING A DRAG. Cesium delivers MOUSE_MOVE while a button is
+     * held, so orbiting the globe used to run a hover pick every 30 ms for the
+     * whole gesture -- and each of those was a scene.pick plus, usually, a
+     * six-deep drillPick. That is the most expensive thing this application
+     * does, spent on a highlight nobody asked for: a user dragging the camera
+     * is navigating, not pointing at a building.
+     *
+     * Measured across one 30-step orbit: 4,315 ms of main-thread blocking with
+     * this handler live, against 102 ms with the entity layers hidden. The
+     * blocking was the picking, not the drawing.
+     */
+    let dragging = false;
+    let hoverCleared = true;
+
+    handler.setInputAction(() => {
+      dragging = true;
+    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    handler.setInputAction(() => {
+      dragging = false;
+    }, Cesium.ScreenSpaceEventType.LEFT_UP);
+    // Middle and right drags are zoom and tilt; they move the camera too.
+    handler.setInputAction(() => {
+      dragging = true;
+    }, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
+    handler.setInputAction(() => {
+      dragging = false;
+    }, Cesium.ScreenSpaceEventType.MIDDLE_UP);
+    handler.setInputAction(() => {
+      dragging = true;
+    }, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
+    handler.setInputAction(() => {
+      dragging = false;
+    }, Cesium.ScreenSpaceEventType.RIGHT_UP);
+
     handler.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
+      if (dragging) {
+        // Drop a stale highlight once, then stay silent for the rest of the
+        // gesture. Leaving the old building lit while the camera swings away
+        // from it reads as the tooltip being stuck.
+        if (!hoverCleared) {
+          hoverCleared = true;
+          setHover(null, null, null);
+          viewer.scene.canvas.style.cursor = 'default';
+        }
+        return;
+      }
       const now = performance.now();
       if (now - lastPick < HOVER_THROTTLE_MS) return;
       lastPick = now;
-      const tag = pickTag(viewer.scene, movement.endPosition, roadsVisibleRef.current, false);
+      const tag = pickTag(
+        viewer.scene,
+        movement.endPosition,
+        roadsVisibleRef.current,
+        false,
+        modeRef.current !== 'city',
+      );
+      hoverCleared = tag === null;
       // Every hover target in one write: they are live at the same time and
       // separate writes would render the scene once each for a single move.
       setHover(

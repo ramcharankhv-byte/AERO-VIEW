@@ -1,0 +1,163 @@
+{
+  "label": "v-sir-2",
+  "at": "2026-09-04T05:15:51.764Z",
+  "url": "http://localhost:3000/p/siripuram",
+  "paint": {
+    "fcpMs": 456,
+    "lcpMs": 808,
+    "domContentLoadedMs": 237,
+    "canvasPresentMs": 637
+  },
+  "boot": {
+    "boot-start": 544,
+    "viewer-created": 617,
+    "scene-configured": 630,
+    "data-fetched": 838,
+    "terrain-ready": 1787,
+    "ground-sampled": 1945,
+    "context-ready": 1945,
+    "buildings-built": 2584
+  },
+  "cpu": {
+    "longTaskCount": 47,
+    "longTaskTotalMs": 4899,
+    "worstLongTaskMs": 375,
+    "totalBlockingTimeMs": 2549,
+    "longTasksBeforeReady": 8,
+    "top5": [
+      {
+        "atMs": 3993,
+        "durMs": 375
+      },
+      {
+        "atMs": 4840,
+        "durMs": 243
+      },
+      {
+        "atMs": 2041,
+        "durMs": 219
+      },
+      {
+        "atMs": 3547,
+        "durMs": 196
+      },
+      {
+        "atMs": 5227,
+        "durMs": 194
+      }
+    ],
+    "scriptSeconds": 18.78,
+    "taskSeconds": 20.64
+  },
+  "network": {
+    "totalRequests": 248,
+    "startupRequests": 248,
+    "totalTransferredMB": 5.18,
+    "byCategory": {
+      "imagery-tiles": {
+        "n": 160,
+        "kb": 2464
+      },
+      "app-js": {
+        "n": 8,
+        "kb": 1077
+      },
+      "cesium-asset": {
+        "n": 11,
+        "kb": 1002
+      },
+      "ion": {
+        "n": 51,
+        "kb": 334
+      },
+      "app-api": {
+        "n": 5,
+        "kb": 169
+      },
+      "document": {
+        "n": 1,
+        "kb": 7
+      },
+      "css": {
+        "n": 1,
+        "kb": 6
+      },
+      "other": {
+        "n": 1,
+        "kb": 1
+      },
+      "cesium-worker": {
+        "n": 10,
+        "kb": 0
+      }
+    },
+    "duplicatedUrls": [
+      {
+        "n": 5,
+        "url": "http://localhost:3000/cesium/Workers/createGeometry.js"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11983/4902.terrain?extensions=octv"
+      },
+      {
+        "n": 4,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/13/11984/4902.terrain?extensions=octv"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/1/0/1"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/1/1/1"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/1/0/0"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/1/1/0"
+      },
+      {
+        "n": 2,
+        "url": "https://assets.ion.cesium.com/ap-northeast-1/asset_depot/1/CesiumWorldTerrain/v1.2/layer.json"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/2/0/2"
+      },
+      {
+        "n": 2,
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/2/1/2"
+      }
+    ]
+  },
+  "scene": {
+    "entities": 2461,
+    "byDataSource": {
+      "parcels": 975,
+      "roads": 406,
+      "buildings": 768,
+      "utilities": 301,
+      "conflicts": 11
+    },
+    "primitives": 1,
+    "imageryLayers": 1
+  },
+  "motion": {
+    "frames": 69,
+    "medianMs": 181.4,
+    "p95Ms": 319.1,
+    "worstMs": 433.4,
+    "fpsMedian": 5.5
+  },
+  "memory": {
+    "afterSettleMB": 95.2,
+    "afterSelectCyclesMB": 92,
+    "growthMB": -3.2,
+    "requestsAddedByCycles": 0
+  },
+  "wallClockMs": 33206
+}

@@ -1,0 +1,31 @@
+{
+  "label": "interaction-hyderabad-banjara",
+  "slug": "hyderabad-banjara",
+  "url": "http://localhost:3000/p/hyderabad-banjara",
+  "at": "2026-09-04T05:42:44.109Z",
+  "selectColdMs": 1030,
+  "selectColdBlocking": {
+    "count": 3,
+    "longestMs": 453,
+    "totalBlockingMs": 841
+  },
+  "selectWarmMs": 928,
+  "selectWarmBlocking": {
+    "count": 5,
+    "longestMs": 281,
+    "totalBlockingMs": 657
+  },
+  "selectOtherMs": 912,
+  "hoverTooltipMs": 484,
+  "dragBlocking": {
+    "count": 50,
+    "longestMs": 271,
+    "totalBlockingMs": 4489
+  },
+  "dragDurationMs": 7277,
+  "layerToggleMs": 284,
+  "scene": {
+    "entities": 10654,
+    "dataSources": 35
+  }
+}

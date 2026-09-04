@@ -324,3 +324,125 @@ see the 3D Tiles recommendation in section 5.
   `/api/p/siripuram/building/1` and `/api/p/hyderabad-banjara/building/780`
   return `AP-VSP-…` and `TS-HYD-…` every time, and the two projects' collection
   ETags differ and each revalidates to 304 independently.
+
+
+---
+
+## 7. Verification pass: is it actually fast and smooth?
+
+Re-measured from a clean `.next`, on `perf/multi-project`, against both
+projects. Startup was already covered; this section adds the half that no
+earlier measurement touched -- **interaction latency**, via
+`scripts/perf_interaction.mjs`.
+
+### What this pass changed
+
+**A. Hover picking ran during camera drags.** `scene.drillPick(6)` renders the
+scene into the pick framebuffer up to six times; measured at **88 ms** against
+15 ms for a single `scene.pick`. Cesium delivers `MOUSE_MOVE` while a button is
+held, so orbiting the globe ran that every 30 ms for the whole gesture -- to
+compute a hover highlight for a user who is navigating, not pointing.
+
+Attribution during one 30-step orbit made it unambiguous:
+
+| configuration | long tasks | longest | blocking |
+|---|---|---|---|
+| all layers on + globe | 31 | 362 ms | **4,315 ms** |
+| data sources hidden | 21 | 101 ms | 102 ms |
+| everything hidden | 0 | 0 | 0 |
+
+`components/globe/Picker.tsx` now suppresses hover picking between mouse-down
+and mouse-up (clearing any stale highlight once), and skips the drill entirely
+in city mode, where `UnitsLayer` has drawn nothing for it to find. Clicks are
+untouched -- a dropped click is a bug, a dropped hover sample is not.
+
+**B. Preconnect for the three cross-origin hosts on the boot path.** With the
+cadastre now fetched in under a second, the critical path to the first building
+is the ion round trip, and part of that is DNS/TCP/TLS to origins the browser
+has never spoken to. `app/layout.tsx` now opens those handshakes early. Median
+of three cold runs: terrain ready 1,940 -> 1,687 ms, layers mount 2,090 ->
+1,873 ms, canvas 822 -> 752 ms. Modest, mechanism understood, cannot regress.
+
+**C. An honest boot mark.** `data-fetched` was emitted after the terrain await,
+so a slow ion response was reported as a slow cadastre fetch. It is attached to
+the promise now. This is why the timeline in section 1 and the one below differ
+in shape: the earlier one was mis-attributing.
+
+### Interaction latency, measured
+
+Settled scene, production build, cold-start browser.
+
+| | siripuram (2,461 entities) | hyderabad-banjara (10,654) |
+|---|---|---|
+| click -> details, first of session | 1,167 ms | 1,030 ms |
+| click -> details, steady state | **470 ms** | 912 ms |
+| click -> details, client cache hit | **474 ms** | 928 ms |
+| hover -> tooltip | **121 ms** | 484 ms |
+| layer toggle -> scene | **63 ms** | 284 ms |
+| **long tasks during a 45-step orbit** | **3** | 50 |
+| **longest task during that orbit** | **118 ms** | 271 ms |
+| **total blocking during that orbit** | **143 ms** | 4,489 ms |
+
+Before the picker fix, siripuram's orbit produced **47 long tasks and 4,643 ms
+of blocking**. It is now 3 tasks and 143 ms -- a 32x reduction, and the
+difference between a map that stutters under the cursor and one that does not.
+
+### The honest answer, per project
+
+**siripuram -- yes, fast and smooth.** The map is draggable at ~750 ms, all
+geometry is up by ~2.6 s, the worst startup task is ~300 ms, an orbit blocks the
+main thread for 143 ms in total, and a building's details are on screen ~470 ms
+after the click.
+
+**hyderabad-banjara -- fast to start, not yet smooth to drag.** Startup is
+essentially identical to the small project (canvas 633 ms, worst boot task
+315 ms) because time-to-interactive no longer scales with AOI size. Selection,
+hover and toggles are all sub-second. But a camera orbit still blocks for
+~4.5 s, and that is not picking any more -- it is the layers themselves.
+
+Per-layer attribution on that project, same 30-step orbit:
+
+| configuration | longest | blocking |
+|---|---|---|
+| all layers on | 703 ms | 3,198 ms |
+| **parcels hidden (3,351)** | **153 ms** | **1,507 ms** |
+| roads hidden (1,014) | 357 ms | 3,016 ms |
+| buildings hidden (4,426) | 201 ms | 2,562 ms |
+| utilities hidden (1,214) | 171 ms | 2,462 ms |
+| all data sources hidden | 203 ms | 1,524 ms |
+
+Hiding parcels alone (1,507 ms) reaches the same floor as hiding every layer
+(1,524 ms). Breaking parcels down further, it is specifically the
+**ground-classified polygons** -- the fill and the hatch, 1,309 of each:
+
+| configuration | longest | blocking |
+|---|---|---|
+| all parcel parts on | 529 ms | 2,432 ms |
+| parcel polygons hidden | 110 ms | 1,439 ms |
+| parcel outlines hidden | 252 ms | 1,670 ms |
+| all parcel parts hidden | 101 ms | 1,448 ms |
+
+Cesium re-drapes ground-classified geometry as terrain tiles stream in during a
+camera move, so the cost is proportional to how much draped geometry exists and
+is paid on every move. At 1,309 parcels it is invisible; at 3,351 it dominates.
+
+### What was NOT done, and why
+
+The obvious mitigation is a distance condition on the parcel fill and hatch, so
+they stop drawing when zoomed out. It was measured and then **deliberately not
+applied**, for two reasons:
+
+1. Both projects open at almost the same height -- siripuram 1,199 m,
+   hyderabad-banjara 1,631 m -- so no threshold culls the large project without
+   also changing what the demo project looks like on first paint. That is a
+   change to the product's default appearance, not a performance fix, and it is
+   the owner's call rather than mine.
+2. The demo project does not need it: 143 ms of blocking per orbit is already
+   smooth.
+
+The real fix for draped cadastre at this density is pre-baked vector tiles,
+which is already recommended in section 5 and is the same recommendation the
+entity count argues for. A distance condition would buy roughly the difference
+between 3,198 ms and 1,507 ms on the large project, and costs the fills at
+overview zoom in both projects; say the word and it is a two-line change in
+`components/layers/ParcelsLayer.tsx`.
