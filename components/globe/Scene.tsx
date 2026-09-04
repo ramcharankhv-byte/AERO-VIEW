@@ -5,6 +5,7 @@ import CameraDirector from './CameraDirector';
 import Picker from './Picker';
 import ParcelsLayer from '../layers/ParcelsLayer';
 import BuildingsLayer from '../layers/BuildingsLayer';
+import BuildingsFarLayer from '../layers/BuildingsFarLayer';
 import RoadsLayer from '../layers/RoadsLayer';
 import BuildingModelLayer from '../layers/BuildingModelLayer';
 import FloorStackLayer from '../layers/FloorStackLayer';
@@ -34,6 +35,7 @@ export default function Scene({ project }: { project: Project }) {
       <ParcelsLayer />
       <RoadsLayer />
       <BuildingsLayer />
+      <BuildingsFarLayer />
       <BuildingModelLayer />
       <FloorStackLayer />
       <UnitsLayer />

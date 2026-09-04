@@ -719,6 +719,21 @@ export async function getRoads(slug: string): Promise<GeoFC<RoadProps>> {
 }
 
 export async function getConflicts(slug: string): Promise<ConflictRow[]> {
+  return getPristineConflicts(slug);
+}
+
+/**
+ * The PRISTINE conflict set: every utility/floor intersection as it sits
+ * in PostGIS or in the snapshot, with no edit overlay.
+ *
+ * The cache stores THIS value. When a building is edited (height_m or
+ * basements), the floor's z range changes, and some conflicts that
+ * existed in the pristine set are no longer intersections and some new
+ * ones are. The route handler applies an overlay that recomputes
+ * conflicts for the edited buildings and merges the result over the
+ * pristine set -- the cache itself is never touched by a PATCH.
+ */
+export async function getPristineConflicts(slug: string): Promise<ConflictRow[]> {
   const r = await viaDb(slug, async (scope) => {
     const { sql, params } = conflictsSql(scope);
     return (await q<{ rows: ConflictRow[] }>(sql, params))[0].rows;
@@ -727,25 +742,54 @@ export async function getConflicts(slug: string): Promise<ConflictRow[]> {
   return snapshot<ConflictRow[]>(slug, 'conflicts.json');
 }
 
-export async function getBuildingDetail(
+/**
+ * The PRISTINE building detail: the document exactly as it lives in PostGIS
+ * or in the snapshot's detail.json, with no edit overlay and no enrichment.
+ *
+ * The Redis cache stores THIS value, not the enriched one. The route
+ * handler reads the cached pristine document and applies the enrichment
+ * (which is also where the edit overlay lives) on every request, so a
+ * PATCH never has to invalidate the cache: the cache holds the un-edited
+ * truth, and the overlay is a pure function applied over it.
+ *
+ * `null` is a legitimate return value -- a 404 -- and the caller is
+ * responsible for not caching it. The brief is explicit on that: "never
+ * cache a 404 or 503".
+ */
+export async function getPristineBuildingDetail(
   slug: string,
   id: number,
 ): Promise<BuildingDetail | null> {
-  const raw = await (async () => {
-    const r = await viaDb(slug, async (scope) => {
-      const { sql, params } = detailSql(scope, id);
-      const rows = await q<{ doc: BuildingDetail }>(sql, params);
-      return rows[0]?.doc ?? null;
-    });
-    if (r.ok) return r.value;
-    const all = await snapshot<Record<string, BuildingDetail>>(slug, 'detail.json');
-    return all[String(id)] ?? null;
-  })();
-  if (!raw) return null;
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = detailSql(scope, id);
+    const rows = await q<{ doc: BuildingDetail }>(sql, params);
+    return rows[0]?.doc ?? null;
+  });
+  if (r.ok) return r.value;
+  const all = await snapshot<Record<string, BuildingDetail>>(slug, 'detail.json');
+  return all[String(id)] ?? null;
+}
 
+/**
+ * Run the enrichment (and edit overlay) over an already-fetched pristine
+ * BuildingDetail. Exported so the read-through cache in lib/cache/store.ts
+ * can hold the PRISTINE document in Redis and re-run enrichment on every
+ * read -- the cached byte is small and stable, the overlay is the only
+ * thing that can change, and running it on every read is the "no
+ * invalidation to get wrong" property the cache exists to provide.
+ *
+ * `null` is returned only when the raw input is null; the enrichment
+ * itself never nulls a document. The 404 signal therefore belongs to
+ * the pristine read, not the overlay.
+ */
+export async function enrichBuildingDetail(
+  slug: string,
+  raw: BuildingDetail,
+): Promise<BuildingDetail> {
   // Same generator, same seeds and the same unit index getBuildings uses, so
   // the header rows the panel reads from the FeatureCollection and the rows it
   // reads from here can never disagree.
+  const id = raw.building.id;
   const [units, streets, edit, collection] = await Promise.all([
     unitIndex(slug), streetIndex(slug), editsFor(slug, id), buildingsFC(slug),
   ]);
@@ -770,6 +814,15 @@ export async function getBuildingDetail(
   return { ...raw, building: { ...enriched, footprint: raw.building.footprint } };
 }
 
+export async function getBuildingDetail(
+  slug: string,
+  id: number,
+): Promise<BuildingDetail | null> {
+  const raw = await getPristineBuildingDetail(slug, id);
+  if (!raw) return null;
+  return enrichBuildingDetail(slug, raw);
+}
+
 /**
  * Every entity whose 3D volume contains (lon, lat, z), coarse to fine.
  * ST_3DIntersects against a POINT Z is the containment test on the DB path.
@@ -780,13 +833,7 @@ export async function queryPoint(
   lat: number,
   z: number,
 ): Promise<StackHit[]> {
-  const scope = await scopeFor(slug);
-  const hits = scope
-    ? await (async () => {
-      const { sql, params } = querySql(scope, lon, lat, z);
-      return q<StackHit>(sql, params);
-    })()
-    : await queryPointFromSnapshot(slug, lon, lat, z);
+  const hits = await getPristineQueryPoint(slug, lon, lat, z);
 
   // The building label is built inside the query SQL (and its JS twin),
   // neither of which can reach the TypeScript enrichment. Reconciled here so
@@ -797,6 +844,32 @@ export async function queryPoint(
     const p = h.level === 'building' ? byId.get(h.id) : undefined;
     return p && p.name ? { ...h, label: p.name } : h;
   });
+}
+
+/**
+ * The PRISTINE point query: the stack of entities at (lon, lat, z) as
+ * PostGIS or the snapshot computes it, with the building label as it
+ * sits in the database (or absent).
+ *
+ * The cache stores THIS value. When a building is edited, the
+ * containment test's result can change for points inside the edited
+ * building's volume (height_m and basements both feed the test), and
+ * the building's name can change. The route handler applies an overlay
+ * that adjusts z values and labels for edited buildings over the
+ * cached pristine result.
+ */
+export async function getPristineQueryPoint(
+  slug: string,
+  lon: number,
+  lat: number,
+  z: number,
+): Promise<StackHit[]> {
+  const scope = await scopeFor(slug);
+  if (scope) {
+    const { sql, params } = querySql(scope, lon, lat, z);
+    return q<StackHit>(sql, params);
+  }
+  return queryPointFromSnapshot(slug, lon, lat, z);
 }
 
 /** Ray-casting point-in-ring; exact for the vertical prisms this schema stores. */
