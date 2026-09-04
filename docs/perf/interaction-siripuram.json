@@ -1,0 +1,31 @@
+{
+  "label": "interaction-siripuram",
+  "slug": "siripuram",
+  "url": "http://localhost:3000/p/siripuram",
+  "at": "2026-09-04T05:35:40.319Z",
+  "selectColdMs": 1167,
+  "selectColdBlocking": {
+    "count": 4,
+    "longestMs": 414,
+    "totalBlockingMs": 932
+  },
+  "selectWarmMs": 474,
+  "selectWarmBlocking": {
+    "count": 5,
+    "longestMs": 127,
+    "totalBlockingMs": 201
+  },
+  "selectOtherMs": 470,
+  "hoverTooltipMs": 121,
+  "dragBlocking": {
+    "count": 3,
+    "longestMs": 118,
+    "totalBlockingMs": 143
+  },
+  "dragDurationMs": 3327,
+  "layerToggleMs": 63,
+  "scene": {
+    "entities": 2461,
+    "dataSources": 35
+  }
+}

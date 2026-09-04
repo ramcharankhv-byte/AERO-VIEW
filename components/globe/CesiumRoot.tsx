@@ -123,7 +123,15 @@ export default function CesiumRoot(
       // cadastre is already in flight from this point, so that is when the app
       // is honestly "loading" it.
       useDataStore.getState().setLoading(true);
-      const dataPromise = fetchInitialData(project.slug);
+      // The mark is attached to the PROMISE, not to the await below. The two
+      // are not the same instant: the await happens after the terrain await,
+      // so marking there reported a slow ion round-trip as a slow cadastre
+      // fetch and made the timeline lie about which one was on the critical
+      // path.
+      const dataPromise = fetchInitialData(project.slug).then((d) => {
+        mark('data-fetched');
+        return d;
+      });
       // A rejection here is handled at the await below; attaching a no-op
       // catch now keeps it from being reported as unhandled in the gap.
       dataPromise.catch(() => {});
@@ -225,7 +233,6 @@ export default function CesiumRoot(
       const store = useDataStore.getState();
       try {
         const data = await dataPromise;
-        mark('data-fetched');
         if (disposed) return;
         store.setBuildings(data.buildings);
         store.setParcels(data.parcels);
