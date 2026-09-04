@@ -23,10 +23,13 @@
     "smoke": "node scripts/smoke.mjs",
     "perf": "node scripts/perf_probe.mjs --label after --out docs/perf",
     "perf:frame": "node scripts/perf_frame_js.mjs",
-    "perf:bisect": "node scripts/perf_bisect.mjs"
+    "perf:bisect": "node scripts/perf_bisect.mjs",
+    "cache:test": "node --import ./scripts/_register_shim.mjs scripts/test_cache.mjs",
+    "cache:measure": "node --import ./scripts/_register_shim.mjs scripts/measure_cache.mjs"
   },
   "dependencies": {
     "cesium": "1.126.0",
+    "ioredis": "^5.11.1",
     "next": "15.5.4",
     "pg": "^8.13.1",
     "react": "19.0.0",

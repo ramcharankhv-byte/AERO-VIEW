@@ -45,6 +45,19 @@ interface LayerState {
 
 const FADE_RATE = 0.12;   // per frame, ~600 ms to settle
 
+/**
+ * Distance beyond which the near (entity) tier hands off to the far-tier
+ * primitive. 1500 m: a 50 m footprint is ~60 px wide on the 1680x950 viewport
+ * the probe uses, so the silhouette still reads, and the far tier takes over
+ * before a Hyderabad orbit pulls 4,426 entities on screen at once. The two
+ * tiers' DDCs are back-to-back at this number; nothing is rendered twice.
+ *
+ * Constant -- a `new` per entity would still be static geometry but wastes the
+ * per-instance comparison Cesium does. One shared object, every entity.
+ */
+const FAR_M = 1500;
+const NEAR_DDC = new Cesium.DistanceDisplayCondition(0, FAR_M);
+
 export default function BuildingsLayer() {
   const { viewer, ground, ready } = useViewer();
   // The EPOCH, not the collection.
@@ -182,6 +195,11 @@ export default function BuildingsLayer() {
           material: wallColor,
           outline: false,
           shadows: shadowsRef.current,
+          // Static: handed to the far-tier primitive past FAR_M. Sharing one
+          // ConstantProperty across every entity keeps the geometry on the
+          // static updater path (a non-constant DDC would push every
+          // extrusion onto the dynamic updater and rebuild the lot per frame).
+          distanceDisplayCondition: NEAR_DDC,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
             if (!s.visible) return false;
@@ -219,6 +237,7 @@ export default function BuildingsLayer() {
           ),
           outline: false,
           shadows: shadowsRef.current,
+          distanceDisplayCondition: NEAR_DDC,
           show: new Cesium.CallbackProperty(() => {
             const s = stateRef.current;
             if (!s.visible) return false;

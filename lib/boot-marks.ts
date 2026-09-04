@@ -21,6 +21,7 @@ export type BootMark =
   | 'ground-sampled'      // terrain heights sampled under every footprint
   | 'layers-mounted'      // children mounted: layer effects may now run
   | 'buildings-built'     // BuildingsLayer finished creating its entities
+  | 'buildings-far-built' // BuildingsFarLayer's static primitive is in the scene
   | 'context-ready';      // full-detail context published to every layer
 
 const PREFIX = 'ulpin:';
