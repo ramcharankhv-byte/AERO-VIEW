@@ -10,6 +10,6 @@ export const dynamic = 'force-dynamic';
  * projects, and an unscoped path that 404s would break every one of them. The
  * handler body is shared, so alias and scoped route are byte-identical.
  */
-export async function GET() {
-  return conflictsRoute('siripuram');
+export async function GET(req: Request) {
+  return conflictsRoute('siripuram', req);
 }

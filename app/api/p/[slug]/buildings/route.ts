@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic';
  * /api/buildings so the two can never answer differently.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await ctx.params;
-  return buildingsRoute(slug);
+  return buildingsRoute(slug, req);
 }

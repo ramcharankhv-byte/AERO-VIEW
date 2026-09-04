@@ -333,6 +333,14 @@ export interface DataState {
   conflicts: ConflictRow[];
   detail: Record<number, BuildingDetail>;
   /**
+   * Ids in the detail cache, least-recently-used first.
+   *
+   * Kept beside `detail` rather than as a Map with insertion order because the
+   * store is read by React components that compare by identity: a plain array
+   * makes an eviction a visible state change, which is what it is.
+   */
+  detailOrder: number[];
+  /**
    * Building ids whose detail fetch is in flight.
    *
    * `detail[id]` being absent cannot distinguish "still loading" from "failed",
@@ -363,6 +371,8 @@ export interface DataState {
   setRoads: (fc: GeoFC<RoadProps>) => void;
   setConflicts: (rows: ConflictRow[]) => void;
   putDetail: (id: number, d: BuildingDetail) => void;
+  /** Mark a cached document as freshly used, so it is not the next evicted. */
+  touchDetail: (id: number) => void;
   /**
    * Replace ONE building's properties in the loaded collection.
    *
@@ -376,6 +386,13 @@ export interface DataState {
   setError: (e: string | null) => void;
 }
 
+/**
+ * How many building detail documents to keep client-side.
+ *
+ * See putDetail for why this is a document count and not a byte budget.
+ */
+const DETAIL_CACHE_LIMIT = 48;
+
 export const useDataStore = create<DataState>((set) => ({
   buildings: null,
   parcels: null,
@@ -383,6 +400,7 @@ export const useDataStore = create<DataState>((set) => ({
   roads: null,
   conflicts: [],
   detail: {},
+  detailOrder: [],
   pendingDetail: {},
   loading: false,
   error: null,
@@ -394,7 +412,34 @@ export const useDataStore = create<DataState>((set) => ({
   setUtilities: (fc) => set({ utilities: fc }),
   setRoads: (fc) => set({ roads: fc }),
   setConflicts: (rows) => set({ conflicts: rows }),
-  putDetail: (id, d) => set((s) => ({ detail: { ...s.detail, [id]: d } })),
+  putDetail: (id, d) =>
+    set((s) => {
+      // BOUNDED, and least-recently-used.
+      //
+      // This cache used to grow without limit: every building the user touched
+      // stayed in memory for the life of the tab, and a detail document runs
+      // to 35 KB of floors, units and rings. A session spent clicking around
+      // an AOI therefore leaked steadily -- the probe measured +45 MB of heap
+      // over five select/deselect cycles alone.
+      //
+      // The bound is on the number of documents rather than on bytes: the
+      // documents are of comparable size, and counting bytes would mean
+      // measuring them, which is more expensive than the cache saves. 48 is
+      // roughly a working session of browsing, which is what a cache is for --
+      // going back to a building you just looked at must stay instant.
+      const detail = { ...s.detail, [id]: d };
+      const order = [...s.detailOrder.filter((x) => x !== id), id];
+      while (order.length > DETAIL_CACHE_LIMIT) {
+        const evicted = order.shift();
+        if (evicted !== undefined) delete detail[evicted];
+      }
+      return { detail, detailOrder: order };
+    }),
+
+  touchDetail: (id) =>
+    set((s) => (s.detail[id]
+      ? { detailOrder: [...s.detailOrder.filter((x) => x !== id), id] }
+      : s)),
 
   patchBuilding: (id, props) =>
     set((s) => {
@@ -503,31 +548,79 @@ export type { UtilityProps };
  */
 export function useEnsureDetail(id: number | null): BuildingDetail | null {
   const detail = useDataStore((s) => s.detail);
+  /**
+   * Whether THIS id is cached, as a boolean.
+   *
+   * The effect below depends on this rather than on the whole `detail` record,
+   * and the difference matters now that the effect has a cleanup. Depending on
+   * the record means any document landing anywhere re-runs the effect, which
+   * fires the cleanup, which aborts the fetch in flight for the building the
+   * user is actually looking at -- and the pendingDetail guard then stops the
+   * re-run from starting it again, so the panel would wait forever.
+   *
+   * A boolean changes only when this building's own presence changes, so a
+   * cleanup can only mean "the id changed, the doc arrived, or we unmounted",
+   * all three of which are safe to abort on.
+   */
+  const isCached = useDataStore((s) => id !== null && Boolean(s.detail[id]));
+  /**
+   * SCOPED TO THE PROJECT.
+   *
+   * This used to fetch the UNSCOPED `/api/building/:id`, which the alias route
+   * resolves to the demo project. Building ids restart per project, so opening
+   * a building in any other AOI silently returned the demo project's floors
+   * and units for the same numeric id -- a wrong document rendered as if it
+   * were right, which is worse than an error.
+   *
+   * Null before the first project page has mounted, which is also the only
+   * time this hook can be called with nothing to fetch for.
+   */
+  const slug = useViewStore((s) => s.projectSlug);
 
   useEffect(() => {
-    if (id === null || detail[id]) return;
+    if (id === null || slug === null) return undefined;
+    if (isCached) {
+      // A cache HIT is still a use: without this the document you keep coming
+      // back to ages out exactly like one you looked at once, which is the
+      // opposite of what an LRU is for.
+      useDataStore.getState().touchDetail(id);
+      return undefined;
+    }
     // pendingDetail is read imperatively rather than subscribed to: making it a
     // dependency would re-run this effect the moment the fetch is registered.
     // Five components call this hook with the same id, so the guard is what
     // turns five identical requests into one.
-    if (useDataStore.getState().pendingDetail[id]) return;
+    if (useDataStore.getState().pendingDetail[id]) return undefined;
     useDataStore.getState().beginDetail(id);
+
+    // An AbortController, so that clicking through buildings faster than the
+    // network answers does not leave a queue of responses to parse. The
+    // document that arrives for a building the user has already left is not
+    // wrong, but paying to decode 35 KB of JSON for it is: at a fast click
+    // rate that decode is what makes the panel for the CURRENT building late.
+    const abort = new AbortController();
     (async () => {
       try {
-        const res = await fetch(`/api/building/${id}`);
+        const res = await fetch(`/api/p/${slug}/building/${id}`, {
+          signal: abort.signal,
+        });
         if (!res.ok) return;
         const doc = (await res.json()) as BuildingDetail;
-        // No cancellation guard: the result lands in a shared cache, not in
-        // component state, so a caller unmounting mid-flight is not a reason to
-        // throw the document away.
         useDataStore.getState().putDetail(id, doc);
       } catch {
-        /* transient; the layer simply renders nothing until it succeeds */
+        /* aborted, or transient: the layer renders nothing until it succeeds */
       } finally {
         useDataStore.getState().endDetail(id);
       }
     })();
-  }, [id, detail]);
+
+    return () => {
+      // Only abandon a fetch that is still in flight. Aborting after the
+      // document landed is harmless but pointless; aborting before it did is
+      // the whole point.
+      if (!useDataStore.getState().detail[id]) abort.abort();
+    };
+  }, [id, slug, isCached]);
 
   return id === null ? null : detail[id] ?? null;
 }

@@ -9,6 +9,9 @@ import { BUILDING_ALPHA, MATERIALS } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { toSceneZ } from '@/lib/cesium/terrain';
 import { flatLonLat } from '@/lib/geo';
+import { mark } from '@/lib/boot-marks';
+import { buildIncrementally } from '@/lib/cesium/build-queue';
+import { createBucketGrid, extentOf } from '@/lib/cesium/spatial-buckets';
 import type { BuildingStyle, UseType } from '@/lib/types';
 
 /**
@@ -82,7 +85,13 @@ export default function BuildingsLayer() {
    * definitionChanged once and the static path is kept.
    */
   const shadowsRef = useRef(new Cesium.ConstantProperty(Cesium.ShadowMode.DISABLED));
-  const dsRef = useRef<Cesium.CustomDataSource | null>(null);
+  /**
+   * The bucket grid this layer draws into.
+   *
+   * Not one data source any more -- see lib/cesium/spatial-buckets.ts for why
+   * a single batched primitive spanning the AOI can never be frustum-culled.
+   */
+  const gridRef = useRef<ReturnType<typeof createBucketGrid> | null>(null);
   /**
    * buildingId -> the entities and the constants needed to re-shape it.
    *
@@ -101,20 +110,41 @@ export default function BuildingsLayer() {
     const buildings = useDataStore.getState().buildings;
     if (!buildings) return;
 
-    const ds = new Cesium.CustomDataSource('buildings');
-    dsRef.current = ds;
-    viewer.dataSources.add(ds);
+    const grid = createBucketGrid(
+      viewer,
+      'buildings',
+      extentOf(buildings.features.map((f) => {
+        const ring = (f.geometry.coordinates as number[][][])[0];
+        return [ring[0][0], ring[0][1]] as const;
+      })),
+    );
+    gridRef.current = grid;
 
-    for (const feature of buildings.features) {
+    /**
+     * One footprint. Called by the incremental builder, a slice at a time.
+     *
+     * This body is exactly what it was when it ran inside a `for` loop; the
+     * only change is who drives the loop. At 2,597 buildings -- 5,194 entities
+     * with a PolygonHierarchy, two material closures and two show closures
+     * each -- running it to completion in one task blocked the main thread for
+     * 3.7 seconds (docs/perf/findings.md). Nothing about the work was wrong;
+     * doing all of it between two paints was.
+     */
+    const addFootprint = (feature: typeof buildings.features[number]) => {
       const props = feature.properties;
       const ring = (feature.geometry.coordinates as number[][][])[0];
       const flat = flatLonLat(ring);
-      if (flat.length < 6) continue;
+      if (flat.length < 6) return;
 
       const terrainH = ground.get(props.id);
       const base = toSceneZ(props.ground_elev, props.ground_elev, terrainH);
       const use = props.use_type as UseType;
       const id = props.id;
+      // Both entities for a building go in the same bucket, chosen from its
+      // first vertex: a footprint is far smaller than a cell, so which vertex
+      // decides is immaterial, and keeping the pair together means a cull can
+      // never drop a wall while keeping its roof.
+      const ds = grid.forPoint(ring[0][0], ring[0][1]);
 
       // A FLAT wall colour, not a facade texture.
       //
@@ -199,12 +229,31 @@ export default function BuildingsLayer() {
       });
 
       entitiesRef.current.set(id, { wall: wallEntity, cap: capEntity, base });
-    }
+    };
+
+    // The first slice is sized rather than timed. A few hundred footprints put
+    // recognisable massing on screen in the same task the effect runs in, which
+    // is what stops the city from appearing to pop in from nothing; after that
+    // the builder falls back to its frame budget and the browser stays
+    // responsive for the remaining few thousand.
+    const cancelBuild = buildIncrementally({
+      items: buildings.features,
+      step: addFootprint,
+      firstSlice: 250,
+      // Each slice is only visible if the scene is asked for a frame: the
+      // viewer runs in requestRenderMode, so without this the entities would
+      // all appear at once when something else happened to trigger a render.
+      onSlice: () => {
+        if (!viewer.isDestroyed()) viewer.scene.requestRender();
+      },
+      onDone: () => mark('buildings-built'),
+    });
 
     return () => {
+      cancelBuild();
       entitiesRef.current.clear();
-      if (!viewer.isDestroyed()) viewer.dataSources.remove(ds, true);
-      dsRef.current = null;
+      grid.dispose();
+      gridRef.current = null;
     };
   }, [viewer, ready, buildingsLoaded, buildingsEpoch, ground]);
 

@@ -13,11 +13,11 @@ export const dynamic = 'force-dynamic';
  * because it is the same function.
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  return buildingDetailRoute(DEFAULT_SLUG, id);
+  return buildingDetailRoute(DEFAULT_SLUG, id, req);
 }
 
 export async function PATCH(

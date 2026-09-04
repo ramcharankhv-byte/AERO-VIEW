@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useDataStore, useEditStore } from '@/lib/store';
+import { useDataStore, useEditStore, useViewStore } from '@/lib/store';
 import {
   BUILDING_STATUSES, EDITABLE_FIELDS, FIELD_LABEL, validateEdit, warningsFor,
   type BuildingEdit, type EditableField, type FieldError,
@@ -95,6 +95,8 @@ function Field({
 
 export default function BuildingEditForm({ building }: { building: EnrichedBuilding }) {
   const id = building.id;
+  /** The project this form is saving into. See the note at the fetch below. */
+  const slug = useViewStore((s) => s.projectSlug);
   const drafts = useEditStore((s) => s.drafts);
   const saving = useEditStore((s) => s.saving);
   const fieldErrors = useEditStore((s) => s.fieldErrors);
@@ -172,7 +174,12 @@ export default function BuildingEditForm({ building }: { building: EnrichedBuild
 
     setSaving(true);
     try {
-      const res = await fetch(`/api/building/${id}`, {
+      // SCOPED, like the read in useEnsureDetail. The unscoped alias resolves
+      // to the demo project, and building ids restart per project -- so saving
+      // from any other AOI wrote the edit against the demo project's building
+      // with the same id. The aliases stay for the acceptance scripts, which
+      // drive them directly; the application asks for the project it is in.
+      const res = await fetch(`/api/p/${slug}/building/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),

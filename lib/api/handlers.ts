@@ -6,6 +6,9 @@ import {
 import { applyEdit } from '@/lib/data/edits';
 import { coerceEdit, validateEdit, warningsFor } from '@/lib/data/building-schema';
 import { resolveProject, unavailableMessage } from '@/lib/projects';
+import { editsRev } from '@/lib/data/edits';
+import { jsonPayload } from '@/lib/http/payload';
+import { cachedDetail, warmProject } from '@/lib/server-cache';
 
 /**
  * The seven cadastre endpoints, written once.
@@ -69,17 +72,37 @@ async function gateProject(slug: string): Promise<NextResponse | null> {
   return null;
 }
 
+/**
+ * Load a collection and return it compressed, cacheable and revalidatable.
+ *
+ * WHY THE REQUEST IS THREADED THROUGH. `NextResponse.json()` streams the body
+ * chunked with no `Content-Encoding`, so these five endpoints were shipping raw
+ * GeoJSON -- measured at 4.4 MB across one cold boot, and 2.9 s of it (see
+ * docs/perf/findings.md). Choosing an encoding needs the client's
+ * `Accept-Encoding`, so `serve` needs the Request; every route wrapper now
+ * passes the one it already receives.
+ *
+ * The cache key carries the SLUG. Two projects answer the same handler with
+ * different bytes, so a key of "buildings" alone would let one project's
+ * cadastre be served under another's URL -- the single most damaging bug this
+ * layer could have. It carries the project's edit revision for the same
+ * reason lib/http/payload.ts documents: a save must be visible immediately,
+ * and `editsRev` is already per-slug on this branch.
+ */
 async function serve<T>(
   slug: string,
   what: string,
   load: (slug: string) => Promise<T>,
+  req: Request,
   extra: Record<string, string> = {},
 ): Promise<NextResponse> {
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
     const body = await load(slug);
-    return NextResponse.json(body as object, {
+    return await jsonPayload(req, body, {
+      resource: `${slug}:${what}`,
+      rev: String(editsRev(slug)),
       headers: { ...(await baseHeaders(slug)), ...extra },
     });
   } catch (err) {
@@ -91,23 +114,23 @@ async function serve<T>(
 }
 
 /** GET .../buildings -> GeoJSON FeatureCollection of every footprint. */
-export function buildingsRoute(slug: string) {
-  return serve(slug, 'buildings', getBuildings);
+export function buildingsRoute(slug: string, req: Request) {
+  return serve(slug, 'buildings', getBuildings, req);
 }
 
 /** GET .../parcels -> GeoJSON of surface parcel polygons. */
-export function parcelsRoute(slug: string) {
-  return serve(slug, 'parcels', getParcels);
+export function parcelsRoute(slug: string, req: Request) {
+  return serve(slug, 'parcels', getParcels, req);
 }
 
 /** GET .../utilities -> utility centrelines with depth/radius/authority. */
-export function utilitiesRoute(slug: string) {
-  return serve(slug, 'utilities', getUtilities);
+export function utilitiesRoute(slug: string, req: Request) {
+  return serve(slug, 'utilities', getUtilities, req);
 }
 
 /** GET .../conflicts -> utility/basement intersections found by ST_3DIntersects. */
-export function conflictsRoute(slug: string) {
-  return serve(slug, 'conflicts', getConflicts);
+export function conflictsRoute(slug: string, req: Request) {
+  return serve(slug, 'conflicts', getConflicts, req);
 }
 
 /**
@@ -118,8 +141,8 @@ export function conflictsRoute(slug: string) {
  * is served from the committed artefact whatever the database is doing. The
  * header says so on the wire rather than only in a comment.
  */
-export function roadsRoute(slug: string) {
-  return serve(slug, 'roads', getRoads, { 'x-ulpin-roads': 'derived' });
+export function roadsRoute(slug: string, req: Request) {
+  return serve(slug, 'roads', getRoads, req, { 'x-ulpin-roads': 'derived' });
 }
 
 /** Shared id parsing, so GET and PATCH cannot disagree about what is valid. */
@@ -132,6 +155,7 @@ function parseEntityId(id: string): number | null {
 export async function buildingDetailRoute(
   slug: string,
   rawId: string,
+  req: Request,
 ): Promise<NextResponse> {
   const id = parseEntityId(rawId);
   if (id === null) {
@@ -140,14 +164,170 @@ export async function buildingDetailRoute(
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
-    const detail = await getBuildingDetail(slug, id);
+    const detail = await cachedDetail(slug, id);
     if (!detail) {
       return NextResponse.json({ error: 'building not found' }, { status: 404 });
     }
-    return NextResponse.json(detail, { headers: await baseHeaders(slug) });
+    return await jsonPayload(req, detail, {
+      resource: `${slug}:building:${id}`,
+      rev: String(editsRev(slug)),
+      headers: await baseHeaders(slug),
+    });
   } catch (err) {
     return NextResponse.json(
       { error: 'failed to load building', detail: String(err) },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * The progressive half of the detail API.
+ *
+ * `/building/:id` returns the whole document -- attributes, parcel, every
+ * storey and every flat. That is the right answer for a caller that wants one
+ * round trip, and the wrong one for a panel that opens on a header: for a tower
+ * the floors and units are the overwhelming majority of the bytes and none of
+ * them are on screen until the user opens the ladder or the unit grid.
+ *
+ * All three read through the SAME cache entry as the full document rather than
+ * keeping their own. Two caches over one source are two ways to be stale, and
+ * the memory they would save is memory lib/server-cache.ts already bounds.
+ */
+export async function buildingSummaryRoute(
+  slug: string,
+  rawId: string,
+  req: Request,
+): Promise<NextResponse> {
+  const id = parseEntityId(rawId);
+  if (id === null) {
+    return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
+  }
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  // The first building-scoped call a session makes, and it does not await the
+  // warm-up: the landmarks are pulled in while this response is written.
+  warmProject(slug);
+  try {
+    const detail = await cachedDetail(slug, id);
+    if (!detail) {
+      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+    }
+    return await jsonPayload(
+      req,
+      {
+        building: detail.building,
+        parcel: detail.parcel,
+        floor_count: detail.floors.length,
+        unit_count: detail.units.length,
+      },
+      {
+        resource: `${slug}:building-summary:${id}`,
+        rev: String(editsRev(slug)),
+        headers: await baseHeaders(slug),
+      },
+    );
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'failed to load building', detail: String(err) },
+      { status: 500 },
+    );
+  }
+}
+
+export async function buildingFloorsRoute(
+  slug: string,
+  rawId: string,
+  req: Request,
+): Promise<NextResponse> {
+  const id = parseEntityId(rawId);
+  if (id === null) {
+    return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
+  }
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  try {
+    const detail = await cachedDetail(slug, id);
+    if (!detail) {
+      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+    }
+    return await jsonPayload(req, { building_id: id, floors: detail.floors }, {
+      resource: `${slug}:building-floors:${id}`,
+      rev: String(editsRev(slug)),
+      headers: await baseHeaders(slug),
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'failed to load floors', detail: String(err) },
+      { status: 500 },
+    );
+  }
+}
+
+/** Page size when the caller does not ask, and the ceiling when it does. */
+const UNITS_DEFAULT_LIMIT = 200;
+const UNITS_MAX_LIMIT = 1000;
+
+/**
+ * GET .../building/:id/units?level=&limit=&offset=
+ *
+ * The isolated-floor view wants one storey; an export wants pages. The cap is
+ * on the SERVER: an endpoint whose page size is whatever the client asked for
+ * is not paginated, it is merely inconvenient.
+ */
+export async function buildingUnitsRoute(
+  slug: string,
+  rawId: string,
+  req: Request,
+): Promise<NextResponse> {
+  const id = parseEntityId(rawId);
+  if (id === null) {
+    return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
+  }
+  const url = new URL(req.url);
+  const rawLevel = url.searchParams.get('level');
+  const level = rawLevel === null ? null : Number(rawLevel);
+  if (rawLevel !== null && !Number.isInteger(level)) {
+    return NextResponse.json({ error: 'level must be an integer' }, { status: 400 });
+  }
+  const rawLimit = Number(url.searchParams.get('limit'));
+  const rawOffset = Number(url.searchParams.get('offset'));
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(Math.floor(rawLimit), UNITS_MAX_LIMIT)
+    : UNITS_DEFAULT_LIMIT;
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  try {
+    const detail = await cachedDetail(slug, id);
+    if (!detail) {
+      return NextResponse.json({ error: 'building not found' }, { status: 404 });
+    }
+    const matching = level === null
+      ? detail.units
+      : detail.units.filter((u) => u.level_no === level);
+    return await jsonPayload(
+      req,
+      {
+        building_id: id,
+        level,
+        total: matching.length,
+        offset,
+        limit,
+        units: matching.slice(offset, offset + limit),
+      },
+      {
+        // The page is part of the identity of the response: two pages of the
+        // same building are different resources and must not share an ETag.
+        resource: `${slug}:building-units:${id}:${level ?? 'all'}:${offset}:${limit}`,
+        rev: String(editsRev(slug)),
+        headers: await baseHeaders(slug),
+      },
+    );
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'failed to load units', detail: String(err) },
       { status: 500 },
     );
   }
@@ -271,8 +451,30 @@ export async function queryRoute(slug: string, req: Request): Promise<NextRespon
     return NextResponse.json({ error: 'lon out of range' }, { status: 400 });
   }
 
-  return serve(slug, 'query', async (s) => {
-    const stack = await queryPoint(s, lon, lat, z);
-    return { point: { lon, lat, z }, count: stack.length, stack };
-  });
+  // NOT through serve(). serve() memoises the compressed body under a
+  // per-resource key, and every point query would share the key `slug:query`
+  // while answering about a different point -- the cache would hand one user
+  // the stack under somebody else's cursor. A point query is also a few
+  // hundred bytes about one click: there is nothing here worth compressing or
+  // revalidating, so it answers directly.
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  try {
+    const stack = await queryPoint(slug, lon, lat, z);
+    return NextResponse.json(
+      { point: { lon, lat, z }, count: stack.length, stack },
+      {
+        headers: {
+          ...(await baseHeaders(slug)),
+          // A click is not a cacheable resource.
+          'cache-control': 'no-store',
+        },
+      },
+    );
+  } catch (err) {
+    return NextResponse.json(
+      { error: 'query failed', detail: String(err) },
+      { status: 500 },
+    );
+  }
 }
