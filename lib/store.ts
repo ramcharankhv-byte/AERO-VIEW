@@ -19,6 +19,20 @@ import type {
  * does so purely by reacting to changes here.
  */
 export interface ViewState {
+  /**
+   * Which project the scene is showing.
+   *
+   * The ONLY field here that is not view state, and the only one with exactly
+   * one writer: app/p/[slug]/ProjectViewer.tsx sets it once as the page
+   * mounts, and nothing mutates it afterwards. There is deliberately no
+   * setter -- adding one would invite a second writer, and "which project am
+   * I looking at" changing under a live scene is a page navigation, not a
+   * state change.
+   *
+   * Null only before the first project page has mounted.
+   */
+  projectSlug: string | null;
+
   mode: Mode;
   activeBuildingId: number | null;
   isolatedFloor: number | null;      // level_no, not floor id
@@ -169,6 +183,7 @@ const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
 };
 
 export const useViewStore = create<ViewState>((set) => ({
+  projectSlug: null,
   mode: 'city',
   activeBuildingId: null,
   isolatedFloor: null,

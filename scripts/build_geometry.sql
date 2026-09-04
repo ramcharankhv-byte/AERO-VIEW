@@ -13,6 +13,51 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
+-- 0. Project scope
+--
+-- scripts/03_seed_db.py creates seed_ctx with exactly one row: the project
+-- being seeded, its revenue codes, and the id offsets computed below.
+-- Everything in this file reads from it, so nothing here has to be told which
+-- AOI it is building and no caller can forget to say.
+--
+-- TWO NUMBERS PER ROW, and that distinction is the whole of multi-project
+-- support in this file:
+--
+--   *_no   the ordinal WITHIN the project, restarting at 1. This is what goes
+--          into the ULPIN, because parcel 0001 is meant to exist in every
+--          district -- the state/district prefix is what tells them apart.
+--   *_id   that ordinal plus an offset past every other project's rows. This
+--          is the primary key, and it has to stay globally unique because the
+--          foreign keys and /api/p/<slug>/building/:id address rows by it.
+--
+-- The offsets are taken AFTER this project's own rows are deleted, so
+-- re-seeding a project is idempotent in the ULPINs and only ever moves ids
+-- forward. For the first project seeded every offset is zero, which is what
+-- keeps siripuram's ids AND its identifiers byte-identical to what they were
+-- before this file learned about projects.
+-- ---------------------------------------------------------------------------
+
+-- Re-seeding replaces this project and touches no other. DELETE, not TRUNCATE:
+-- TRUNCATE cannot be scoped to a subset of rows, and the cascade from parcel
+-- carries building -> floor -> unit with it.
+DELETE FROM conflict c
+ USING utility u
+ WHERE c.a_type = 'utility' AND c.a_id = u.id
+   AND u.project_id = (SELECT project_id FROM seed_ctx);
+DELETE FROM utility WHERE project_id = (SELECT project_id FROM seed_ctx);
+DELETE FROM parcel  WHERE project_id = (SELECT project_id FROM seed_ctx);
+
+ALTER TABLE seed_ctx ADD COLUMN parcel_off   int;
+ALTER TABLE seed_ctx ADD COLUMN building_off int;
+ALTER TABLE seed_ctx ADD COLUMN floor_off    int;
+ALTER TABLE seed_ctx ADD COLUMN unit_off     int;
+UPDATE seed_ctx SET
+  parcel_off   = COALESCE((SELECT max(id) FROM parcel), 0),
+  building_off = COALESCE((SELECT max(id) FROM building), 0),
+  floor_off    = COALESCE((SELECT max(id) FROM floor), 0),
+  unit_off     = COALESCE((SELECT max(id) FROM unit), 0);
+
+-- ---------------------------------------------------------------------------
 -- Slice a footprint into an nx*ny grid of unit polygons.
 --
 -- The grid is aligned to the building's own orientation (via the minimum-area
@@ -167,12 +212,18 @@ DELETE FROM p_norm WHERE parcel_utm IS NULL OR ST_IsEmpty(parcel_utm)
 DROP TABLE IF EXISTS parcel_seq;
 CREATE UNLOGGED TABLE parcel_seq AS
 SELECT cluster_id,
-       row_number() OVER (ORDER BY ST_YMax(parcel_utm) DESC, cluster_id)::int AS pid
+       row_number() OVER (ORDER BY ST_YMax(parcel_utm) DESC, cluster_id)::int AS pno,
+       (row_number() OVER (ORDER BY ST_YMax(parcel_utm) DESC, cluster_id)
+          + (SELECT parcel_off FROM seed_ctx))::int AS pid
 FROM p_norm;
 
-INSERT INTO parcel (id, ulpin, geom, area_m2, owner)
+INSERT INTO parcel (id, project_id, ulpin, geom, area_m2, owner)
 SELECT s.pid,
-       ulpin_fmt(s.pid),
+       (SELECT project_id FROM seed_ctx),
+       ulpin_fmt(s.pno, NULL, NULL, NULL,
+                 (SELECT state_code    FROM seed_ctx),
+                 (SELECT district_code FROM seed_ctx),
+                 (SELECT scheme_code   FROM seed_ctx)),
        ST_Transform(p.parcel_utm, 4326),
        round(ST_Area(p.parcel_utm)::numeric, 2),
        (ARRAY['A. Lakshmi','B. V. Ramana','CH. Padmavathi','D. Suryanarayana',
@@ -189,14 +240,22 @@ DROP TABLE IF EXISTS building_seq;
 CREATE UNLOGGED TABLE building_seq AS
 SELECT b.osm_id,
        s.pid,
+       s.pno,
        row_number() OVER (PARTITION BY s.pid ORDER BY ST_Area(b.geom_utm) DESC)::int AS bno,
-       row_number() OVER (ORDER BY s.pid, ST_Area(b.geom_utm) DESC)::int             AS bid
+       (row_number() OVER (ORDER BY s.pid, ST_Area(b.geom_utm) DESC)
+          + (SELECT building_off FROM seed_ctx))::int                                AS bid
 FROM b_norm b JOIN parcel_seq s USING (cluster_id);
 
-INSERT INTO building (id, parcel_id, ulpin, footprint, height_m, floors, basements,
-                      ground_elev, use_type, height_source, survey_synthetic,
+INSERT INTO building (id, project_id, parcel_id, ulpin, footprint, height_m, floors,
+                      basements, ground_elev, use_type, height_source, survey_synthetic,
                       osm_id, name, address)
-SELECT q.bid, q.pid, ulpin_fmt(q.pid, q.bno),
+SELECT q.bid,
+       (SELECT project_id FROM seed_ctx),
+       q.pid,
+       ulpin_fmt(q.pno, q.bno, NULL, NULL,
+                 (SELECT state_code    FROM seed_ctx),
+                 (SELECT district_code FROM seed_ctx),
+                 (SELECT scheme_code   FROM seed_ctx)),
        b.geom4326,
        (b.props ->> 'height_m')::double precision,
        (b.props ->> 'floors')::int,
@@ -214,9 +273,13 @@ FROM b_norm b JOIN building_seq q USING (osm_id);
 -- 5. floor rows -- one slab per level, basements below ground_elev
 -- ---------------------------------------------------------------------------
 INSERT INTO floor (id, building_id, ulpin, level_no, z_min, z_max, geom, detect_source)
-SELECT row_number() OVER (ORDER BY b.id, lvl)::int,
+SELECT (row_number() OVER (ORDER BY b.id, lvl)
+          + (SELECT floor_off FROM seed_ctx))::int,
        b.id,
-       ulpin_fmt(b.parcel_id, bs.bno, lvl),
+       ulpin_fmt(bs.pno, bs.bno, lvl, NULL,
+                 (SELECT state_code    FROM seed_ctx),
+                 (SELECT district_code FROM seed_ctx),
+                 (SELECT scheme_code   FROM seed_ctx)),
        lvl,
        b.ground_elev + lvl * 3.2,
        b.ground_elev + lvl * 3.2 + 3.2,
@@ -225,7 +288,8 @@ SELECT row_number() OVER (ORDER BY b.id, lvl)::int,
 FROM building b
 JOIN building_seq bs ON bs.bid = b.id
 CROSS JOIN LATERAL generate_series(-b.basements, b.floors - 1) AS lvl
-WHERE make_prism(b.footprint, b.ground_elev + lvl * 3.2, b.ground_elev + lvl * 3.2 + 3.2) IS NOT NULL;
+WHERE b.project_id = (SELECT project_id FROM seed_ctx)
+  AND make_prism(b.footprint, b.ground_elev + lvl * 3.2, b.ground_elev + lvl * 3.2 + 3.2) IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- 6. unit rows -- grid subdivision of the footprint, above-ground levels only
@@ -233,7 +297,7 @@ WHERE make_prism(b.footprint, b.ground_elev + lvl * 3.2, b.ground_elev + lvl * 3
 -- ---------------------------------------------------------------------------
 WITH g AS (
   SELECT f.id AS floor_id, f.level_no, f.z_min, f.z_max,
-         b.parcel_id AS pid, bs.bno,
+         bs.pno, bs.bno,
          (row_number() OVER (PARTITION BY f.id))::int AS idx,
          c.cell
   FROM floor f
@@ -244,6 +308,7 @@ WITH g AS (
         CASE WHEN b.use_type = 'residential' THEN 2 ELSE 3 END,
         CASE WHEN b.use_type = 'residential' THEN 2 ELSE 1 END) AS c(cell)
   WHERE f.level_no >= 0
+    AND b.project_id = (SELECT project_id FROM seed_ctx)
 ),
 g_prism AS (
   SELECT g.*,
@@ -252,9 +317,13 @@ g_prism AS (
 )
 INSERT INTO unit (id, floor_id, ulpin, unit_no, geom_3d, z_min, z_max,
                   carpet_m2, built_m2, tenure, encumbrance)
-SELECT row_number() OVER (ORDER BY g.floor_id, g.idx)::int,
+SELECT (row_number() OVER (ORDER BY g.floor_id, g.idx)
+          + (SELECT unit_off FROM seed_ctx))::int,
        g.floor_id,
-       ulpin_fmt(g.pid, g.bno, g.level_no, g.idx),
+       ulpin_fmt(g.pno, g.bno, g.level_no, g.idx,
+                 (SELECT state_code    FROM seed_ctx),
+                 (SELECT district_code FROM seed_ctx),
+                 (SELECT scheme_code   FROM seed_ctx)),
        chr(65 + ((g.level_no)::int % 26)) || lpad(g.idx::text, 2, '0'),
        g.geom_3d,
        g.z_min + 0.15,
@@ -276,10 +345,19 @@ COMMIT;
 -- ---------------------------------------------------------------------------
 ANALYZE parcel; ANALYZE building; ANALYZE floor; ANALYZE unit;
 
-\echo '--- seed summary ---'
-SELECT 'parcels'   AS entity, count(*) FROM parcel
+\echo '--- seed summary (this project) ---'
+SELECT 'parcels' AS entity, count(*) FROM parcel
+ WHERE project_id = (SELECT project_id FROM seed_ctx)
 UNION ALL SELECT 'buildings', count(*) FROM building
-UNION ALL SELECT 'floors',    count(*) FROM floor
-UNION ALL SELECT 'units',     count(*) FROM unit;
+ WHERE project_id = (SELECT project_id FROM seed_ctx)
+UNION ALL SELECT 'floors', count(*) FROM floor f
+ JOIN building b ON b.id = f.building_id
+ WHERE b.project_id = (SELECT project_id FROM seed_ctx)
+UNION ALL SELECT 'units', count(*) FROM unit u
+ JOIN floor f2 ON f2.id = u.floor_id
+ JOIN building b2 ON b2.id = f2.building_id
+ WHERE b2.project_id = (SELECT project_id FROM seed_ctx);
 
-SELECT height_source, count(*) FROM building GROUP BY 1 ORDER BY 2 DESC;
+SELECT height_source, count(*) FROM building
+ WHERE project_id = (SELECT project_id FROM seed_ctx)
+ GROUP BY 1 ORDER BY 2 DESC;

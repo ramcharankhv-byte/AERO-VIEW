@@ -13,6 +13,7 @@ import UtilitiesLayer from '../layers/UtilitiesLayer';
 import ConflictLayer from '../layers/ConflictLayer';
 import ElevationRuler from '../ui/ElevationRuler';
 import BuildingTooltip from './BuildingTooltip';
+import type { Project } from '@/lib/types';
 
 /**
  * The single Cesium scene. Every view mode is a state of this one scene --
@@ -21,9 +22,9 @@ import BuildingTooltip from './BuildingTooltip';
  * Children only mount once CesiumRoot reports the viewer is ready, so no layer
  * has to defend against a null viewer on first render.
  */
-export default function Scene() {
+export default function Scene({ project }: { project: Project }) {
   return (
-    <CesiumRoot>
+    <CesiumRoot project={project}>
       {/* Owns all camera motion. */}
       <CameraDirector />
       {/* Owns all picking; writes to the store. */}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useDataStore } from '@/lib/store';
+import { useDataStore, useViewStore } from '@/lib/store';
 import { fetchInitialData } from '@/lib/cesium/setup';
 
 /**
@@ -20,16 +20,21 @@ import { fetchInitialData } from '@/lib/cesium/setup';
  */
 export default function DataErrorNotice() {
   const error = useDataStore((s) => s.error);
+  // The project whose fetch failed. Read from the view store rather than
+  // taken as a prop: this notice is rendered by OverlayRoot, which sits
+  // outside the Cesium tree and so has no viewer context to read it from.
+  const slug = useViewStore((s) => s.projectSlug);
   const [retrying, setRetrying] = useState(false);
 
   if (!error) return null;
 
   const retry = async () => {
+    if (!slug) return;
     setRetrying(true);
     const store = useDataStore.getState();
     store.setLoading(true);
     try {
-      const data = await fetchInitialData();
+      const data = await fetchInitialData(slug);
       store.setBuildings(data.buildings);
       store.setParcels(data.parcels);
       store.setUtilities(data.utilities);

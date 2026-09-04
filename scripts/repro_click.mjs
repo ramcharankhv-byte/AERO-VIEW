@@ -5,7 +5,7 @@
  */
 import puppeteer from 'puppeteer-core';
 
-const URL = 'http://localhost:3000/';
+const URL = 'http://localhost:3000/p/siripuram';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
 const errors = [];

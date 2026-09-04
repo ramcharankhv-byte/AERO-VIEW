@@ -17,14 +17,40 @@ import puppeteer from 'puppeteer-core';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
-const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/';
+/**
+ * The viewer, for the demo project.
+ *
+ * `/` is the project gallery now, so the default target is the demo project's
+ * own page. Override with ULPIN_URL to point at another project or another
+ * port; the unscoped /api/... endpoints this script fetches are aliases onto
+ * the same project, so nothing else here had to change.
+ */
+const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 const CHROME = process.env.CHROME_PATH
   ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const EDITS = process.env.ULPIN_EDITS_PATH
-  ?? path.join(process.cwd(), 'data', 'edits.json');
+/**
+ * Where the store this run should be asserting against lives.
+ *
+ * ULPIN_EDITS_PATH names a BASE DIRECTORY now, not a file: edits are per
+ * project (data/projects/<slug>/edits.json), because the store is keyed by
+ * building id and building ids are only unique within a project. A value still
+ * ending in `.json` is read as the directory that file was in, which is what
+ * lib/data/edits.ts does too -- an existing development setup keeps working
+ * rather than silently creating a directory called `edits.json`.
+ *
+ * This drives the UNSCOPED /api/building/:id alias, which resolves to the demo
+ * project, so the store it should find is the demo project's.
+ */
+const SLUG = process.env.ULPIN_PROJECT ?? 'siripuram';
+const EDITS_BASE = (() => {
+  const override = process.env.ULPIN_EDITS_PATH;
+  if (!override) return path.join(process.cwd(), 'data', 'projects');
+  return override.toLowerCase().endsWith('.json') ? path.dirname(override) : override;
+})();
+const EDITS = path.join(EDITS_BASE, SLUG, 'edits.json');
 
 const BUILDING_COUNT = JSON.parse(
-  readFileSync(path.join(process.cwd(), 'data', 'api', 'buildings.json'), 'utf-8'),
+  readFileSync(path.join(process.cwd(), 'data', 'api', 'siripuram', 'buildings.json'), 'utf-8'),
 ).features.length;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
