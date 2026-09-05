@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { listProjects, DEFAULT_SLUG } from '@/lib/projects';
+import { currentSession } from '@/lib/auth/guards';
 import ProjectCard from '@/components/gallery/ProjectCard';
 
 export const dynamic = 'force-dynamic';
@@ -31,8 +33,19 @@ export const metadata: Metadata = {
  * disabled because the brief asks for their absence to be explicit, which is a
  * different situation from inventing an entry point for a feature that does
  * not exist.
+ *
+ * The gate is the same one RoleGate applies to a project: nothing about the
+ * cadastre -- not even the list of what exists -- is served to a caller
+ * without a session, and the redirect happens during the server render, so
+ * no Cesium bundle is requested before anyone has signed in. A citizen goes
+ * straight to their own project; the gallery is a choice only a government
+ * user has to make.
  */
 export default async function GalleryPage() {
+  const me = await currentSession();
+  if (!me) redirect('/login');
+  if (me.kind === 'citizen') redirect(`/p/${me.claims.slug}`);
+
   const projects = await listProjects();
 
   return (
