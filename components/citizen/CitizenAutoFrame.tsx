@@ -10,10 +10,17 @@ import { useViewStore } from '@/lib/store';
  * already on the right place:
  *   - The active building is theirs.
  *   - The mode is 'floor', the isolated floor is theirs.
- *   - The underground view is on, so the basements (parking, water
- *     riser, sewer tank) are immediately visible.
  *   - Their flat is selected -- UnitsLayer renders the selected unit
  *     in a different colour.
+ *
+ * What it deliberately does NOT do is switch the underground view on.
+ * It used to, so that the basements (parking, water riser, sewer tank)
+ * were visible on first paint. That made a subsurface scene -- globe
+ * translucency, the camera dropped to a shallow 18-degree pitch beneath
+ * the surface -- the FIRST thing a citizen ever saw, before they had
+ * asked for it. Underground stays a thing the user turns on from the
+ * ActionBar, in both roles; a citizen opens on the ordinary view of
+ * their own floor.
  *
  * This is the only piece of UI that looks at the citizen's session;
  * the rest of the scene is the same as the government view, with the
@@ -85,7 +92,6 @@ export default function CitizenAutoFrame() {
         // building before isolateFloor() drops to the floor level.
         useViewStore.getState().selectBuilding(me.buildingId);
         useViewStore.getState().isolateFloor(me.floor);
-        useViewStore.getState().setUnderground(true);
         if (myUnit) {
           useViewStore.setState({ selectedUnitId: myUnit.id });
         }

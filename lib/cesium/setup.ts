@@ -98,12 +98,23 @@ export function frameHeightFor(bbox: Bbox): number {
  * only setView in the application.
  */
 export function frameInitialCamera(viewer: Cesium.Viewer, bbox: Bbox = DEMO_BBOX): void {
-  const [west, south, east, north] = bbox;
+  // A malformed bbox here is worse than a malformed one anywhere else: this is
+  // the camera's first pose, so a NaN in it makes every frame the scene ever
+  // renders throw "normalized result is not a number" out of
+  // computeCullingVolume, with no later flight able to recover it. Substituting
+  // the demo bbox leaves a viewer that works and is merely pointed at the wrong
+  // place, which is a bug a user can see and report. Chosen inline rather than
+  // by recursing, so the fallback cannot itself loop.
+  const safe = bbox.every(Number.isFinite) ? bbox : DEMO_BBOX;
+  if (safe !== bbox) {
+    console.warn('[camera] non-finite bbox, framing the demo AOI instead', bbox);
+  }
+  const [west, south, east, north] = safe;
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(
       (west + east) / 2,
       (south + north) / 2,
-      frameHeightFor(bbox),
+      frameHeightFor(safe),
     ),
     orientation: {
       heading: Cesium.Math.toRadians(35),

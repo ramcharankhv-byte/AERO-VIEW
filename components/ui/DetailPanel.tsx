@@ -331,12 +331,12 @@ export default function DetailPanel() {
   // In underground mode with NOTHING picked, the surface stack is not the
   // subject any more, so fall back to the area summary.
   //
-  // A selected flat is the exception, and it is the whole citizen view. The
-  // citizen session opens with underground on (so the basements and the
-  // building's own risers are visible) AND their own flat selected -- so this
-  // fallback fired on every citizen boot and the one panel they came for, the
-  // register behind their own door, was never reachable. A deliberate
-  // selection outranks a view mode.
+  // A selected flat is the exception. A citizen boots with their own flat
+  // selected, and when this fallback ignored that, the one panel they came
+  // for -- the register behind their own door -- went unreachable the moment
+  // underground was on. (Underground is no longer switched on for them at
+  // boot, so it is now only reachable by toggling it themselves; the rule
+  // holds either way.) A deliberate selection outranks a view mode.
   // The boot fetch writes buildings, parcels, utilities and conflicts as four
   // separate stores, then clears `loading` -- so `loading` is the only signal
   // that all four have landed.

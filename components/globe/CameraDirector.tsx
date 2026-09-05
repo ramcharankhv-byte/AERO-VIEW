@@ -50,6 +50,40 @@ function poseFor(
   };
 }
 
+/**
+ * The one gate every camera destination in this file passes through.
+ *
+ * Cesium has no tolerance for a non-finite pose. A single NaN reaching
+ * camera.position does not spoil one frame -- Scene.updateFrameState calls
+ * frustum.computeCullingVolume(positionWC, directionWC, upWC), which
+ * normalises the cross product of a NaN basis and throws
+ *
+ *   DeveloperError: normalized result is not a number
+ *
+ * on EVERY subsequent frame, because the bad position is now the camera's
+ * state. So one missing height_m, one terrain sample that never landed, or
+ * one degenerate footprint permanently kills the renderer instead of costing
+ * a single flight.
+ *
+ * Refusing the flight leaves the camera exactly where it is, which is by
+ * construction a pose Cesium already accepted.
+ */
+function flyToPose(
+  camera: Cesium.Camera,
+  pose: { destination: Cesium.Cartesian3; orientation: Cesium.HeadingPitchRollValues },
+): void {
+  const { destination: d, orientation: o } = pose;
+  if (
+    !Number.isFinite(d.x) || !Number.isFinite(d.y) || !Number.isFinite(d.z)
+    || !Number.isFinite(o.heading) || !Number.isFinite(o.pitch)
+    || !Number.isFinite(o.roll)
+  ) {
+    console.warn('[camera] refused a non-finite pose', pose);
+    return;
+  }
+  camera.flyTo({ ...pose, duration: FLY_MS });
+}
+
 export default function CameraDirector() {
   const { viewer, ground, ready, project } = useViewer();
   // The project's own centre, not a module constant. Pressing Reset on a
@@ -90,22 +124,16 @@ export default function CameraDirector() {
         }
         return { ...aoiCentre, height: 130 };
       })();
-      camera.flyTo({
-        ...poseFor(target.lon, target.lat, 0, target.height, -18),
-        duration: FLY_MS,
-      });
+      flyToPose(camera, poseFor(target.lon, target.lat, 0, target.height, -18));
       return;
     }
 
     // ---- CITY ------------------------------------------------------------
     if (mode === 'city' || activeBuildingId == null) {
-      camera.flyTo({
-        // Matches frameInitialCamera's height/heading/pitch, so Reset returns
-        // to the pose the scene opened on rather than a subtly different one.
-        // Both read the height from the same frameHeightFor(bbox).
-        ...poseFor(aoiCentre.lon, aoiCentre.lat, 0, cityHeight, -55, 35),
-        duration: FLY_MS,
-      });
+      // Matches frameInitialCamera's height/heading/pitch, so Reset returns to
+      // the pose the scene opened on rather than a subtly different one. Both
+      // read the height from the same frameHeightFor(bbox).
+      flyToPose(camera, poseFor(aoiCentre.lon, aoiCentre.lat, 0, cityHeight, -55, 35));
       return;
     }
 
@@ -125,10 +153,7 @@ export default function CameraDirector() {
       if (unit) {
         const uc = ringCentreWithRadius((unit.ring.coordinates as number[][][])[0]);
         const z = toSceneZ((unit.z_min + unit.z_max) / 2, props.ground_elev, terrainH);
-        camera.flyTo({
-          ...poseFor(uc.lon, uc.lat, z, Math.max(28, uc.radius * 2.2), -24),
-          duration: FLY_MS,
-        });
+        flyToPose(camera, poseFor(uc.lon, uc.lat, z, Math.max(28, uc.radius * 2.2), -24));
         return;
       }
     }
@@ -140,10 +165,7 @@ export default function CameraDirector() {
       const z = fl
         ? toSceneZ((fl.z_min + fl.z_max) / 2, props.ground_elev, terrainH)
         : baseZ;
-      camera.flyTo({
-        ...poseFor(lon, lat, z, Math.max(34, radius * 1.6), -16),
-        duration: FLY_MS,
-      });
+      flyToPose(camera, poseFor(lon, lat, z, Math.max(34, radius * 1.6), -16));
       return;
     }
 
@@ -152,6 +174,18 @@ export default function CameraDirector() {
     const topZ = baseZ + props.height_m;
     const centre = Cesium.Cartesian3.fromDegrees(lon, lat, (baseZ + topZ) / 2);
     const sphereRadius = Math.max(radius, props.height_m * 0.6, 18);
+    // Same gate as flyToPose, for the one destination that is a sphere rather
+    // than a pose: a null height_m or an unsampled terrain height would put a
+    // NaN centre or radius into the camera and throw on every frame after.
+    if (
+      !Number.isFinite(centre.x) || !Number.isFinite(centre.y)
+      || !Number.isFinite(centre.z) || !Number.isFinite(sphereRadius)
+    ) {
+      console.warn('[camera] refused a non-finite bounding sphere', {
+        id: props.id, centre, sphereRadius,
+      });
+      return;
+    }
     camera.flyToBoundingSphere(new Cesium.BoundingSphere(centre, sphereRadius), {
       duration: FLY_MS,
       offset: new Cesium.HeadingPitchRange(
