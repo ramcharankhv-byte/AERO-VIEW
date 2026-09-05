@@ -2,13 +2,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 import type {
-  BuildingDetail, BuildingProps, ConflictRow, EnrichedBuilding, GeoFC,
-  ParcelInfo, Project, ProjectStats, RoadProps, StackHit, UtilityProps,
+  BuildingDetail, BuildingProps, ConflictRow, EnrichedBuilding, FlatRegisterEntry,
+  GeoFC, ParcelInfo, Project, ProjectStats, RoadProps, StackHit, UtilityProps,
 } from './types';
 import { enrichBuilding, enrichCollection, type UnitFacts } from './mock/building';
 import { allEdits, editsFor, editsRev } from './data/edits';
 import type { BuildingEdit } from './data/building-schema';
-import { API_DIR, DEFAULT_SLUG, isValidSlug } from './projects';
+import { API_DIR, DEFAULT_SLUG, PROJECTS_DIR, isValidSlug } from './projects';
 
 /**
  * Data access with two backends, scoped by project.
@@ -241,6 +241,46 @@ async function snapshot<T>(slug: string, name: string): Promise<T> {
   const parsed = JSON.parse(raw);
   fileCache.set(key, parsed);
   return parsed as T;
+}
+
+/**
+ * The project's flat register: ownership, charge, tax and bills, keyed by the
+ * flat's ULPIN.
+ *
+ * Deliberately NOT a cadastre table. The cadastre stores what the survey
+ * knows -- geometry, level, ULPIN, title holder; who a flat is mortgaged to
+ * and whether last quarter's water bill is settled are a different record
+ * with a different owner and a different update cadence. Keeping them in one
+ * committed file per project also means PostGIS and the snapshot cannot
+ * disagree about them: the same file is read on both paths, which is exactly
+ * the split-brain that lost the demo building and the citizen's utilities.
+ *
+ * A project with no register file simply has none. Every flat then renders
+ * from the cadastre alone, which is the correct answer for the 384 OSM-derived
+ * buildings -- inventing a mortgage for them would be presenting a guess as a
+ * record.
+ */
+async function flatRegister(
+  slug: string,
+): Promise<Record<string, FlatRegisterEntry>> {
+  if (!isValidSlug(slug)) throw new Error(`invalid project slug: ${slug}`);
+  const key = `projects/${slug}/flat-register.json`;
+  if (fileCache.has(key)) return fileCache.get(key) as Record<string, FlatRegisterEntry>;
+  let parsed: Record<string, FlatRegisterEntry> = {};
+  try {
+    const raw = await fs.readFile(
+      path.join(PROJECTS_DIR, slug, 'flat-register.json'),
+      'utf-8',
+    );
+    const json: unknown = JSON.parse(raw);
+    if (json && typeof json === 'object' && !Array.isArray(json)) {
+      parsed = json as Record<string, FlatRegisterEntry>;
+    }
+  } catch {
+    // No register for this project. Not an error: see above.
+  }
+  fileCache.set(key, parsed);
+  return parsed;
 }
 
 /**
@@ -835,8 +875,9 @@ export async function enrichBuildingDetail(
   // the header rows the panel reads from the FeatureCollection and the rows it
   // reads from here can never disagree.
   const id = raw.building.id;
-  const [units, streets, edit, collection] = await Promise.all([
+  const [units, streets, edit, collection, register] = await Promise.all([
     unitIndex(slug), streetIndex(slug), editsFor(slug, id), buildingsFC(slug),
+    flatRegister(slug),
   ]);
   const ring = (raw.building.footprint?.coordinates as number[][][] | undefined)?.[0];
   let lon = 0;
@@ -856,7 +897,18 @@ export async function enrichBuildingDetail(
     }),
     edit,
   );
-  return { ...raw, building: { ...enriched, footprint: raw.building.footprint } };
+  // The register rides on the unit rows it belongs to, so the panel reads one
+  // object per flat and the citizen filter's field whitelist redacts the money
+  // for a neighbour's flat without needing to know these fields exist.
+  const withRegister = raw.units.map((u) => {
+    const entry = u.ulpin ? register[u.ulpin] : undefined;
+    return entry ? { ...u, ...entry } : u;
+  });
+  return {
+    ...raw,
+    building: { ...enriched, footprint: raw.building.footprint },
+    units: withRegister,
+  };
 }
 
 export async function getBuildingDetail(

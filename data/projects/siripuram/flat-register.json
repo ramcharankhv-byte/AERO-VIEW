@@ -1,0 +1,1286 @@
+{
+  "AP-VSP-3D26-9999-001-02-201": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2022/VSP/44083",
+    "registered_on": "2022-02-10",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-4885062",
+      "sanctioned_inr": 4400000,
+      "outstanding_inr": 2772000,
+      "emi_inr": 28420,
+      "charge_from": "2022-02-11",
+      "closes_on": "2042-02-11"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1102/201",
+      "year": "2026-27",
+      "demand_inr": 18000,
+      "paid_inr": 18000,
+      "paid_on": "2026-06-17",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-931173",
+        "period": "Aug 2026",
+        "amount_inr": 540,
+        "paid": false,
+        "due_on": "2026-09-12",
+        "paid_on": null
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-143453",
+        "period": "Aug 2026",
+        "amount_inr": 2320,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-925938",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-02-202": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2017/VSP/45702",
+    "registered_on": "2017-03-07",
+    "mortgage": {
+      "bank": "State Bank of India",
+      "branch": "Siripuram, Visakhapatnam",
+      "loan_no": "SBI-HL-6107441",
+      "sanctioned_inr": 4100000,
+      "outstanding_inr": 2542000,
+      "emi_inr": 26480,
+      "charge_from": "2017-03-08",
+      "closes_on": "2037-03-08"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1102/202",
+      "year": "2026-27",
+      "demand_inr": 21800,
+      "paid_inr": 21800,
+      "paid_on": "2026-08-20",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-998316",
+        "period": "Aug 2026",
+        "amount_inr": 720,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-634166",
+        "period": "Aug 2026",
+        "amount_inr": 2350,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-348319",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-02-203": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2020/VSP/47321",
+    "registered_on": "2020-04-26",
+    "mortgage": {
+      "bank": "LIC Housing Finance",
+      "branch": "Visakhapatnam",
+      "loan_no": "LICHFL-HL-7329820",
+      "sanctioned_inr": 4200000,
+      "outstanding_inr": 2562000,
+      "emi_inr": 27130,
+      "charge_from": "2020-04-27",
+      "closes_on": "2040-04-27"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1102/203",
+      "year": "2026-27",
+      "demand_inr": 17600,
+      "paid_inr": 17600,
+      "paid_on": "2026-04-01",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-675935",
+        "period": "Aug 2026",
+        "amount_inr": 500,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-311785",
+        "period": "Aug 2026",
+        "amount_inr": 2380,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-670700",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-02-204": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2023/VSP/48940",
+    "registered_on": "2023-09-13",
+    "mortgage": {
+      "bank": "Union Bank of India",
+      "branch": "Asilmetta, Visakhapatnam",
+      "loan_no": "UBI-HL-8552199",
+      "sanctioned_inr": 4700000,
+      "outstanding_inr": 3055000,
+      "emi_inr": 30350,
+      "charge_from": "2023-09-14",
+      "closes_on": "2043-09-14"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1102/204",
+      "year": "2026-27",
+      "demand_inr": 21400,
+      "paid_inr": 21400,
+      "paid_on": "2026-06-14",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-743078",
+        "period": "Aug 2026",
+        "amount_inr": 680,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-889404",
+        "period": "Aug 2026",
+        "amount_inr": 2170,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-993081",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": false,
+        "due_on": "2026-09-05",
+        "paid_on": null
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-05-501": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2021/VSP/43866",
+    "registered_on": "2021-07-20",
+    "mortgage": {
+      "bank": "State Bank of India",
+      "branch": "Siripuram, Visakhapatnam",
+      "loan_no": "SBI-HL-7854872",
+      "sanctioned_inr": 4900000,
+      "outstanding_inr": 2695000,
+      "emi_inr": 31650,
+      "charge_from": "2021-07-21",
+      "closes_on": "2041-07-21"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1105/501",
+      "year": "2026-27",
+      "demand_inr": 14600,
+      "paid_inr": 14600,
+      "paid_on": "2026-07-07",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-995288",
+        "period": "Aug 2026",
+        "amount_inr": 640,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-371094",
+        "period": "Aug 2026",
+        "amount_inr": 1810,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-529909",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-05-502": {
+    "ownership": "owned",
+    "title_deed": "DOC/2018/VSP/42247",
+    "registered_on": "2018-08-23",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1105/502",
+      "year": "2026-27",
+      "demand_inr": 18800,
+      "paid_inr": 18800,
+      "paid_on": "2026-04-04",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-162431",
+        "period": "Aug 2026",
+        "amount_inr": 460,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-01"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-948713",
+        "period": "Aug 2026",
+        "amount_inr": 1840,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-852290",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-05-503": {
+    "ownership": "owned",
+    "title_deed": "DOC/2023/VSP/40628",
+    "registered_on": "2023-09-04",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1105/503",
+      "year": "2026-27",
+      "demand_inr": 15000,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-740050",
+        "period": "Aug 2026",
+        "amount_inr": 680,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-626332",
+        "period": "Aug 2026",
+        "amount_inr": 1870,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-274671",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": false,
+        "due_on": "2026-09-05",
+        "paid_on": null
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-05-504": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2020/VSP/48009",
+    "registered_on": "2020-02-17",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-2522010",
+      "sanctioned_inr": 4600000,
+      "outstanding_inr": 2760000,
+      "emi_inr": 29710,
+      "charge_from": "2020-02-18",
+      "closes_on": "2040-02-18"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1105/504",
+      "year": "2026-27",
+      "demand_inr": 19200,
+      "paid_inr": 19200,
+      "paid_on": "2026-07-10",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-807193",
+        "period": "Aug 2026",
+        "amount_inr": 500,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-303951",
+        "period": "Aug 2026",
+        "amount_inr": 1660,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-597052",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-09-901": {
+    "ownership": "owned",
+    "title_deed": "DOC/2023/VSP/41730",
+    "registered_on": "2023-11-20",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1109/901",
+      "year": "2026-27",
+      "demand_inr": 21000,
+      "paid_inr": 21000,
+      "paid_on": "2026-07-04",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-880276",
+        "period": "Aug 2026",
+        "amount_inr": 560,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-684054",
+        "period": "Aug 2026",
+        "amount_inr": 1510,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-833633",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-09-902": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2018/VSP/43349",
+    "registered_on": "2018-10-23",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-1785573",
+      "sanctioned_inr": 3600000,
+      "outstanding_inr": 1512000,
+      "emi_inr": 23250,
+      "charge_from": "2018-10-24",
+      "closes_on": "2038-10-24"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1109/902",
+      "year": "2026-27",
+      "demand_inr": 16800,
+      "paid_inr": 16800,
+      "paid_on": "2026-05-01",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-947419",
+        "period": "Aug 2026",
+        "amount_inr": 380,
+        "paid": false,
+        "due_on": "2026-09-12",
+        "paid_on": null
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-106435",
+        "period": "Aug 2026",
+        "amount_inr": 1480,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-256014",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-09-903": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2021/VSP/44968",
+    "registered_on": "2021-09-04",
+    "mortgage": {
+      "bank": "Union Bank of India",
+      "branch": "Asilmetta, Visakhapatnam",
+      "loan_no": "UBI-HL-3007952",
+      "sanctioned_inr": 3700000,
+      "outstanding_inr": 1591000,
+      "emi_inr": 23900,
+      "charge_from": "2021-09-05",
+      "closes_on": "2041-09-05"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1109/903",
+      "year": "2026-27",
+      "demand_inr": 20600,
+      "paid_inr": 10300,
+      "paid_on": "2026-04-20",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-625038",
+        "period": "Aug 2026",
+        "amount_inr": 600,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-428816",
+        "period": "Aug 2026",
+        "amount_inr": 1450,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-578395",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-01"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-09-904": {
+    "ownership": "owned",
+    "title_deed": "DOC/2016/VSP/42635",
+    "registered_on": "2016-08-07",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1109/904",
+      "year": "2026-27",
+      "demand_inr": 18000,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-813133",
+        "period": "Aug 2026",
+        "amount_inr": 740,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-872149",
+        "period": "Aug 2026",
+        "amount_inr": 1420,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-121728",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-13-1301": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2018/VSP/42487",
+    "registered_on": "2018-04-09",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-6141351",
+      "sanctioned_inr": 3400000,
+      "outstanding_inr": 2754000,
+      "emi_inr": 21960,
+      "charge_from": "2018-04-10",
+      "closes_on": "2038-04-10"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1113/1301",
+      "year": "2026-27",
+      "demand_inr": 16000,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-273959",
+        "period": "Aug 2026",
+        "amount_inr": 460,
+        "paid": false,
+        "due_on": "2026-09-12",
+        "paid_on": null
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-869679",
+        "period": "Aug 2026",
+        "amount_inr": 1240,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-949078",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-13-1302": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2023/VSP/47344",
+    "registered_on": "2023-01-17",
+    "mortgage": {
+      "bank": "Union Bank of India",
+      "branch": "Asilmetta, Visakhapatnam",
+      "loan_no": "UBI-HL-9808488",
+      "sanctioned_inr": 5300000,
+      "outstanding_inr": 4134000,
+      "emi_inr": 34230,
+      "charge_from": "2023-01-18",
+      "closes_on": "2043-01-18"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1113/1302",
+      "year": "2026-27",
+      "demand_inr": 20600,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-851578",
+        "period": "Aug 2026",
+        "amount_inr": 760,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-802536",
+        "period": "Aug 2026",
+        "amount_inr": 1210,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-626697",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": false,
+        "due_on": "2026-09-05",
+        "paid_on": null
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-13-1303": {
+    "ownership": "owned",
+    "title_deed": "DOC/2020/VSP/45725",
+    "registered_on": "2020-02-25",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1113/1303",
+      "year": "2026-27",
+      "demand_inr": 16400,
+      "paid_inr": 8200,
+      "paid_on": "2026-06-14",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-529197",
+        "period": "Aug 2026",
+        "amount_inr": 500,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-224917",
+        "period": "Aug 2026",
+        "amount_inr": 1180,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-304316",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-13-1304": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2017/VSP/46630",
+    "registered_on": "2017-11-06",
+    "mortgage": {
+      "bank": "State Bank of India",
+      "branch": "Siripuram, Visakhapatnam",
+      "loan_no": "SBI-HL-2474214",
+      "sanctioned_inr": 5100000,
+      "outstanding_inr": 3876000,
+      "emi_inr": 32940,
+      "charge_from": "2017-11-07",
+      "closes_on": "2037-11-07"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1113/1304",
+      "year": "2026-27",
+      "demand_inr": 19400,
+      "paid_inr": 19400,
+      "paid_on": "2026-08-06",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-985864",
+        "period": "Aug 2026",
+        "amount_inr": 640,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-936822",
+        "period": "Aug 2026",
+        "amount_inr": 1390,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-881935",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-17-1701": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2022/VSP/46411",
+    "registered_on": "2022-08-05",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-2022587",
+      "sanctioned_inr": 3200000,
+      "outstanding_inr": 2048000,
+      "emi_inr": 20670,
+      "charge_from": "2022-08-06",
+      "closes_on": "2042-08-06"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1117/1701",
+      "year": "2026-27",
+      "demand_inr": 14800,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-870235",
+        "period": "Aug 2026",
+        "amount_inr": 380,
+        "paid": false,
+        "due_on": "2026-09-12",
+        "paid_on": null
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-534045",
+        "period": "Aug 2026",
+        "amount_inr": 2920,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-914494",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-17-1702": {
+    "ownership": "owned",
+    "title_deed": "DOC/2019/VSP/42268",
+    "registered_on": "2019-05-24",
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1117/1702",
+      "year": "2026-27",
+      "demand_inr": 18200,
+      "paid_inr": 9100,
+      "paid_on": "2026-08-17",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-547854",
+        "period": "Aug 2026",
+        "amount_inr": 560,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-601188",
+        "period": "Aug 2026",
+        "amount_inr": 2890,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-336875",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": false,
+        "due_on": "2026-09-05",
+        "paid_on": null
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-17-1703": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2016/VSP/40649",
+    "registered_on": "2016-06-16",
+    "mortgage": {
+      "bank": "LIC Housing Finance",
+      "branch": "Visakhapatnam",
+      "loan_no": "LICHFL-HL-8577828",
+      "sanctioned_inr": 3400000,
+      "outstanding_inr": 2244000,
+      "emi_inr": 21960,
+      "charge_from": "2016-06-17",
+      "closes_on": "2036-06-17"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1117/1703",
+      "year": "2026-27",
+      "demand_inr": 14400,
+      "paid_inr": 14400,
+      "paid_on": "2026-07-25",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-225473",
+        "period": "Aug 2026",
+        "amount_inr": 820,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-278807",
+        "period": "Aug 2026",
+        "amount_inr": 2860,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-659256",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-17-1704": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2021/VSP/45506",
+    "registered_on": "2021-11-18",
+    "mortgage": {
+      "bank": "State Bank of India",
+      "branch": "Siripuram, Visakhapatnam",
+      "loan_no": "SBI-HL-4910691",
+      "sanctioned_inr": 5100000,
+      "outstanding_inr": 3111000,
+      "emi_inr": 32940,
+      "charge_from": "2021-11-19",
+      "closes_on": "2041-11-19"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1117/1704",
+      "year": "2026-27",
+      "demand_inr": 17800,
+      "paid_inr": 17800,
+      "paid_on": "2026-06-06",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-803092",
+        "period": "Aug 2026",
+        "amount_inr": 520,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-345950",
+        "period": "Aug 2026",
+        "amount_inr": 2830,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-202589",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-20-2001": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2020/VSP/48101",
+    "registered_on": "2020-08-27",
+    "mortgage": {
+      "bank": "LIC Housing Finance",
+      "branch": "Visakhapatnam",
+      "loan_no": "LICHFL-HL-6177148",
+      "sanctioned_inr": 3800000,
+      "outstanding_inr": 1748000,
+      "emi_inr": 24540,
+      "charge_from": "2020-08-28",
+      "closes_on": "2040-08-28"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1120/2001",
+      "year": "2026-27",
+      "demand_inr": 20000,
+      "paid_inr": 20000,
+      "paid_on": "2026-04-14",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-913703",
+        "period": "Aug 2026",
+        "amount_inr": 580,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-209971",
+        "period": "Aug 2026",
+        "amount_inr": 2620,
+        "paid": false,
+        "due_on": "2026-09-18",
+        "paid_on": null
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-420124",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-02"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-20-2002": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2021/VSP/46482",
+    "registered_on": "2021-07-24",
+    "mortgage": {
+      "bank": "State Bank of India",
+      "branch": "Siripuram, Visakhapatnam",
+      "loan_no": "SBI-HL-4954769",
+      "sanctioned_inr": 3900000,
+      "outstanding_inr": 1833000,
+      "emi_inr": 25190,
+      "charge_from": "2021-07-25",
+      "closes_on": "2041-07-25"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1120/2002",
+      "year": "2026-27",
+      "demand_inr": 16200,
+      "paid_inr": 16200,
+      "paid_on": "2026-07-17",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-846560",
+        "period": "Aug 2026",
+        "amount_inr": 800,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-787590",
+        "period": "Aug 2026",
+        "amount_inr": 2530,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-04"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-352981",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-03"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-20-2003": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2018/VSP/44863",
+    "registered_on": "2018-06-16",
+    "mortgage": {
+      "bank": "HDFC Bank",
+      "branch": "Dwaraka Nagar, Visakhapatnam",
+      "loan_no": "HDFC-HL-3732390",
+      "sanctioned_inr": 4000000,
+      "outstanding_inr": 1920000,
+      "emi_inr": 25830,
+      "charge_from": "2018-06-17",
+      "closes_on": "2038-06-17"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1120/2003",
+      "year": "2026-27",
+      "demand_inr": 20400,
+      "paid_inr": 20400,
+      "paid_on": "2026-06-25",
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-268941",
+        "period": "Aug 2026",
+        "amount_inr": 540,
+        "paid": false,
+        "due_on": "2026-09-12",
+        "paid_on": null
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-465209",
+        "period": "Aug 2026",
+        "amount_inr": 2560,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-03"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-675362",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": true,
+        "due_on": "2026-09-05",
+        "paid_on": "2026-09-04"
+      }
+    ]
+  },
+  "AP-VSP-3D26-9999-001-20-2004": {
+    "ownership": "mortgaged",
+    "title_deed": "DOC/2019/VSP/43244",
+    "registered_on": "2019-01-13",
+    "mortgage": {
+      "bank": "Union Bank of India",
+      "branch": "Asilmetta, Visakhapatnam",
+      "loan_no": "UBI-HL-2510011",
+      "sanctioned_inr": 4100000,
+      "outstanding_inr": 1681000,
+      "emi_inr": 26480,
+      "charge_from": "2019-01-14",
+      "closes_on": "2039-01-14"
+    },
+    "tax": {
+      "authority": "Greater Visakhapatnam Municipal Corporation",
+      "assessment_no": "GVMC/50/1120/2004",
+      "year": "2026-27",
+      "demand_inr": 16600,
+      "paid_inr": 0,
+      "paid_on": null,
+      "due_on": "2026-09-30"
+    },
+    "bills": [
+      {
+        "kind": "water",
+        "authority": "GVMC Water Supply",
+        "account": "GVMC-W-980846",
+        "period": "Aug 2026",
+        "amount_inr": 440,
+        "paid": true,
+        "due_on": "2026-09-12",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "electricity",
+        "authority": "APEPDCL",
+        "account": "APEPDCL-142828",
+        "period": "Aug 2026",
+        "amount_inr": 2470,
+        "paid": true,
+        "due_on": "2026-09-18",
+        "paid_on": "2026-09-02"
+      },
+      {
+        "kind": "maintenance",
+        "authority": "Sampath Skyline Owners' Association",
+        "account": "SSOA-487267",
+        "period": "Aug 2026",
+        "amount_inr": 3500,
+        "paid": false,
+        "due_on": "2026-09-05",
+        "paid_on": null
+      }
+    ]
+  }
+}

@@ -31,6 +31,7 @@ const { encodeSession, decodeSession, makeCitizenSession, makeGovSession,
 const { checkBuildingAccess, checkMutation, checkProjectAccess,
   isMutator, ownsUnit, filterDetailForCaller, callerContext: _cc } =
   await import('../lib/auth/access-pure.ts');
+const { callerTagFromCookie } = await import('../lib/http/caller-tag.ts');
 
 let pass = 0, fail = 0;
 function test(name, fn) {
@@ -182,6 +183,49 @@ await test('Citizen buildings filter keeps only the matching id', async () => {
   assert.ok(before > after, 'snapshot must include more than the one citizen building');
 });
 
+// ---- the response-memo cache key -------------------------------------------
+// The compressed-payload memo in lib/http/payload.ts is keyed on this tag. If
+// two callers who get DIFFERENT bodies from the same URL collapse to the same
+// tag, the first one to warm the memo decides what the second one sees. That
+// happened: the key was the bare role, so every citizen shared one entry and
+// residents 2 and 3 of the demo tower were served resident 1's flat.
+
+function cookieFor(claims) {
+  const b64 = Buffer.from(JSON.stringify(claims), 'utf-8')
+    .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `ulpin_session=${b64}.sig`;
+}
+
+await test('callerTagFromCookie: two citizens never share a memo key', () => {
+  const ravi = cookieFor({ role: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' });
+  const priya = cookieFor({ role: 'citizen', slug: 'siripuram', buildingId: 999, floor: 5, unit: '502' });
+  const other = cookieFor({ role: 'citizen', slug: 'hyderabad-banjara', buildingId: 999, floor: 2, unit: '201' });
+
+  assert.notEqual(callerTagFromCookie(ravi), callerTagFromCookie(priya));
+  // Same flat code on a different project is a different caller too.
+  assert.notEqual(callerTagFromCookie(ravi), callerTagFromCookie(other));
+  // The same session is the same caller, or the memo would never hit.
+  assert.equal(callerTagFromCookie(ravi), callerTagFromCookie(ravi));
+  // Two sessions for the same resident differ only in sid/iat, which do not
+  // change the body and so must not fragment the cache.
+  const raviAgain = cookieFor({
+    sid: 'deadbeef', iat: 123, sub: '111122223333', name: 'Ravi Kumar',
+    role: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201',
+  });
+  assert.equal(callerTagFromCookie(ravi), callerTagFromCookie(raviAgain));
+});
+
+await test('callerTagFromCookie: gov and anon are distinct and stable', () => {
+  assert.equal(callerTagFromCookie(null), 'anon');
+  assert.equal(callerTagFromCookie('other=1'), 'anon');
+  assert.equal(callerTagFromCookie('ulpin_session=not-base64.sig'), 'anon');
+  assert.equal(callerTagFromCookie(cookieFor({ role: 'gov', sub: 'admin' })), 'gov');
+  assert.notEqual(
+    callerTagFromCookie(cookieFor({ role: 'gov' })),
+    callerTagFromCookie(cookieFor({ role: 'citizen', slug: 's', buildingId: 1, floor: 0, unit: 'a' })),
+  );
+});
+
 // ---- unit-level filtering on the real detail snapshot ----------------------
 const RAVI = { kind: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' };
 
@@ -238,6 +282,56 @@ await test('filterDetailForCaller: a citizen keeps every flat, but only one is r
   // Nor any neighbour's name.
   for (const name of ['Meena Patnaik', 'Joseph Fernandes', 'Sanjay Varma']) {
     assert.ok(!serialised.includes(name), `${name} must not appear`);
+  }
+});
+
+await test('filterDetailForCaller: the flat register is redacted with the flat', async () => {
+  // The register (ownership, bank charge, tax, bills) is merged onto the unit
+  // rows by enrichBuildingDetail, AFTER the snapshot and BEFORE the caller
+  // filter. It is the most sensitive thing the document carries -- a
+  // neighbour's outstanding loan -- so it gets its own assertion rather than
+  // relying on the field whitelist staying a whitelist.
+  const detail = JSON.parse(await fs.readFile(
+    path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'), 'utf-8',
+  ))['999'];
+  const register = JSON.parse(await fs.readFile(
+    path.join(process.cwd(), 'data', 'projects', 'siripuram', 'flat-register.json'), 'utf-8',
+  ));
+  assert.ok(Object.keys(register).length > 0, 'the demo tower must have a register');
+
+  const merged = {
+    ...detail,
+    units: detail.units.map((u) => (register[u.ulpin] ? { ...u, ...register[u.ulpin] } : u)),
+  };
+  // Every register key names a flat that exists, or the panel silently shows
+  // nothing for a flat the register thinks it describes.
+  const ulpins = new Set(detail.units.map((u) => u.ulpin));
+  for (const key of Object.keys(register)) {
+    assert.ok(ulpins.has(key), `register key ${key} matches no flat`);
+  }
+
+  const mine = filterDetailForCaller(RAVI, merged);
+  const own = mine.units.find((u) => !u.restricted);
+  assert.ok(own.ownership, 'the citizen keeps their own ownership status');
+  assert.ok(own.tax, 'and their own tax record');
+  for (const u of mine.units.filter((x) => x.restricted)) {
+    for (const field of ['ownership', 'title_deed', 'registered_on', 'mortgage', 'tax', 'bills']) {
+      assert.equal(u[field], undefined,
+        `restricted flat ${u.unit_no} must not carry ${field}`);
+    }
+  }
+  // No neighbour's loan account or assessment number anywhere in the payload.
+  const serialised = JSON.stringify(mine);
+  for (const [key, entry] of Object.entries(register)) {
+    if (key === own.ulpin) continue;
+    if (entry.mortgage) {
+      assert.ok(!serialised.includes(entry.mortgage.loan_no),
+        `loan account ${entry.mortgage.loan_no} must not appear`);
+    }
+    if (entry.tax) {
+      assert.ok(!serialised.includes(entry.tax.assessment_no),
+        `assessment ${entry.tax.assessment_no} must not appear`);
+    }
   }
 });
 

@@ -120,6 +120,81 @@ export interface UnitInfo {
   owner?: string;
   address?: string;
   facing?: string;
+  /**
+   * The register entries behind the door: how the flat is held, the charge on
+   * it if any, and whether its tax and bills are settled.
+   *
+   * Merged over the cadastre by `enrichBuildingDetail` from the project's
+   * flat register (data/projects/<slug>/flat-register.json), so PostGIS and
+   * the snapshot answer identically -- the cadastre stores geometry and
+   * title, and the money is a separate record that both backends read from
+   * the same file.
+   *
+   * Optional for the same reason as `owner`: only the demo tower has one.
+   * A flat without a register entry shows its tenure and encumbrance and
+   * says nothing it cannot support.
+   */
+  ownership?: OwnershipStatus;
+  title_deed?: string;
+  registered_on?: string;
+  mortgage?: MortgageInfo;
+  tax?: TaxInfo;
+  bills?: BillInfo[];
+}
+
+/** Held outright, or held with a bank's charge on it. */
+export type OwnershipStatus = 'owned' | 'mortgaged';
+
+/** The bank's charge on a mortgaged flat. Dates are ISO yyyy-mm-dd. */
+export interface MortgageInfo {
+  bank: string;
+  branch: string;
+  loan_no: string;
+  sanctioned_inr: number;
+  outstanding_inr: number;
+  emi_inr: number;
+  charge_from: string;
+  closes_on: string;
+}
+
+/** Municipal property tax for one assessment year. */
+export interface TaxInfo {
+  authority: string;
+  assessment_no: string;
+  /** Assessment year, e.g. "2026-27". */
+  year: string;
+  demand_inr: number;
+  paid_inr: number;
+  /** null when nothing has been paid against this demand. */
+  paid_on: string | null;
+  due_on: string;
+}
+
+/** One recurring service bill against the flat. */
+export interface BillInfo {
+  kind: 'water' | 'electricity' | 'maintenance';
+  /** Who raises it -- GVMC, APEPDCL, the owners' association. */
+  authority: string;
+  account: string;
+  /** Billing period as printed on the bill, e.g. "Aug 2026". */
+  period: string;
+  amount_inr: number;
+  paid: boolean;
+  due_on: string;
+  paid_on: string | null;
+}
+
+/**
+ * One flat's register entry, keyed by ULPIN in the project's flat register.
+ * The fields are spread onto the matching `UnitInfo` on read.
+ */
+export interface FlatRegisterEntry {
+  ownership: OwnershipStatus;
+  title_deed: string;
+  registered_on: string;
+  mortgage?: MortgageInfo;
+  tax?: TaxInfo;
+  bills?: BillInfo[];
 }
 
 export interface BuildingDetail {

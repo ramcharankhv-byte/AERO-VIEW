@@ -49,6 +49,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.join(__dirname, '..');
 const API = path.join(ROOT, 'data', 'api', 'siripuram');
 const PROJECTS = path.join(ROOT, 'data', 'api', 'projects.json');
+const REGISTER = path.join(ROOT, 'data', 'projects', 'siripuram', 'flat-register.json');
 
 const BUILDING_ID = 999;
 const SLUG = 'siripuram';
@@ -324,6 +325,166 @@ const floors = ALL_LEVELS.map((lvl, i) => ({
 const builtM2 = Math.round(flatAreaM2());
 const carpetM2 = Math.round(flatAreaM2() * 0.72);
 
+// ---------------------------------------------------------------------------
+// 3a. The flat register -- ownership, charge, tax and bills.
+//
+// A SEPARATE record from the cadastre, written to
+// data/projects/siripuram/flat-register.json and merged onto the unit rows by
+// lib/db.ts on read. Not a set of unit columns, for two reasons. The cadastre
+// answers "what is this volume and who holds title"; a bank's charge and last
+// month's electricity bill answer something else, are owned by other
+// authorities and change on a different clock. And a file both backends read
+// cannot drift the way a column that only PostGIS has would -- which is the
+// same split-brain that lost the demo building and still hides the citizen's
+// own utility runs.
+//
+// Every value here is INVENTED. It is shaped like a register entry so the
+// panel can be built and read honestly; the panel labels it as a
+// demonstration value, and nothing in it should ever be quoted as fact.
+// ---------------------------------------------------------------------------
+
+/**
+ * The three demo logins get their state chosen rather than hashed.
+ *
+ * Everything else in the register is deterministic from the flat code, which
+ * is fine for the 21 flats nobody signs in as. It is not fine for the three
+ * that are the demo: whether the panel shows a mortgage, an outstanding
+ * demand or an overdue bill would then be decided by a hash, and the most
+ * likely outcome is that the first login anyone tries shows the dullest
+ * possible card. These three are picked to cover the states between them.
+ *
+ *   tax: 0 = nothing paid, 2 = part paid, 8 = paid in full
+ *   arrears: the bills left unpaid
+ */
+const DEMO_STATES = {
+  // Ravi Kumar, floor 2 -- mortgaged, tax settled, the water bill overdue.
+  201: { mortgaged: true, tax: 8, arrears: ['water'] },
+  // Priya Sharma, floor 5 -- owns it outright and owes nothing.
+  502: { mortgaged: false, tax: 8, arrears: [] },
+  // Anand Rao, floor 9 -- mortgaged, and this year's tax only half paid.
+  903: { mortgaged: true, tax: 2, arrears: ['electricity'] },
+};
+
+/** Deterministic 0..n-1 from a string, so a re-run produces the same register. */
+function pick(seed, n) {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h) % n;
+}
+
+const BANKS = [
+  { bank: 'State Bank of India', branch: 'Siripuram, Visakhapatnam', code: 'SBI' },
+  { bank: 'HDFC Bank', branch: 'Dwaraka Nagar, Visakhapatnam', code: 'HDFC' },
+  { bank: 'Union Bank of India', branch: 'Asilmetta, Visakhapatnam', code: 'UBI' },
+  { bank: 'LIC Housing Finance', branch: 'Visakhapatnam', code: 'LICHFL' },
+];
+
+/** Assessment year and the billing month the demo is written against. */
+const TAX_YEAR = '2026-27';
+const TAX_DUE = '2026-09-30';
+const BILL_PERIOD = 'Aug 2026';
+
+/**
+ * One register entry per flat.
+ *
+ * Two in every three flats carry a bank charge, which is about what a tower
+ * of this age would look like, and the mix matters: a panel that only ever
+ * renders "Owned outright" never shows the row a mortgaged owner cares about.
+ * The same goes for the arrears -- a register in which everything is settled
+ * would leave the overdue state untested and unseen.
+ */
+function registerFor(level, slotNo, code, ulpin) {
+  const seed = `${SLUG}-${code}`;
+  const forced = DEMO_STATES[code];
+  const mortgaged = forced ? forced.mortgaged : pick(`m${seed}`, 3) !== 0;
+  const b = BANKS[pick(`b${seed}`, BANKS.length)];
+  const sanctioned = 3_200_000 + pick(`s${seed}`, 22) * 100_000;
+  const paidOff = 0.18 + pick(`p${seed}`, 45) / 100;
+  const from = 2016 + pick(`y${seed}`, 8);
+  const regMonth = 1 + pick(`mm${seed}`, 12);
+  const registeredOn = `${from}-${String(regMonth).padStart(2, '0')}-`
+    + `${String(1 + pick(`dd${seed}`, 27)).padStart(2, '0')}`;
+  // Same month as the deed, a fortnight later -- close enough to read as one
+  // transaction without ever landing before it.
+  const chargeFrom = `${registeredOn.slice(0, 8)}${String(
+    Math.min(28, Number(registeredOn.slice(8)) + 1),
+  ).padStart(2, '0')}`;
+
+  const demand = 14_200 + pick(`t${seed}`, 40) * 200;
+  // Most of the tower has settled this year's demand; a couple of flats have
+  // not paid at all and one has paid part -- the three states the tax row has
+  // to be able to render.
+  const taxState = forced ? forced.tax : pick(`ts${seed}`, 9);
+  const taxPaid = taxState < 2 ? 0 : taxState === 2 ? Math.round(demand / 2) : demand;
+
+  const bill = (kind, authority, prefix, amount, dueDay, seedKey) => {
+    const paid = forced ? !forced.arrears.includes(kind) : pick(seedKey + seed, 4) !== 0;
+    return {
+      kind,
+      authority,
+      account: `${prefix}-${pick('a' + seedKey + seed, 900000) + 100000}`,
+      period: BILL_PERIOD,
+      amount_inr: amount,
+      paid,
+      due_on: `2026-09-${String(dueDay).padStart(2, '0')}`,
+      // Early in the month, so a settled bill is never dated after the day the
+      // demo is set on -- a receipt from next week reads as broken data long
+      // before anyone works out it is only a demo.
+      paid_on: paid
+        ? `2026-09-${String(1 + pick('pd' + seedKey + seed, Math.min(4, dueDay))).padStart(2, '0')}`
+        : null,
+    };
+  };
+
+  return {
+    ulpin,
+    entry: {
+      ownership: mortgaged ? 'mortgaged' : 'owned',
+      title_deed: `DOC/${from}/VSP/${40000 + pick(`d${seed}`, 9000)}`,
+      registered_on: registeredOn,
+      ...(mortgaged
+        ? {
+          mortgage: {
+            bank: b.bank,
+            branch: b.branch,
+            loan_no: `${b.code}-HL-${1000000 + pick(`l${seed}`, 8999999)}`,
+            sanctioned_inr: sanctioned,
+            outstanding_inr: Math.round((sanctioned * (1 - paidOff)) / 100) * 100,
+            emi_inr: Math.round((sanctioned / 240) * 1.55 / 10) * 10,
+            // The charge is created when the sale is registered, never before
+            // it: a mortgage dated ahead of the deed is not a thing a register
+            // can hold, and it is the kind of detail a reader checks first.
+            charge_from: chargeFrom,
+            closes_on: `${from + 20}${chargeFrom.slice(4)}`,
+          },
+        }
+        : {}),
+      tax: {
+        authority: 'Greater Visakhapatnam Municipal Corporation',
+        assessment_no: `GVMC/50/${1100 + level}/${code}`,
+        year: TAX_YEAR,
+        demand_inr: demand,
+        paid_inr: taxPaid,
+        paid_on: taxPaid > 0
+          ? `2026-0${4 + pick(`tp${seed}`, 5)}-${String(1 + pick(`td${seed}`, 27)).padStart(2, '0')}`
+          : null,
+        due_on: TAX_DUE,
+      },
+      bills: [
+        bill('water', 'GVMC Water Supply', 'GVMC-W', 380 + pick(`w${seed}`, 24) * 20, 12, 'w'),
+        bill('electricity', 'APEPDCL', 'APEPDCL', 1_180 + pick(`e${seed}`, 60) * 30, 18, 'e'),
+        bill('maintenance', `${BUILDING_NAME} Owners' Association`, 'SSOA', 3_500, 5, 'x'),
+      ],
+    },
+  };
+}
+
+/** ULPIN -> register entry, written to data/projects/siripuram/. */
+const flatRegister = {};
+
 const units = [];
 let unitCounter = 0;
 for (const lvl of FLAT_FLOORS) {
@@ -332,10 +493,13 @@ for (const lvl of FLAT_FLOORS) {
   FLAT_SLOTS.forEach((slot, idx) => {
     const slotNo = idx + 1;
     const code = flatCode(lvl, slotNo);
+    const ulpin = `${floorEntry.ulpin}-${code}`;
+    const reg = registerFor(lvl, slotNo, code, ulpin);
+    flatRegister[reg.ulpin] = reg.entry;
     units.push({
       id: unitIdBase + unitCounter,
       floor_id: floorEntry.id,
-      ulpin: `${floorEntry.ulpin}-${code}`,
+      ulpin,
       unit_no: code,
       level_no: lvl,
       z_min: floorEntry.z_min,
@@ -343,7 +507,13 @@ for (const lvl of FLAT_FLOORS) {
       carpet_m2: carpetM2,
       built_m2: builtM2,
       tenure: 'Freehold',
-      encumbrance: 'None',
+      // The cadastre's own encumbrance column, kept in step with the register
+      // rather than hardcoded to 'None'. A flat with a bank's charge on it
+      // that reads "Encumbrance: None" is a wrong answer stated as a right
+      // one -- the same defect the owner fallback used to have.
+      encumbrance: reg.entry.mortgage
+        ? `Mortgage · ${reg.entry.mortgage.bank}`
+        : 'None',
       // The three fields the detail panel needs to describe a flat as a
       // home rather than as a volume. `owner` in particular did not exist
       // before: the panel fell back to the PARCEL's owner, so every flat in
@@ -474,9 +644,18 @@ await writeJson(path.join(API, 'parcels.json'), parcels);
 await writeJson(path.join(API, 'detail.json'), detail);
 await writeJson(path.join(API, 'utilities.json'), utilities);
 await writeJson(PROJECTS, projectsDoc);
+// The register is this script's own file, not a snapshot it patches, so it is
+// written whole and pretty-printed -- it is meant to be read and edited by
+// hand when the demo needs a different story.
+await fs.writeFile(REGISTER, JSON.stringify(flatRegister, null, 2) + '\n', 'utf-8');
+
+const mortgaged = Object.values(flatRegister).filter((e) => e.mortgage).length;
+const taxDue = Object.values(flatRegister)
+  .filter((e) => (e.tax?.paid_inr ?? 0) < (e.tax?.demand_inr ?? 0)).length;
 
 console.log('Seeded building 999:');
 console.log(`  ${units.length} flats: 4 per floor on floors ${FLAT_FLOORS.join(', ')}`);
+console.log(`  flat register: ${mortgaged} mortgaged, ${taxDue} with tax outstanding`);
 console.log(`  each ${builtM2} m² built-up / ${carpetM2} m² carpet`);
 console.log('  3 basements (B1, B2, B3)');
 console.log('  1 water riser, 1 sewer lateral, 1 sewer tank');

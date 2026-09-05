@@ -1,6 +1,7 @@
 import { brotliCompress, gzip, constants as zlibConstants } from 'node:zlib';
 import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
+import { callerTagFromCookie } from './caller-tag';
 
 /**
  * Compressed, cacheable JSON responses for the cadastre endpoints.
@@ -184,13 +185,16 @@ export async function jsonPayload(
   opts: JsonPayloadOptions,
 ): Promise<NextResponse> {
   const encoding = negotiate(req);
-  // The cache key includes the role tag derived from the request's session
-  // cookie. Citizens and gov see different collections on the same URL, so
-  // they must get different memos. Anon and gov see the same data, but
-  // splitting them anyway costs one memo slot and keeps the key shape
-  // uniform (the role is the only free input the user brings to a GET).
-  const roleTag = roleTagFromCookie(req.headers.get('cookie'));
-  const key = `${opts.resource}:${encoding}:${roleTag}`;
+  // The cache key includes a CALLER tag derived from the request's session
+  // cookie: not just the role, but every session claim the role filters read.
+  // Citizens and gov see different collections on the same URL, and two
+  // citizens see different ones from each other -- see callerTagFromCookie for
+  // what happened when the tag was the bare role. Anon and gov see the same
+  // data, but splitting them anyway costs one memo slot and keeps the key
+  // shape uniform (the session is the only free input the user brings to a
+  // GET).
+  const callerTag = callerTagFromCookie(req.headers.get('cookie'));
+  const key = `${opts.resource}:${encoding}:${callerTag}`;
 
   let entry = take(key, opts.rev);
   if (!entry) {
@@ -238,41 +242,6 @@ export async function jsonPayload(
 export function invalidatePayloads(): void {
   cache.clear();
   cachedBytes = 0;
-}
-
-/**
- * Pull the session role out of a raw Cookie header. Used as part of the
- * payload memo key so the same URL can return different bodies to
- * different roles without the second role seeing a stale memo. We only
- * look at the role claim -- the rest of the cookie is irrelevant to the
- * cache key, and using just the role keeps the key short and stable.
- *
- * The header value is parsed inline rather than via the runtime's
- * cookie jar because this module is loaded by the static cache helpers,
- * which are themselves loaded by the route's payload layer and must
- * not pull in `next/headers` (which is runtime-only). The format is
- * fixed: a single `ulpin_session=...` entry, which is all the login
- * route sets.
- */
-function roleTagFromCookie(cookieHeader: string | null): string {
-  if (!cookieHeader) return 'anon';
-  const m = /(?:^|;\s*)ulpin_session=([^;]+)/.exec(cookieHeader);
-  if (!m) return 'anon';
-  // The token is base64url(payload).base64url(sig). We only need the
-  // first segment, and only the `role` field inside it, to discriminate
-  // memo entries. base64url decode with atob is fine -- the payload is
-  // JSON and the role is two ASCII strings.
-  try {
-    const payload = m[1].split('.')[0];
-    // base64url -> base64
-    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-      + '='.repeat((4 - payload.length % 4) % 4);
-    const json = Buffer.from(b64, 'base64').toString('utf-8');
-    const parsed = JSON.parse(json) as { role?: string };
-    return parsed.role ?? 'anon';
-  } catch {
-    return 'anon';
-  }
 }
 
 /** Cache occupancy, for diagnostics. */

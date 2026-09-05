@@ -7,7 +7,7 @@ import BuildingEditForm from './detail/BuildingEditForm';
 import UnsavedBanner from './detail/UnsavedBanner';
 import { ROAD_CLASS_LABEL, UTILITY_LABEL } from '@/lib/cesium/materials';
 import { levelLabel, parentOf } from '@/lib/ulpin';
-import { orientedDims } from '@/lib/geo';
+import { orientedDims, ringCentroid } from '@/lib/geo';
 import type { AssetType, Provenance, RoadProps, UtilityProps } from '@/lib/types';
 import UlpinCard from './UlpinCard';
 import CountUp from './CountUp';
@@ -95,8 +95,47 @@ function SkeletonBar({ w = 'w-20' }: { w?: string }) {
   return <span className={`skeleton inline-block h-[10px] rounded align-middle ${w}`} />;
 }
 
+/**
+ * A settled/unsettled state, said once and plainly.
+ *
+ * `alert` is the only thing that changes the colour, and it is the palette's
+ * one hue: this is the row a holder is scanning for. A "paid" chip stays
+ * monochrome on purpose -- green would make the panel a traffic light and
+ * bury the one state that needs finding.
+ */
+function StateChip({ label, alert }: { label: string; alert: boolean }) {
+  return (
+    <span
+      className={
+        alert
+          ? 'chip shrink-0 border border-danger/60 bg-danger/10 font-semibold text-dangerInk'
+          : 'chip shrink-0 border border-[rgb(var(--edge-strong))] text-[rgb(var(--muted))]'
+      }
+    >
+      {label}
+    </span>
+  );
+}
+
 const m2 = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} m²`;
 const m = (v: number) => `${v.toFixed(1)} m`;
+/** Rupees, grouped the Indian way -- 26,85,400, not 2,685,400. */
+const inr = (v: number) => `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+/** An ISO yyyy-mm-dd as "10 Feb 2022". Anything unparseable is passed through
+ *  verbatim rather than rendered as "Invalid Date". */
+function longDate(iso: string): string {
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+  });
+}
+/** Is this due date behind us? Used only to say "Overdue" rather than "Due",
+ *  so a day either side of midnight costs nothing. */
+function isPast(iso: string): boolean {
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isFinite(t) && t < Date.now();
+}
 /** Streets run from tens of metres to kilometres; switch units rather than
  *  printing "2369.7 m". */
 const km = (v: number) =>
@@ -252,15 +291,25 @@ export default function DetailPanel() {
   )?.properties;
 
   // ---- nothing selected --------------------------------------------------
-  // In underground mode with no corridor picked, the surface stack is not the
-  // subject any more -- showing the previously selected unit here would be
-  // stale context, so fall back to the area summary.
+  // In underground mode with NOTHING picked, the surface stack is not the
+  // subject any more, so fall back to the area summary.
+  //
+  // A selected flat is the exception, and it is the whole citizen view. The
+  // citizen session opens with underground on (so the basements and the
+  // building's own risers are visible) AND their own flat selected -- so this
+  // fallback fired on every citizen boot and the one panel they came for, the
+  // register behind their own door, was never reachable. A deliberate
+  // selection outranks a view mode.
   // The boot fetch writes buildings, parcels, utilities and conflicts as four
   // separate stores, then clears `loading` -- so `loading` is the only signal
   // that all four have landed.
   const aoiReady = !loading && buildings !== null;
 
-  if (!bprops || mode === 'city' || (underground && selectedUtilityId === null)) {
+  if (
+    !bprops
+    || mode === 'city'
+    || (underground && selectedUtilityId === null && selectedUnitId === null)
+  ) {
     return (
       // The title is the project's own name, read off the FeatureCollection's
       // `aoi` field -- the same source the StatusBar uses, so the two cannot
@@ -321,32 +370,81 @@ export default function DetailPanel() {
           </Panel>
         );
       }
+      const ring = (unit.ring?.coordinates as number[][][] | undefined)?.[0];
+      const centre = ring && ring.length > 1 ? ringCentroid(ring) : null;
+      const bills = unit.bills ?? [];
+      const billsDue = bills.filter((b) => !b.paid);
+      const taxDue = unit.tax ? Math.max(0, unit.tax.demand_inr - unit.tax.paid_inr) : 0;
       return (
         <Panel
           title={`Flat ${unit.unit_no}`}
           kicker={isOwn ? 'Your flat' : 'Titled unit'}
         >
           {unit.ulpin ? <UlpinCard ulpin={unit.ulpin} /> : null}
-          <div className="mt-2">
+
+          {/* The three answers a holder opens this panel for, ahead of any of
+              the rows: is it mine outright, is the tax settled, do I owe
+              anyone this month. Red is the only hue in this palette and it is
+              reserved for exactly this -- a state the reader must not miss. */}
+          {unit.ownership || unit.tax || bills.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {unit.ownership ? (
+                <StateChip
+                  alert={false}
+                  label={unit.ownership === 'mortgaged' ? 'Mortgaged' : 'Owned outright'}
+                />
+              ) : null}
+              {unit.tax ? (
+                <StateChip
+                  alert={taxDue > 0}
+                  label={
+                    taxDue === 0
+                      ? 'Tax paid'
+                      : unit.tax.paid_inr > 0
+                        ? `Tax part-paid · ${inr(taxDue)} due`
+                        : `Tax due · ${inr(taxDue)}`
+                  }
+                />
+              ) : null}
+              {bills.length > 0 ? (
+                <StateChip
+                  alert={billsDue.length > 0}
+                  label={
+                    billsDue.length === 0
+                      ? 'Bills clear'
+                      : `${billsDue.length} bill${billsDue.length > 1 ? 's' : ''} unpaid`
+                  }
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          <Section title="Where it is">
+            {unit.address ? <Row label="Address" value={unit.address} /> : null}
             <Row label="Level" value={levelLabel(unit.level_no, bprops.floors - 1)} />
-            <Row label="Carpet area" value={m2(unit.carpet_m2 ?? 0)} />
-            <Row label="Built-up area" value={m2(unit.built_m2 ?? 0)} />
-            <Row label="Volume" value={`${((unit.built_m2 ?? 0) * height).toFixed(0)} m³`} />
+            {unit.facing ? <Row label="Facing" value={unit.facing} /> : null}
+            {/* The FLAT's own centroid, not the building's. Computed from the
+                unit ring the server already sent, so it needs no new field and
+                it moves when the geometry does. */}
+            {centre ? (
+              <Row
+                label="Coordinates"
+                source="derived"
+                value={
+                  <span className="font-mono text-[11px]">
+                    {centre.lat.toFixed(6)}, {centre.lon.toFixed(6)}
+                  </span>
+                }
+              />
+            ) : null}
             <Row
               label="Z extent"
               value={`${unit.z_min.toFixed(2)} → ${unit.z_max.toFixed(2)} m`}
             />
-            <Row label="Clear height" value={m(height)} />
-            <Row label="Tenure" value={unit.tenure ?? '—'} />
             <Row
-              label="Encumbrance"
-              value={
-                <span className={unit.encumbrance === 'None' ? '' : 'font-semibold text-ink'}>
-                  {unit.encumbrance ?? '—'}
-                </span>
-              }
+              label="Parent building"
+              value={<span className="font-mono text-[11px]">{bprops.ulpin}</span>}
             />
-            {unit.facing ? <Row label="Facing" value={unit.facing} /> : null}
             <Row
               label="Parent parcel"
               value={
@@ -355,22 +453,141 @@ export default function DetailPanel() {
                 </span>
               }
             />
+          </Section>
+
+          <Section title="The flat">
+            <Row label="Carpet area" value={m2(unit.carpet_m2 ?? 0)} />
+            <Row label="Built-up area" value={m2(unit.built_m2 ?? 0)} />
+            <Row label="Clear height" value={m(height)} />
+            <Row label="Volume" value={`${((unit.built_m2 ?? 0) * height).toFixed(0)} m³`} />
+          </Section>
+
+          <Section title="Title and charge">
             {/*
               The FLAT's holder, falling back to unknown rather than to the
               parcel's owner. The parcel belongs to the developer, so the old
               fallback confidently attributed every flat in the tower to
               Sampath Estates -- a wrong answer stated as a right one.
             */}
-            <Row label="Flat held by" value={unit.owner ?? 'Not on record'} />
+            <Row label="Held by" value={unit.owner ?? 'Not on record'} />
+            <Row label="Tenure" value={unit.tenure ?? '—'} />
+            {unit.ownership ? (
+              <Row
+                label="Held as"
+                value={
+                  unit.ownership === 'mortgaged'
+                    ? 'Owned, with a bank charge'
+                    : 'Owned outright'
+                }
+              />
+            ) : null}
+            {unit.registered_on ? (
+              <Row label="Registered on" value={longDate(unit.registered_on)} />
+            ) : null}
+            {unit.title_deed ? (
+              <Row
+                label="Title deed"
+                value={<span className="font-mono text-[11px]">{unit.title_deed}</span>}
+              />
+            ) : null}
+            <Row
+              label="Encumbrance"
+              value={
+                <span className={unit.encumbrance === 'None' ? '' : 'font-semibold text-ink'}>
+                  {unit.encumbrance ?? '—'}
+                </span>
+              }
+            />
             <Row label="Parcel owner" value={detail.parcel?.owner ?? '—'} />
-            {unit.address ? <Row label="Address" value={unit.address} /> : null}
-          </div>
+          </Section>
+
+          {unit.mortgage ? (
+            <Section title="Mortgage">
+              <Row label="Bank" value={unit.mortgage.bank} />
+              <Row label="Branch" value={unit.mortgage.branch} />
+              <Row
+                label="Loan account"
+                value={<span className="font-mono text-[11px]">{unit.mortgage.loan_no}</span>}
+              />
+              <Row label="Sanctioned" value={inr(unit.mortgage.sanctioned_inr)} />
+              <Row
+                label="Outstanding"
+                value={
+                  <span className="font-semibold text-ink">
+                    {inr(unit.mortgage.outstanding_inr)}
+                  </span>
+                }
+              />
+              <Row label="EMI" value={`${inr(unit.mortgage.emi_inr)} / month`} />
+              <Row label="Charge from" value={longDate(unit.mortgage.charge_from)} />
+              <Row label="Charge closes" value={longDate(unit.mortgage.closes_on)} />
+            </Section>
+          ) : null}
+
+          {unit.tax ? (
+            <Section title={`Property tax ${unit.tax.year}`}>
+              <Row label="Authority" value={unit.tax.authority} />
+              <Row
+                label="Assessment no."
+                value={<span className="font-mono text-[11px]">{unit.tax.assessment_no}</span>}
+              />
+              <Row label="Demand" value={inr(unit.tax.demand_inr)} />
+              <Row label="Paid" value={inr(unit.tax.paid_inr)} />
+              {taxDue > 0 ? (
+                <Row
+                  label="Outstanding"
+                  value={<span className="font-semibold text-dangerInk">{inr(taxDue)}</span>}
+                />
+              ) : null}
+              {unit.tax.paid_on ? (
+                <Row label="Last paid" value={longDate(unit.tax.paid_on)} />
+              ) : null}
+              <Row
+                label={taxDue > 0 ? 'Payable by' : 'Due date'}
+                value={
+                  <span className={taxDue > 0 && isPast(unit.tax.due_on) ? 'text-dangerInk' : ''}>
+                    {longDate(unit.tax.due_on)}
+                  </span>
+                }
+              />
+            </Section>
+          ) : null}
+
+          {bills.length > 0 ? (
+            <Section title="Bills">
+              {bills.map((b) => (
+                <div key={`${b.kind}-${b.account}`} className="py-[3px]">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="row-label shrink-0 capitalize">{b.kind}</span>
+                    <span className="row-value flex items-baseline justify-end gap-1.5 text-right">
+                      {inr(b.amount_inr)}
+                      <StateChip
+                        alert={!b.paid}
+                        label={b.paid ? 'Paid' : isPast(b.due_on) ? 'Overdue' : 'Due'}
+                      />
+                    </span>
+                  </div>
+                  <div className="text-[10px] leading-snug text-[rgb(var(--muted))]">
+                    {b.authority} · {b.period} ·{' '}
+                    <span className="font-mono">{b.account}</span> ·{' '}
+                    {b.paid && b.paid_on
+                      ? `paid ${longDate(b.paid_on)}`
+                      : `due ${longDate(b.due_on)}`}
+                  </div>
+                </div>
+              ))}
+            </Section>
+          ) : null}
+
           <ProvenanceRow
             source={(floor?.detect_source ?? bprops.height_source) as Provenance}
             synthetic={synthetic}
             note={
               'Unit boundaries are a grid subdivision of the building footprint, '
-              + 'not a registered floor plan. Tenure and encumbrance are synthetic.'
+              + 'not a registered floor plan. Tenure, encumbrance, mortgage, tax '
+              + 'and bills come from a demonstration register in '
+              + 'data/projects/<slug>/flat-register.json: shaped like the real '
+              + 'thing, sourced from nothing. No figure here is quotable.'
             }
           />
         </Panel>
