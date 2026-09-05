@@ -253,7 +253,19 @@ export async function buildingSummaryRoute(
   // NOTE: warmProject is the in-process LRU warm-up; the Redis cache has
   // its own first-request behaviour. The two coexist for now; the in-process
   // warm path is documented as redundant in the decisions log.
-  warmProject(slug);
+  //
+  // The call is attached to a `.catch` so a warm-up failure becomes a
+  // single logged warning rather than an unhandled rejection. Without
+  // this, a rejected promise from a corrupt snapshot or a transient
+  // I/O error would surface as `UnhandledPromiseRejection` and could
+  // be flagged by the Next.js dev server as a worker crash.
+  warmProject(slug).catch((err: unknown) => {
+    console.warn(
+      `[ulpin-api] warmProject(${slug}) failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  });
   try {
     const { value: detail, cache } = await cachedDetail(slug, id);
     if (!detail) {

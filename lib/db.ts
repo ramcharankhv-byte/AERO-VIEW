@@ -44,9 +44,21 @@ import { API_DIR, DEFAULT_SLUG, isValidSlug } from './projects';
  */
 
 const CONNECT_TIMEOUT_MS = 1500;
+/**
+ * After a failed probe, the next request that needs a DB decision waits
+ * this long before re-probing. A short cooldown stops a tight loop of
+ * failing SELECTs; a long enough one that a transient blip (TCP reset,
+ * idle-client timeout, container restart) clears on its own within
+ * seconds rather than minutes. Picked to be longer than the typical
+ * docker-compose `up` time and shorter than a deploy cadence.
+ */
+const DB_REPROBE_COOLDOWN_MS = 5_000;
 
 let pool: Pool | null = null;
-let dbUsable: boolean | null = null; // null = not yet probed
+/** null = never probed; boolean = last probe result. */
+let dbUsable: boolean | null = null;
+/** When the last failed probe ran. `usingDb` re-probes if the cooldown has expired. */
+let dbProbeFailedAt = 0;
 
 function getPool(): Pool {
   if (!pool) {
@@ -57,22 +69,52 @@ function getPool(): Pool {
       connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
       idleTimeoutMillis: 10000,
     });
-    // A pool-level error must not take the process down.
+    // A pool-level error (idle-client RST, container restart) does NOT
+    // permanently latch `dbUsable` to false. That was the previous
+    // behaviour, and a single TCP blip would have demoted every
+    // request from PostGIS to the snapshot for the rest of the
+    // process's life -- a permanent availability/accuracy regression
+    // for what is almost always a transient. Instead, the pool error
+    // invalidates the cached probe so the next `usingDb` re-probes
+    // after the cooldown elapses.
     pool.on('error', () => {
-      dbUsable = false;
+      dbUsable = null;
+      dbProbeFailedAt = Date.now();
     });
   }
   return pool;
 }
 
-/** Probe once per process. */
+/**
+ * Probe the DB; cache the result until something forces a re-probe.
+ *
+ * The first call after process start always probes. Subsequent calls
+ * reuse the cached result unless:
+ *   - a pool-level error invalidated it, or
+ *   - the last probe failed AND the cooldown has elapsed.
+ *
+ * The second rule is the important one. A failed probe sets
+ * `dbUsable = false` AND `dbProbeFailedAt = now`, so the next request
+ * after the cooldown runs a fresh probe. If the DB is still down the
+ * probe fails again and the cycle repeats; if the DB has come back up
+ * the probe succeeds and every subsequent request answers from PostGIS
+ * again. The pool's `error` event covers the case where the connection
+ * dies AFTER a successful probe (idle client reaped, container restart);
+ * the cooldown covers the case where the connection is fine but the
+ * database itself is rejecting queries.
+ */
 async function usingDb(): Promise<boolean> {
-  if (dbUsable !== null) return dbUsable;
+  if (dbUsable !== null) {
+    if (dbUsable) return true;
+    if (Date.now() - dbProbeFailedAt < DB_REPROBE_COOLDOWN_MS) return false;
+    // Cooldown elapsed; fall through to re-probe.
+  }
   try {
     const res = await getPool().query('SELECT count(*)::int AS n FROM building');
     dbUsable = res.rows[0].n > 0;
   } catch {
     dbUsable = false;
+    dbProbeFailedAt = Date.now();
   }
   return dbUsable;
 }

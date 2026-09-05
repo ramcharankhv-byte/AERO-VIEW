@@ -47,10 +47,27 @@ import type Redis from 'ioredis';
 
 let client: Redis | null = null;
 let clientInitFailed = false;
+/** In-flight `getClient` promise. Memoised so two concurrent first-callers
+ *  cannot both pass the null guards, both run the dynamic import, and both
+ *  construct their own Redis instance (the second `client =` would orphan
+ *  the first instance's socket and reconnect timer -- a slow connection
+ *  leak under load). */
+let clientPromise: Promise<Redis | null> | null = null;
 /** Flipped on the first failure, cleared on the first success. */
 let degraded = false;
 
 const REDIS_URL = process.env.ULPIN_REDIS_URL ?? process.env.REDIS_URL;
+
+/**
+ * The strict allow-list for `cacheFlushPrefix`. Operators sometimes take
+ * the prefix from a config field, and the brief here is "a stray `*` in
+ * the prefix must not wipe the entire keyspace". Allowed characters are
+ * the safe subset of what a cache key actually carries: lowercase
+ * letters, digits, underscore, dash, dot, and colon. Colons are the
+ * Redis convention and the only separator this module ever uses, so
+ * they have to be allowed; everything else is rejected at the door.
+ */
+const PREFIX_ALLOW = /^[a-z0-9_.-]+$/;
 
 /**
  * Build the ioredis client. Returns null when Redis is not configured --
@@ -60,28 +77,41 @@ const REDIS_URL = process.env.ULPIN_REDIS_URL ?? process.env.REDIS_URL;
  * that has not configured Redis. That keeps the dev cold start free of
  * the package, which matters for the smoke test and for any environment
  * that runs without the cache.
+ *
+ * Concurrency: the dynamic import and the `new Redis(...)` call are
+ * wrapped in a memoised promise. Two concurrent first-callers see the
+ * same promise; only one Redis instance is ever constructed. The
+ * promise is cleared in a `finally` so a later failure (network blip,
+ * auth rotation) is retryable, not latched forever.
  */
 async function getClient(): Promise<Redis | null> {
   if (!REDIS_URL) return null;
   if (client) return client;
   if (clientInitFailed) return null;
-  try {
-    const { default: Redis } = await import('ioredis');
-    client = new Redis(REDIS_URL, {
-      lazyConnect: true,
-      // Fail fast on a single command; the wrapper handles the catch.
-      connectTimeout: 1_000,
-      maxRetriesPerRequest: 1,
-      // Don't queue commands while disconnected -- we'd rather bypass.
-      enableOfflineQueue: false,
-    });
-    client.on('error', () => { /* swallow; per-command catch logs once */ });
-    return client;
-  } catch (err) {
-    clientInitFailed = true;
-    logOutage('init failed', err);
-    return null;
-  }
+  if (clientPromise) return clientPromise;
+  clientPromise = (async () => {
+    try {
+      const { default: Redis } = await import('ioredis');
+      const c = new Redis(REDIS_URL, {
+        lazyConnect: true,
+        // Fail fast on a single command; the wrapper handles the catch.
+        connectTimeout: 1_000,
+        maxRetriesPerRequest: 1,
+        // Don't queue commands while disconnected -- we'd rather bypass.
+        enableOfflineQueue: false,
+      });
+      c.on('error', () => { /* swallow; per-command catch logs once */ });
+      client = c;
+      return c;
+    } catch (err) {
+      clientInitFailed = true;
+      logOutage('init failed', err);
+      return null;
+    } finally {
+      clientPromise = null;
+    }
+  })();
+  return clientPromise;
 }
 
 function logOutage(reason: string, err?: unknown): void {
@@ -105,6 +135,15 @@ function logRecovery(): void {
 /**
  * Read a JSON-encoded value. Returns undefined on miss, on parse failure,
  * and on any Redis error. Callers treat all three as "not cached".
+ *
+ * The bytes Redis returns are treated as untrusted even on a self-hosted
+ * instance: a shared keyspace, a misconfigured migration, or a future
+ * write path that didn't go through this module could address the same
+ * key with arbitrary JSON. The minimal defence is to drop any value
+ * whose top-level shape is not a plain object/array, and to refuse any
+ * value whose own keys include the prototype-pollution vector `__*`.
+ * That closes the spread-and-serialise-back-out path that would let a
+ * `__proto__` field leak into a route response.
  */
 export async function cacheGet<T>(key: string): Promise<T | undefined> {
   const c = await getClient();
@@ -113,11 +152,33 @@ export async function cacheGet<T>(key: string): Promise<T | undefined> {
     const raw = await c.get(key);
     if (raw === null) return undefined;
     logRecovery();
-    return JSON.parse(raw) as T;
+    return sanitise<T>(JSON.parse(raw));
   } catch (err) {
     logOutage('get failed', err);
     return undefined;
   }
+}
+
+/**
+ * Validate a value just out of JSON.parse. The check is intentionally
+ * cheap: confirm it is an object or array, confirm its own keys do not
+ * include any `__`-prefixed name (the spread-and-serialise vector for
+ * prototype pollution). Anything else, treat as "not cached" and let
+ * the loader run.
+ */
+function sanitise<T>(value: unknown): T | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== 'object') return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (item !== null && typeof item !== 'object') return undefined;
+    }
+    return value as T;
+  }
+  for (const k of Object.keys(value as object)) {
+    if (k.startsWith('__')) return undefined;
+  }
+  return value as T;
 }
 
 /**
@@ -159,8 +220,26 @@ export async function cacheDel(key: string): Promise<void> {
  * ULPIN_CACHE_VERSION changes: rather than threading the new version
  * through every caller, the operator can call `cacheFlushPrefix('ulpin:')`
  * to drop everything before the new version's keys start arriving.
+ *
+ * The prefix is matched against `PREFIX_ALLOW` before it is composed
+ * into the SCAN MATCH glob. A stray `*`, `?`, or `[set]` in the prefix
+ * would otherwise widen the SCAN to the entire keyspace (or a
+ * targeted subset of it) and the subsequent `del(...batch)` would
+ * delete keys this module never wrote. The allow-list is the strict
+ * subset the keys actually use: lowercase letters, digits, `_`, `-`,
+ * `.`, and `:`.
  */
 export async function cacheFlushPrefix(prefix: string): Promise<number> {
+  if (!PREFIX_ALLOW.test(prefix)) {
+    // Refuse the operation; do not call the cache at all. The caller
+    // sees 0 keys dropped, which is the same answer as "nothing to do"
+    // but with a console.warn that makes the misconfiguration visible.
+    console.warn(
+      `[ulpin-cache] cacheFlushPrefix refused: prefix ${JSON.stringify(prefix)} `
+      + 'contains characters outside [a-z0-9_.-:]. Refusing to SCAN/DEL.',
+    );
+    return 0;
+  }
   const c = await getClient();
   if (!c) return 0;
   try {
@@ -188,8 +267,23 @@ export async function cacheFlushPrefix(prefix: string): Promise<number> {
 /**
  * For diagnostics: true when the wrapper is currently bypassing Redis.
  * The probe scripts read this; nothing in the request path does.
+ *
+ * The semantic is "Redis is not currently serving this process's
+ * requests". That covers two cases:
+ *   1. ULPIN_REDIS_URL was never set (deliberate: dev, CI, a workstation
+ *      that has never had Redis). Every cache call no-ops.
+ *   2. A previous call failed and the `degraded` latch tripped
+ *      (incident: a real outage). Every call no-ops until the next
+ *      successful call clears the latch.
+ *
+ * Conflating the two under one label is the right call for the
+ * `x-ulpin-cache` header: in both cases the user-visible answer is
+ * `bypass`, not `miss`. `miss` is reserved for "Redis is up, this
+ * key was new", which is the only case where the value the caller
+ * computed will be in Redis for the next reader.
  */
 export function isCacheDegraded(): boolean {
+  if (!REDIS_URL) return true;
   return degraded;
 }
 
@@ -203,5 +297,6 @@ export function _resetForTests(): void {
   }
   client = null;
   clientInitFailed = false;
+  clientPromise = null;
   degraded = false;
 }
