@@ -16,7 +16,11 @@ bbox, the same codes, the same input and output paths, and -- because
 01_fetch_osm.py is a no-op when its committed extract is present -- without
 touching the network at all.
 
-The chain is: fetch -> estimate -> seed -> utilities -> roads -> export.
+The chain is: fetch -> clip DEM -> estimate -> hazard -> seed -> utilities -> roads
+-> export.
+The DEM stage (scripts/dem.py) is the one stage with third-party needs
+(gdalwarp, rasterio or gdallocationinfo, pyproj); without them it prints why
+and every building keeps its 12.0 m placeholder, exactly as before.
 scripts/build_roads.mjs is part of it now; it produces data/api/<slug>/
 roads.json, which the export step counts into projects.stats, so leaving it out
 would have given every new project 0 streets and no centrelines to draw.
@@ -37,7 +41,9 @@ def stages(p, passthrough):
     py = [sys.executable]
     return [
         ("fetch OSM", py + [os.path.join(HERE, "01_fetch_osm.py")] + passthrough),
+        ("clip DEM", py + [os.path.join(HERE, "dem.py")] + passthrough),
         ("estimate heights", py + [os.path.join(HERE, "02_heights.py")] + passthrough),
+        ("hazard exposure", py + [os.path.join(HERE, "hazard.py")] + passthrough),
         ("seed cadastre", py + [os.path.join(HERE, "03_seed_db.py")] + passthrough),
         ("utilities + conflicts", py + [os.path.join(HERE, "04_utilities.py")] + passthrough),
         ("streets", ["node", os.path.join(HERE, "build_roads.mjs"),
@@ -55,8 +61,10 @@ def main():
 
     passthrough = [a for a in argv if a.startswith("--")]
 
-    for i, (label, cmd) in enumerate(stages(p, passthrough), start=1):
-        print(f"--- [{i}/6] {label} " + "-" * max(0, 50 - len(label)))
+    plan = stages(p, passthrough)
+    n = len(plan)
+    for i, (label, cmd) in enumerate(plan, start=1):
+        print(f"--- [{i}/{n}] {label} " + "-" * max(0, 50 - len(label)))
         result = subprocess.run(cmd, cwd=ROOT)
         if result.returncode != 0:
             # Mark the project failed rather than leaving it 'generating'
@@ -70,7 +78,7 @@ def main():
                 # message that matters; do not bury it under this one.
                 pass
             raise SystemExit(
-                f"\nseed: stage [{i}/6] {label} failed (exit {result.returncode}). "
+                f"\nseed: stage [{i}/{n}] {label} failed (exit {result.returncode}). "
                 f"Nothing after it has run.")
         print()
 

@@ -64,7 +64,18 @@ CREATE TABLE projects (
   -- the gallery renders one line of counts per card and must not run seven
   -- COUNT(*) queries per card -- nor need the database at all, since the
   -- committed data/api/projects.json carries the same numbers.
-  stats         jsonb NOT NULL DEFAULT '{}'::jsonb
+  stats         jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Where building.ground_elev came from for this AOI. 'cartodem_v3' when
+  -- scripts/dem.py sampled an NRSC CartoDEM tile; 'placeholder' when every
+  -- building carries the 12.0 m default. elev_datum names the vertical datum
+  -- of the stored values ('msl_egm96': orthometric, EGM96 geoid) or is NULL
+  -- for placeholders, which have no datum to speak of.
+  elev_source   text NOT NULL DEFAULT 'placeholder'
+                CHECK (elev_source IN ('cartodem_v3','placeholder')),
+  elev_datum    text,
+  -- Optional ISRO Bhuvan WMS overlays: {"lulc": ..., "flood": ..., "cyclone": ...}
+  -- layer names. NULL means the viewer offers no "Context (ISRO)" group.
+  bhuvan_layers jsonb
 );
 
 -- The demo AOI. Present from initdb so the pipeline has a project to seed into
@@ -101,6 +112,20 @@ CREATE TABLE building (
   floors        integer NOT NULL,
   basements     integer NOT NULL DEFAULT 0,
   ground_elev   double precision NOT NULL DEFAULT 12.0,
+  -- provenance of ground_elev: 'dsm_dem' when sampled from a DEM raster,
+  -- 'placeholder' when it is the 12.0 m default (no raster, or nodata there).
+  ground_source text NOT NULL DEFAULT 'placeholder'
+                CHECK (ground_source IN ('dsm_dem','placeholder')),
+  -- DERIVED local hazard exposure, from the DEM surface and the coastline in
+  -- the same tile (scripts/hazard.py). NOT an NRSC product: Bhuvan's flood and
+  -- cyclone layers are national-scale and return one polygon over an AOI this
+  -- size, which is why a local index exists at all. NULL when no DEM.
+  flood_risk    text CHECK (flood_risk IN ('low','moderate','high','severe')),
+  cyclone_risk  text CHECK (cyclone_risk IN ('low','moderate','high','severe')),
+  flood_score   double precision,
+  cyclone_score double precision,
+  coast_dist_m  double precision,
+  local_relief_m double precision,
   use_type      text NOT NULL,
   -- provenance of height_m/floors. The whole point of the system is being
   -- able to tell a surveyed number from a guessed one.

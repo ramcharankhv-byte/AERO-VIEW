@@ -22,6 +22,7 @@ import {
 } from '@/lib/cesium/perf';
 import { useUrlState } from '@/lib/url-state';
 import { mark } from '@/lib/boot-marks';
+import { groundDeltaStats } from '@/lib/geo';
 
 /**
  * Viewer lifecycle and one-time data load.
@@ -243,6 +244,30 @@ export default function CesiumRoot(
         const ground = await sampleGroundUnder(terrainProvider, data.buildings);
         mark('ground-sampled');
         if (disposed) return;
+        // Once per load: how far the stored ground_elev sits from the terrain
+        // the scene actually draws. The stacks are reconciled against the
+        // sampled surface regardless (lib/cesium/terrain.ts), so this changes
+        // nothing on screen -- it is the number a reviewer asks for. Note the
+        // datums differ: World Terrain is ellipsoidal, CartoDEM values are
+        // EGM96 orthometric, so a real DEM still shows a mean offset near the
+        // geoid separation (about -65 m at Visakhapatnam).
+        const delta = groundDeltaStats(
+          data.buildings.features.map((f) => {
+            const h = ground.get(f.properties.id);
+            return h === undefined ? null : [f.properties.ground_elev, h];
+          }),
+        );
+        if (delta) {
+          const ellipsoid = terrainProvider instanceof Cesium.EllipsoidTerrainProvider;
+          console.info(
+            `[terrain] ${project.slug}: ion terrain − DB ground_elev `
+            + `(${project.elev_source ?? 'placeholder'}`
+            + `${project.elev_datum ? `, ${project.elev_datum}` : ''}) over ${delta.n} `
+            + `buildings: mean Δ ${delta.mean.toFixed(1)} m, mean |Δ| `
+            + `${delta.meanAbs.toFixed(1)} m, max |Δ| ${delta.maxAbs.toFixed(1)} m`
+            + (ellipsoid ? ' (ellipsoid terrain: sampled heights are 0)' : ''),
+          );
+        }
         // STAGE TWO: the heights are reconciled, so the layers may build.
         setCtx({ viewer, ground, ready: true, project });
         mark('context-ready');
@@ -332,6 +357,16 @@ export default function CesiumRoot(
   // Esri load resolving after the user has already moved on to CARTO would
   // otherwise overwrite the newer layer.
   const imageryReqRef = useRef(0);
+  /**
+   * Layer 0, the basemap, held by reference rather than found by index.
+   *
+   * BhuvanOverlayLayer keeps its own ImageryLayers in the same collection,
+   * ABOVE this one. So "the basemap" is no longer "whatever is at get(0)" --
+   * with the 'none' provider it is nothing at all while an overlay may still
+   * be at index 0 -- and a removeAll() here would destroy the overlays with
+   * it. The swap below removes exactly the previous basemap and nothing else.
+   */
+  const baseLayerRef = useRef<Cesium.ImageryLayer | null>(null);
 
   useEffect(() => {
     const viewer = ctx.viewer;
@@ -345,8 +380,12 @@ export default function CesiumRoot(
       const { id, layer } = await createImageryLayer(imageryProvider);
       if (req !== imageryReqRef.current || viewer.isDestroyed()) return;
 
-      viewer.imageryLayers.removeAll();
+      const prev = baseLayerRef.current;
+      if (prev && viewer.imageryLayers.contains(prev)) viewer.imageryLayers.remove(prev, true);
+      baseLayerRef.current = layer;
       if (layer) {
+        // Index 0 regardless of arrival order: an overlay that mounted first
+        // stays above the basemap, which is what the index is for.
         viewer.imageryLayers.add(layer, 0);
         applyTreatment(layer, useViewStore.getState().imageryTreatment);
         layer.show = useViewStore.getState().layers.basemap;
@@ -359,17 +398,20 @@ export default function CesiumRoot(
   // up the current tone as well.
   useEffect(() => {
     const viewer = ctx.viewer;
-    if (!viewer || viewer.isDestroyed() || viewer.imageryLayers.length === 0) return;
-    applyTreatment(viewer.imageryLayers.get(0), imageryTreatment);
+    if (!viewer || viewer.isDestroyed()) return;
+    const base = baseLayerRef.current;
+    if (!base) return;
+    applyTreatment(base, imageryTreatment);
   }, [ctx.viewer, imageryTreatment, imageryActive]);
 
   // ---- basemap / terrain layer toggles ------------------------------------
   useEffect(() => {
     const viewer = ctx.viewer;
     if (!viewer || viewer.isDestroyed()) return;
-    // The 'none' provider legitimately leaves the collection empty.
-    if (viewer.imageryLayers.length === 0) return;
-    viewer.imageryLayers.get(0).show = showBasemap;
+    // The 'none' provider legitimately has no basemap layer.
+    const base = baseLayerRef.current;
+    if (!base) return;
+    base.show = showBasemap;
   }, [ctx.viewer, showBasemap, imageryActive]);
 
   // ---- photoreal: the Google 3D Tiles primitive ---------------------------

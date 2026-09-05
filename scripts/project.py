@@ -55,6 +55,18 @@ M_PER_DEG_LAT = 110574.0
 DEFAULT_GROUND_ELEV = 12.0
 FLOOR_HEIGHT = 3.2
 
+# ISRO Bhuvan WMS context overlays, per project. Optional: a project with no
+# entry here offers no "Context (ISRO)" group in the viewer. Layer names are
+# the WMS <Name>s on https://bhuvan-vec2.nrsc.gov.in/bhuvan/ows. Written into
+# projects.bhuvan_layers by upsert_row() and exported to data/api/projects.json.
+BHUVAN_LAYERS = {
+    "siripuram": {
+        "lulc": "sisdpv2:AP_Visakhapatnam_lulc_v2",
+        "flood": "school:school_flood_hazard_zone",
+        "cyclone": "school:school_tropical_cyclone_hazard_zones",
+    },
+}
+
 
 class ArgError(SystemExit):
     """A bad invocation. Carries a message and a non-zero exit status."""
@@ -163,6 +175,40 @@ class Project:
         transformed derivative.
         """
         return os.path.join(self.work_dir, "osm.json")
+
+    # ---------------------------------------------------------------- DEM
+    # The DEM is NOT special-cased for the demo project: data/projects/<slug>/
+    # for everyone, including siripuram, whose raw CartoDEM tile was placed
+    # there. dem_raw.tif is the untouched NRSC tile (ignored by git);
+    # dem.tif is the bbox clip scripts/dem.py writes (small, committed).
+    @property
+    def dem_dir(self):
+        return os.path.join(DATA, "projects", self.slug)
+
+    @property
+    def dem_raw_path(self):
+        """The raw tile, or None. Accepts dem_raw.tif or the NRSC file name."""
+        canonical = os.path.join(self.dem_dir, "dem_raw.tif")
+        if os.path.exists(canonical):
+            return canonical
+        if os.path.isdir(self.dem_dir):
+            for name in sorted(os.listdir(self.dem_dir)):
+                if "_DEM_" in name and name.lower().endswith(".tif"):
+                    return os.path.join(self.dem_dir, name)
+        return None
+
+    @property
+    def dem_path(self):
+        return os.path.join(self.dem_dir, "dem.tif")
+
+    @property
+    def global_dem_path(self):
+        """The pre-multi-project fallback, data/dem.tif, if someone drops one in."""
+        return os.path.join(DATA, "dem.tif")
+
+    @property
+    def bhuvan_layers(self):
+        return BHUVAN_LAYERS.get(self.slug)
 
     def ensure_dirs(self):
         os.makedirs(self.work_dir, exist_ok=True)
@@ -298,21 +344,24 @@ def upsert_row(project, status="generating"):
     """
     import pg  # local import: scripts/ is on sys.path by the time this is called
 
+    layers = project.bhuvan_layers
+    bhuvan = f"{_lit(json.dumps(layers))}::jsonb" if layers else "NULL"
     sql = f"""
     INSERT INTO projects (slug, name, bbox_geom, state_code, district_code,
-                          scheme_code, status)
+                          scheme_code, status, bhuvan_layers)
     VALUES ({_lit(project.slug)}, {_lit(project.name)},
             ST_MakeEnvelope({project.west}, {project.south},
                             {project.east}, {project.north}, 4326),
             {_lit(project.state)}, {_lit(project.district)},
-            {_lit(project.scheme)}, {_lit(status)})
+            {_lit(project.scheme)}, {_lit(status)}, {bhuvan})
     ON CONFLICT (slug) DO UPDATE SET
       name          = EXCLUDED.name,
       bbox_geom     = EXCLUDED.bbox_geom,
       state_code    = EXCLUDED.state_code,
       district_code = EXCLUDED.district_code,
       scheme_code   = EXCLUDED.scheme_code,
-      status        = EXCLUDED.status;
+      status        = EXCLUDED.status,
+      bhuvan_layers = EXCLUDED.bhuvan_layers;
     """
     pg.run(sql, quiet=True)
     return int(pg.scalar(
@@ -324,6 +373,23 @@ def set_status(project, status):
     pg.run(
         f"UPDATE projects SET status = {_lit(status)} "
         f"WHERE slug = {_lit(project.slug)};",
+        quiet=True,
+    )
+
+
+def write_elevation(project, elev_source, elev_datum):
+    """Record where this project's ground_elev came from, and in which datum.
+
+    'cartodem_v3' + 'msl_egm96' when scripts/dem.py sampled a real raster;
+    'placeholder' + NULL when every building kept the 12.0 m default. The
+    viewer and the README truth table read this rather than guessing from the
+    values.
+    """
+    import pg
+    datum = _lit(elev_datum) if elev_datum else "NULL"
+    pg.run(
+        f"UPDATE projects SET elev_source = {_lit(elev_source)}, "
+        f"elev_datum = {datum} WHERE slug = {_lit(project.slug)};",
         quiet=True,
     )
 

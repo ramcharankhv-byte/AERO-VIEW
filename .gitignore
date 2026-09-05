@@ -37,3 +37,12 @@ data/projects/*/osm.json
 # acceptance runs, and a fresh checkout regenerates them.
 .dist/
 docs/shots/rwd-gallery/
+
+# Raw CartoDEM tiles (NRSC/ISRO, 1 arc-second, ~50 MB per 1x1 degree tile).
+# Not committed: scripts/dem.py clips one to the project bbox as dem.tif, which
+# is a few kilobytes and IS committed, so a re-seed never needs the raw tile.
+data/projects/*/dem_raw.tif
+data/projects/*/*_DEM_*.tif
+# The seed-only geo toolchain (micromamba env: gdal, rasterio, pyproj). Only
+# the DEM stage needs it; every other stage is stdlib.
+.gdal-env/

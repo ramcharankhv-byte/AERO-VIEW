@@ -9,7 +9,11 @@ import { useViewStore } from '@/lib/store';
 import {
   SUN_MAX_HOUR, SUN_MIN_HOUR, SUN_NOON_HOUR, SUN_STEP_HOURS, formatSunHour,
 } from '@/lib/sun';
-import type { BuildingStyle, LayerKey, SliceState } from '@/lib/types';
+import { BHUVAN_KINDS, BHUVAN_LABEL, BHUVAN_LAYER_KEY } from '@/lib/bhuvan';
+import { HAZARD_LABEL, RISK_MEANING } from '@/lib/hazard';
+import { RISK_HEX } from '@/lib/cesium/materials';
+import { RISK_ORDER } from '@/lib/types';
+import type { BuildingStyle, HazardKind, LayerKey, RiskClass, SliceState } from '@/lib/types';
 
 /**
  * Left panel: layer visibility, explode, transparency, view mode, theme.
@@ -164,6 +168,18 @@ export default function LayerPanel() {
   const setSlice = useViewStore((s) => s.setSlice);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const canSlice = activeBuildingId !== null;
+  // Only the overlays this project defines get a toggle; a project without a
+  // bhuvan_layers block gets no group at all.
+  const bhuvan = useViewStore((s) => s.project?.bhuvan_layers ?? null);
+  // Which hazard the ground is grading, if any. Flood wins when both are on,
+  // exactly as HazardRiskLayer resolves it.
+  const hazard: HazardKind | null =
+    layers.bhuvanFlood ? 'flood' : layers.bhuvanCyclone ? 'cyclone' : null;
+  const contextRows = useMemo(
+    () => BHUVAN_KINDS.filter((k) => bhuvan?.[k])
+      .map((k) => ({ key: BHUVAN_LAYER_KEY[k], label: BHUVAN_LABEL[k] })),
+    [bhuvan],
+  );
 
   // Depends only on build-time env, so the list is stable for the session.
   const providers = useMemo(() => availableProviders(), []);
@@ -188,6 +204,68 @@ export default function LayerPanel() {
           />
         ))}
       </div>
+
+      {/* ISRO Bhuvan WMS context overlays, drawn over the basemap. Only the
+          toggles the current project defines; nothing for a project without
+          a bhuvan_layers block. Disabled under Photoreal, where the globe
+          surface is hidden and there is nothing for an overlay to sit on. */}
+      {contextRows.length > 0 ? (
+        <div className="mt-3 border-t border-[rgb(var(--edge))]/50 pt-2.5">
+          <div
+            className={photoreal ? 'is-disabled' : ''}
+            title={photoreal ? 'Google 3D Tiles hide the globe surface' : undefined}
+          >
+            <span className="row-label">Context (ISRO)</span>
+            <div className="mt-1">
+              {contextRows.map((r) => (
+                <Check
+                  key={r.key}
+                  label={r.label}
+                  checked={layers[r.key]}
+                  onChange={() => toggleLayer(r.key)}
+                />
+              ))}
+            </div>
+            {/* The key sits HERE, beside the switch that turns the ramp on,
+                rather than only in the Legend: the left column scrolls, the
+                Legend is below the fold on a laptop, and a four-class ramp
+                the reader cannot decode is a code with no key. The Legend
+                keeps the fuller version with the drivers and the caveat. */}
+            {hazard ? (
+              <div className="mt-2 border-t border-[rgb(var(--edge))]/40 pt-2">
+                <span className="row-label">{HAZARD_LABEL[hazard]} (derived)</span>
+                <div className="mt-1 space-y-[3px]">
+                  {[...RISK_ORDER].reverse().map((cls: RiskClass) => (
+                    <div key={cls} className="flex items-center gap-1.5">
+                      {/* Inline colour: the chrome audit reads computed styles
+                          and exempts inline ones, which is what lets a key be
+                          coloured inside a monochrome panel. */}
+                      <span
+                        className="h-2 w-3 shrink-0 rounded-sm ring-1 ring-[rgb(var(--edge-strong))]"
+                        style={{ background: RISK_HEX[cls] }}
+                      />
+                      <span className="w-14 shrink-0 text-[10px] capitalize text-[rgb(var(--ink))]">
+                        {cls}
+                      </span>
+                      <span className="flex-1 truncate text-[9px] text-[rgb(var(--muted))]">
+                        {RISK_MEANING[hazard][cls]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-1 text-[9px] leading-snug text-[rgb(var(--muted))]">
+                  Graded from CartoDEM, relative within this AOI. The Bhuvan
+                  zone underneath is national and covers it in one class.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-1 text-[9px] leading-snug text-[rgb(var(--muted))]">
+                Bhuvan WMS overlays, © NRSC/ISRO. Off by default.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {/* How buildings are drawn. Sits under the Buildings checkbox, which
           stays the on/off switch for whichever style is selected here. */}

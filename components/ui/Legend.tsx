@@ -2,9 +2,16 @@
 
 import { useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { ROAD_COLOR, ROAD_STYLE, UTILITY_COLOR, UTILITY_LABEL } from '@/lib/cesium/materials';
+import {
+  RISK_HEX, ROAD_COLOR, ROAD_STYLE, UTILITY_COLOR, UTILITY_LABEL,
+} from '@/lib/cesium/materials';
 import { PROVENANCES } from '@/lib/stats';
-import type { AssetType, RoadClass } from '@/lib/types';
+import { buildLegendUrl, LULC_NOTE } from '@/lib/bhuvan';
+import {
+  HAZARD_CAVEAT, HAZARD_DRIVERS, HAZARD_LABEL, RISK_MEANING,
+} from '@/lib/hazard';
+import { RISK_ORDER } from '@/lib/types';
+import type { AssetType, RiskClass, RoadClass } from '@/lib/types';
 import { ProvenanceBadge } from './Provenance';
 
 /**
@@ -41,6 +48,14 @@ export default function Legend() {
   const roads = useDataStore((s) => s.roads);
   const showRoads = useViewStore((s) => s.layers.roads);
   const buildings = useDataStore((s) => s.buildings);
+  const showLulc = useViewStore((s) => s.layers.bhuvanLulc);
+  const showFlood = useViewStore((s) => s.layers.bhuvanFlood);
+  const showCyclone = useViewStore((s) => s.layers.bhuvanCyclone);
+  // One hazard is graded at a time; flood wins, as in HazardRiskLayer.
+  const hazard = showFlood ? 'flood' : showCyclone ? 'cyclone' : null;
+  const lulcLayer = useViewStore((s) => s.project?.bhuvan_layers?.lulc ?? null);
+  // The GetLegendGraphic image failed to load: say so rather than leave a gap.
+  const [legendFailed, setLegendFailed] = useState(false);
 
   // Local, not store state: this is a disclosure toggle on one panel, with no
   // bearing on the scene and nothing else to coordinate with.
@@ -131,6 +146,69 @@ export default function Legend() {
           <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
             Line weight is the road hierarchy. Centrelines from OpenStreetMap;
             street references and unnamed-street labels are derived.
+          </p>
+        </div>
+      ) : null}
+
+      {/* The derived hazard grading. Keyed whenever the ground is painted,
+          because a four-class ramp with no key is a code with no meaning --
+          and because the reader has to be told, here and not in a tooltip,
+          that these classes are computed from the terrain rather than read
+          off an NRSC product. */}
+      {hazard ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">{HAZARD_LABEL[hazard]} (derived)</div>
+          <div className="mt-1.5 space-y-1">
+            {[...RISK_ORDER].reverse().map((cls: RiskClass) => (
+              <div key={cls} className="flex items-center gap-2">
+                {/* Inline colour: the chrome audit reads computed styles and
+                    exempts inline ones, which is what lets a key be coloured
+                    inside a monochrome panel. */}
+                <span
+                  className="h-2 w-4 shrink-0 rounded-sm ring-1 ring-[rgb(var(--edge-strong))]"
+                  style={{ background: RISK_HEX[cls] }}
+                />
+                <span className="flex-1 text-[11px] capitalize text-[rgb(var(--ink))]">
+                  {cls}
+                </span>
+                <span className="text-[10px] text-[rgb(var(--muted))]">
+                  {RISK_MEANING[hazard][cls]}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {HAZARD_DRIVERS[hazard]} {HAZARD_CAVEAT}
+          </p>
+        </div>
+      ) : null}
+
+      {/* ISRO Bhuvan land use, keyed only while the overlay is on. The key is
+          the server's own GetLegendGraphic: the class colours are Bhuvan's,
+          not ours, so nothing here is invented. Bounded and scrolling: a 1:10k
+          LULC legend runs to dozens of classes, and the column must not push
+          past the viewport at phone sizes. */}
+      {showLulc && lulcLayer ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Land use (ISRO Bhuvan)</div>
+          {legendFailed ? (
+            <p className="mt-1.5 text-[10px] text-[rgb(var(--muted))]">
+              Legend unavailable from Bhuvan.
+            </p>
+          ) : (
+            <div className="mt-1.5 max-h-44 overflow-y-auto rounded bg-[rgb(var(--tint)/0.06)] p-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={buildLegendUrl(lulcLayer)}
+                alt="Bhuvan LULC legend"
+                className="h-auto max-w-full"
+                loading="lazy"
+                onError={() => setLegendFailed(true)}
+              />
+            </div>
+          )}
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {LULC_NOTE}
           </p>
         </div>
       ) : null}

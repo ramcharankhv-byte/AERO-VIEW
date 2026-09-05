@@ -26,8 +26,20 @@ which were guessed.
 npm install                # also copies Cesium assets into public/cesium
 docker compose up -d       # PostGIS 16 + PostGIS 3.4 + SFCGAL
 npm run db:schema          # only if the volume already existed
-npm run seed               # fetch OSM -> estimate -> seed -> utilities -> roads -> export
+npm run seed               # fetch -> clip DEM -> estimate -> hazard -> seed -> utilities -> roads -> export
 npm run dev                # http://localhost:3000
+```
+
+`npm run seed` is stdlib Python. The one stage with third-party needs is the
+DEM clip and sample (`scripts/dem.py`: `gdalwarp`, `rasterio` or
+`gdallocationinfo`, `pyproj`); without them it says so and every building keeps
+the 12.0 m placeholder. To seed with real ground elevation, create the seed-only
+toolchain once and run the pipeline from it:
+
+```bash
+# user-space, no admin: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html
+micromamba create -y -p ./.gdal-env -c conda-forge python=3.12 gdal rasterio pyproj
+npm run seed:geo           # = .gdal-env/python scripts/seed.py, same arguments as seed
 ```
 
 `/` is the project gallery; each project's viewer is at `/p/<slug>`, e.g.
@@ -40,7 +52,13 @@ or deletes a row:
 ```bash
 docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 \
   -f - < db/migrations/001_multi_project.sql
+docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 \
+  -f - < db/migrations/002_cartodem_bhuvan.sql
+docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1   -f - < db/migrations/003_hazard_exposure.sql
 ```
+
+Migration 002 adds the ground-elevation provenance columns and the Bhuvan
+overlay block; the pipeline writes them, so it is required before re-seeding.
 
 **The database is optional at runtime.** The route handlers try PostGIS first
 and fall back to the committed snapshots in `data/api/<slug>/`, so
@@ -71,7 +89,52 @@ Both controls live in the Layers panel under the Basemap checkbox:
 
 **Tone** switches between `GIS dark` (default) and `Natural` (raw imagery, for
 when a reviewer asks to see the source). Switching either control swaps layer 0
-in place — the viewer is not rebuilt and the camera does not move.
+in place — the viewer is not rebuilt, the camera does not move, and any context
+overlay above layer 0 stays where it is.
+
+### Context overlays (ISRO Bhuvan)
+
+A project may carry a `bhuvan_layers` block naming NRSC Bhuvan WMS layers
+(`https://bhuvan-vec2.nrsc.gov.in/bhuvan/ows`, WMS 1.3.0, EPSG:4326). The
+Layers panel then shows a **Context (ISRO)** group with one toggle per layer the
+project defines — for Siripuram: **Land use (SISDP 1:10k)**, **Flood hazard
+zones**, **Cyclone hazard zones**. They are drawn as `ImageryLayer`s above the
+basemap (LULC at 30% opacity, the AOIs being uniformly built-up; hazard zones at
+50%), off by default, credited `© NRSC/ISRO Bhuvan` in Cesium's attribution
+container, and they survive a basemap change. Bhuvan is never a basemap: its
+vector server carries no imagery, so Esri stays the default.
+
+**The hazard overlays are graded locally, because the national ones cannot be.**
+Bhuvan's flood and cyclone layers return a *single polygon* over an AOI 1.2 km
+across: switched on alone they wash the whole ward one flat colour and say
+nothing about which streets are worse than which. So `scripts/hazard.py`
+derives a local exposure index for every building from the project's own
+CartoDEM surface and the coastline in the same tile, and the viewer paints it
+on the ground in four graded classes with a key beside the toggle.
+
+| weight | Flood exposure | Cyclone exposure |
+|---|---|---|
+| highest | ground height above sea level (0.45) | distance to the shoreline (0.50) |
+| middle | depth below the local surroundings within 250 m (0.40) | how exposed the ground is above its surroundings (0.30) |
+| lowest | distance to the shoreline (0.15) | building height, as wind load (0.20) |
+
+Class boundaries are fixed scores, not quantiles, so a class means the same
+thing in every project and seeding a new AOI cannot re-grade an existing one.
+Over Siripuram this gives 127 low / 132 moderate / 99 high / 27 severe for
+flood and 136 / 134 / 104 / 11 for cyclone, and the two disagree about 309 of
+the 385 buildings — the low sheltered ground that floods is not the exposed
+high ground the wind hits. Every value carries `derived` provenance in the
+DetailPanel, and both keys say in words that this is computed here and is not
+an NRSC rating. The Bhuvan zone stays underneath at 25% as the national
+classification it is.
+
+With the LULC overlay on, the Legend shows Bhuvan's own `GetLegendGraphic`.
+Selecting a building issues one `GetFeatureInfo` at the footprint centroid
+(lat,lon axis order, as WMS 1.3.0 + EPSG:4326 requires) and the DetailPanel
+adds `LULC: <class> — SISDP 1:10k (Bhuvan)`; the lookup is cached per building
+and never delays the rest of the panel. The server sends
+`Access-Control-Allow-Origin: *`, so there is no proxy route: tiles and lookups
+go to Bhuvan directly.
 
 If a provider fails to load, the app logs a warning and falls back to CARTO;
 the StatusBar then shows the effective basemap marked `(fallback)`, so a
@@ -83,8 +146,8 @@ over Siripuram". Pick one by hand from the
 `WAYBACK_RELEASE` in `lib/cesium/imagery.ts`. Left `null` (the default), the
 Wayback option resolves to current Esri imagery.
 
-Attribution is a licence obligation — Esri, Maxar, CARTO and OSM credits render
-bottom-left and must not be hidden. Esri's World Imagery service also carries
+Attribution is a licence obligation — Esri, Maxar, CARTO, OSM and (with an
+overlay on) NRSC/ISRO Bhuvan credits render bottom-left and must not be hidden. Esri's World Imagery service also carries
 its own [terms of use](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9)
 for heavy or commercial use.
 
@@ -113,7 +176,11 @@ This distinction is enforced in the data model, not just in the prose.
 | Storey counts, 8% | `building:levels` / `height` tags | **Real** (`osm_tag`) |
 | Storey counts, 90% | area + building-tag heuristic | **Estimated** (`estimated`) |
 | Storey counts, 4% | `data/surveyed_plans.json` | **Synthetic demo register** (`surveyed_plan` + `survey_synthetic`) |
-| Ground elevation | no DEM supplied → 12.0 m default | **Placeholder** |
+| Ground elevation, Siripuram | CartoDEM v3 1 arc-sec, NRSC/ISRO, sampled at each footprint centroid, EGM96 orthometric | **Real** (`dsm_dem`, `elev_source: cartodem_v3`) |
+| Ground elevation, Banjara Hills | no DEM tile supplied → 12.0 m default | **Placeholder** (`placeholder`) |
+| LULC class (overlay + DetailPanel row) | NRSC SISDP 1:10,000 (2016–19), Bhuvan WMS | **Real**, external, context only |
+| Flood / cyclone hazard zones | NRSC national-scale, Bhuvan WMS | **Real**, external, one class over the whole AOI |
+| Flood / cyclone exposure grading | `scripts/hazard.py` over the CartoDEM surface + coastline | **Derived**, relative within the AOI, not an NRSC rating |
 | Parcel boundaries | Voronoi plots around clustered footprints | **Derived, not surveyed** |
 | Owners, tenure, encumbrances | generated placeholders | **Synthetic** |
 | Utility alignments | offsets from road centrelines | **Representative, not as-built** |
@@ -132,8 +199,26 @@ DetailPanel, which then renders the provenance badge as **“Surveyed plan
 (demo)”**. Fabricated data is never allowed to borrow the authority of a real
 survey.
 
-`dsm_dem` provenance is implemented but yields **zero rows**, because no DSM/DEM
-raster is supplied. Drop a `data/dem.tif` in and `02_heights.py` will use it.
+**Ground elevation is real for Siripuram.** `data/projects/siripuram/dem_raw.tif`
+is the NRSC CartoDEM v3 tile `N17 E083` (1 arc-second; gitignored at 51 MB).
+`scripts/dem.py` clips it to the bbox with `gdalwarp` into the committed
+`data/projects/siripuram/dem.tif` (49 × 43 cells, 8 KB, nodata −32768) and
+`02_heights.py` samples it at every footprint centroid. The tile carries no
+vertical-datum key and no NRSC sidecar, but it reads −5 … −54 m over dry land,
+which is only possible as a height above the WGS84 ellipsoid, so every sample is
+converted to EGM96 orthometric height with `pyproj` and the project records
+`elev_datum: msl_egm96`. Siripuram's ground now runs 19.6 – 82.6 m MSL. A
+building over a nodata cell would keep 12.0 m with `ground_source: placeholder`;
+none does. The registry (`data/api/projects.json`) says which applies per
+project in `elev_source`, and the DetailPanel says it per building. Banjara
+Hills has no tile and stays an honest placeholder.
+
+The viewer still reconciles every stack against the terrain it draws
+(`lib/cesium/terrain.ts`) and logs, once per load, the mean and largest
+difference between the stored `ground_elev` and Cesium World Terrain. Expect a
+mean near −65 m for Siripuram even now: World Terrain is ellipsoidal and the
+stored values are MSL, and that constant offset is exactly what the
+reconciliation removes.
 
 ### Streets
 
@@ -217,20 +302,25 @@ app/                     layout; / gallery; /p/[slug] viewer; api/p/[slug]/* (7 
                          + 7 unscoped aliases and api/projects[/slug]
 components/gallery/      ProjectCard, BboxSketch
 components/globe/        CesiumRoot (viewer, imagery, terrain), CameraDirector, Picker, Scene
-components/layers/       Parcels, Roads, Buildings, FloorStack, Units, Utilities, Conflict
+components/layers/       BhuvanOverlay (ISRO WMS), HazardRisk (derived grading),
+                         Parcels, Roads, Buildings, FloorStack,
+                         Units, Utilities, Conflict
 components/ui/           TopBar, LayerPanel, ActionBar, FloorLadder, ElevationRuler,
                          DetailPanel, ParcelInset, NavDock, StatusBar, Legend,
                          ConflictBanner, UlpinCard, Provenance, IonNotice
-lib/                     projects.ts, ulpin.ts, store.ts, db.ts, types.ts,
+lib/                     projects.ts, ulpin.ts, store.ts, db.ts, types.ts, bhuvan.ts,
+                         hazard.ts,
                          api/handlers.ts, data/*, mock/*, cesium/*
 db/                      01_schema.sql, 02_functions.sql   (run by initdb)
                          migrations/001_multi_project.sql  (for an existing volume)
-scripts/                 seed.py orchestrator, 01-05 pipeline, project.py,
+                         migrations/002_cartodem_bhuvan.sql, 003_hazard_exposure.sql
+scripts/                 seed.py orchestrator, 01-05 pipeline, dem.py, hazard.py, project.py,
                          build_geometry.sql, utilities.sql, build_roads.mjs,
                          verify_ui.mjs, check_roads/check_edit/shoot
 data/api/<slug>/         per-project snapshots, served when the DB is down
 data/api/projects.json   the committed registry, so the gallery renders offline
-data/projects/<slug>/    per-project inputs, the Overpass cache, and edits.json
+data/projects/<slug>/    per-project inputs, the Overpass cache, edits.json,
+                         dem_raw.tif (ignored) and its committed clip dem.tif
 ```
 
 **Everything is scoped by project.** One project is one AOI: a bbox, the
@@ -258,9 +348,9 @@ Four rules the code actually obeys (and `grep` can confirm):
 
 **Metric geometry is built in SQL, not Python.** Python 3.14 has patchy wheels
 for `shapely`/`rasterio`, and PostGIS+SFCGAL was already a hard dependency. The
-Python scripts do fetch and attribute estimation only — stdlib plus an optional
-`rasterio` — while extrusion, unit subdivision, utility offsetting and conflict
-detection are SQL. Construction happens in **EPSG:32644** (UTM 44N) and is
+Python scripts do fetch and attribute estimation only — stdlib, plus the
+optional geo toolchain that `scripts/dem.py` alone uses — while extrusion, unit
+subdivision, utility offsetting and conflict detection are SQL. Construction happens in **EPSG:32644** (UTM 44N) and is
 transformed back to **4326**; `ST_Transform` leaves Z alone, so stored solids are
 lon/lat degrees + height in metres, exactly what Cesium consumes.
 
@@ -274,10 +364,11 @@ conflict pass promote shells to solids first.
 once; hover, fade and hide are `CallbackProperty` closures reading a single
 mutable ref, eased by one `requestAnimationFrame` loop rather than 384 tweens.
 
-**Terrain reconciliation.** The DB stores `ground_elev` per spec (12.0 m without
-a DEM). Siripuram is hilly, so the viewer samples real terrain under every
-building once at load and shifts each stack by the difference. The schema is
-untouched; only rendering is reconciled.
+**Terrain reconciliation.** The DB stores `ground_elev` from the project's DEM
+when there is one (Siripuram: CartoDEM, MSL) and 12.0 m otherwise. Cesium World
+Terrain is a different surface in a different datum, so the viewer samples it
+under every building once at load and shifts each stack by the difference, and
+logs the mean and maximum of that difference. Only rendering is reconciled.
 
 **An isolated floor shows the level and its flats together.** The level is drawn
 as a thin base plate at its base Z plus a translucent shell over its full height,
@@ -348,13 +439,18 @@ is the wrong answer, so the two are never collapsed.
 
 ```console
 $ curl -s -X POST localhost:3000/api/query -H 'Content-Type: application/json' \
-    -d '{"lon":83.3157,"lat":17.7268,"z":16.7}'
+    -d '{"lon":83.3245,"lat":17.72808,"z":64.9}'
 
-parcel    AP-VSP-3D26-0001            K. Venkata Rao
-building  AP-VSP-3D26-0001-001        Water Resourse Block   z 12.00..28.00
-floor     AP-VSP-3D26-0001-001-01     Level 1                z 15.20..18.40
-unit      AP-VSP-3D26-0001-001-01-01  B01                    z 15.35..18.05
+parcel    AP-VSP-3D26-0001            P. Sailaja
+building  AP-VSP-3D26-0001-001        Water Resourse Block   z 60.16..76.16
+floor     AP-VSP-3D26-0001-001-01     Level 1                z 63.36..66.56
+unit      AP-VSP-3D26-0001-001-01-02  B02                    z 63.51..66.21
 ```
+
+The `z` values are metres above mean sea level (EGM96): the building's ground
+is the CartoDEM sample at its centroid, 60.16 m, and Level 1 starts one storey
+above it. Before the DEM every stack in the AOI started at the 12.0 m
+placeholder.
 
 ---
 
@@ -370,6 +466,8 @@ at `/p/<slug>`.
 | `state_code`, `district_code`, `scheme_code` | the ULPIN prefix, e.g. `TS-HYD-3D26` |
 | `status` | `draft` / `generating` / `ready` / `failed`; only `ready` is openable |
 | `stats` | entity counts, denormalised so a card needs neither seven `COUNT(*)`s nor a database |
+| `elev_source`, `elev_datum` | `cartodem_v3` + `msl_egm96` when a DEM was sampled, `placeholder` + null otherwise |
+| `bhuvan_layers` | optional `{ lulc, flood, cyclone }` Bhuvan WMS layer names; absent = no Context (ISRO) group |
 
 ### Generating one
 
@@ -379,9 +477,11 @@ npm run seed -- --slug=hyderabad-banjara --name="Banjara Hills Ward" \
 ```
 
 It creates or updates the project row, caches the raw Overpass response to
-`data/projects/<slug>/osm.json`, runs estimate → seed → utilities → streets →
-export scoped to that project, writes `data/api/<slug>/`, and fills in
-`projects.stats`. `npm run seed` with **no** arguments is the demo project,
+`data/projects/<slug>/osm.json`, runs clip DEM → estimate → seed → utilities →
+streets → export scoped to that project, writes `data/api/<slug>/`, and fills
+in `projects.stats`. Drop an NRSC CartoDEM tile at
+`data/projects/<slug>/dem_raw.tif` and run it through `npm run seed:geo` to get
+real ground elevation; otherwise the project is an honest placeholder. `npm run seed` with **no** arguments is the demo project,
 with the same bbox, the same codes and the same file paths it has always used —
 and no network at all, because its OSM extract is committed.
 
@@ -449,6 +549,19 @@ The browser-driven checks target `/p/siripuram` by default, since `/` is the
 gallery now. `ULPIN_URL` overrides it; their API paths are unchanged, because
 they drive the unscoped aliases.
 
+Both pages require a session, and the harness has no login step, so hand it a
+signed cookie minted with the server's own `SESSION_SECRET` (read from
+`.env.local`):
+
+```bash
+export ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
+npm run verify:ui && npm run check:rwd
+```
+
+`verify:ui` also needs the `window.__ulpinViewer` seam, which a production
+build only carries when built with `NEXT_PUBLIC_ULPIN_PROBE=1`; `npm run dev`
+has it unconditionally.
+
 `verify:ui` walks city → building → explode → floor → unit → underground,
 asserts the DOM at each step, checks the disabled controls really are disabled,
 fails on any console error, and writes screenshots to `docs/shots/`.
@@ -482,7 +595,7 @@ Both suites were run against **PostGIS and the snapshot backend**, and the
   6,438 units · 301 utility runs · 12 conflicts
 - **hyderabad-banjara** — 2,213 buildings · 1,309 parcels · 350 streets ·
   8,119 floors · 31,807 units · 1,214 utility runs · 80 conflicts
-- `tsc --noEmit` clean, 26/26 unit tests, 46/46 UI checks, 26/26 street checks,
+- `tsc --noEmit` clean, 34/34 unit tests, 46/46 UI checks, 26/26 street checks,
   31/31 edit checks, responsive checks green at 1680/1280/834/390 px on both
   the viewer and the gallery
 - The chrome audit reports **0 off-palette elements** at every viewport, and the
@@ -509,3 +622,12 @@ buildings and parcels there is no PostGIS path for `lib/db.ts` to prefer;
 
 Building footprints and road centrelines are © OpenStreetMap contributors,
 licensed **ODbL**. Everything derived from them here inherits that licence.
+
+Ground elevation for Siripuram is derived from **CartoDEM version 3 (1
+arc-second), © NRSC/ISRO**, downloaded from Bhuvan; the raw tile is not
+redistributed here, only the clipped 49 × 43 cell extract. The land use / land
+cover (SISDP 1:10,000) and the flood and cyclone hazard-zone overlays are served
+live from **NRSC/ISRO Bhuvan** WMS and remain © NRSC/ISRO; the viewer credits
+them in Cesium's attribution container whenever one is on screen. Bhuvan's
+capabilities document declares no fees and no access constraints; heavy or
+commercial use should be cleared with NRSC.

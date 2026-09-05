@@ -39,7 +39,25 @@ export interface SliceState {
 }
 
 export type LayerKey =
-  | 'parcels' | 'buildings' | 'roads' | 'floors' | 'utilities' | 'terrain' | 'basemap';
+  | 'parcels' | 'buildings' | 'roads' | 'floors' | 'utilities' | 'terrain' | 'basemap'
+  // ISRO Bhuvan WMS context overlays. Offered only when the project's
+  // bhuvan_layers block names the layer; off by default.
+  | 'bhuvanLulc' | 'bhuvanFlood' | 'bhuvanCyclone';
+
+/** Where a building's ground_elev came from. See scripts/dem.py. */
+export type GroundSource = 'dsm_dem' | 'placeholder';
+
+/**
+ * Local hazard exposure, in increasing order. DERIVED from the DEM surface
+ * and the coastline in the same tile by scripts/hazard.py -- never a reading
+ * of an NRSC product. Bhuvan's own flood and cyclone layers are national and
+ * cover an AOI this size with a single polygon, so they say nothing about
+ * which streets are worse than which; this does, and says who computed it.
+ */
+export type RiskClass = 'low' | 'moderate' | 'high' | 'severe';
+export const RISK_ORDER: RiskClass[] = ['low', 'moderate', 'high', 'severe'];
+/** The hazards the derived index covers, matching the Bhuvan overlay kinds. */
+export type HazardKind = 'flood' | 'cyclone';
 
 export interface Ring {
   type: 'Polygon';
@@ -54,6 +72,22 @@ export interface BuildingProps {
   floors: number;
   basements: number;
   ground_elev: number;
+  /**
+   * 'dsm_dem' when ground_elev was sampled from the project's CartoDEM tile,
+   * 'placeholder' when it is the 12.0 m default. Optional only because a
+   * snapshot exported before the column existed lacks it; treat absent as
+   * 'placeholder'.
+   */
+  ground_source?: GroundSource;
+  /** Derived local exposure. Absent when the project has no DEM. */
+  flood_risk?: RiskClass | null;
+  cyclone_risk?: RiskClass | null;
+  flood_score?: number | null;
+  cyclone_score?: number | null;
+  /** Metres to the nearest sea cell in the DEM; null when landlocked. */
+  coast_dist_m?: number | null;
+  /** Ground minus the local floor within 250 m. Negative = a hollow. */
+  local_relief_m?: number | null;
   use_type: UseType;
   height_source: Provenance;
   /** True when height_source='surveyed_plan' but the register declared itself synthetic. */
@@ -299,6 +333,19 @@ export interface ProjectStats {
   conflicts: number;
 }
 
+/** Where the project's ground elevations came from. */
+export type ElevSource = 'cartodem_v3' | 'placeholder';
+
+/**
+ * ISRO Bhuvan WMS layer names for the optional context overlays, keyed by
+ * what they show. A missing key is an overlay the project does not offer.
+ */
+export interface BhuvanLayers {
+  lulc?: string;
+  flood?: string;
+  cyclone?: string;
+}
+
 export interface Project {
   slug: string;
   name: string;
@@ -312,6 +359,16 @@ export interface Project {
   created_at: string;
   /** Null until the project has been exported at least once. */
   stats: ProjectStats | null;
+  /**
+   * 'cartodem_v3' when scripts/dem.py sampled an NRSC CartoDEM tile for this
+   * AOI, 'placeholder' when every building carries the 12.0 m default.
+   * Optional only for a registry snapshot written before the column existed.
+   */
+  elev_source?: ElevSource;
+  /** Vertical datum of ground_elev: 'msl_egm96', or null for placeholders. */
+  elev_datum?: string | null;
+  /** Optional ISRO Bhuvan overlays. Null/absent: no "Context (ISRO)" group. */
+  bhuvan_layers?: BhuvanLayers | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,10 @@
 
 import { useEffect } from 'react';
 
-import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings } from '@/lib/store';
+import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings, useEnsureLulc, useLulcPending } from '@/lib/store';
+import { LULC_SOURCE_SHORT, lulcClassLabel } from '@/lib/bhuvan';
+import { RISK_HEX } from '@/lib/cesium/materials';
+import type { RiskClass } from '@/lib/types';
 import BuildingEditForm from './detail/BuildingEditForm';
 import UnsavedBanner from './detail/UnsavedBanner';
 import { ROAD_CLASS_LABEL, UTILITY_LABEL } from '@/lib/cesium/materials';
@@ -36,7 +39,7 @@ function Row({
    * viewer generated, and a blanket "some of this is synthetic" footnote would
    * leave the user unable to tell which they are looking at.
    */
-  source?: 'osm_tag' | 'generated' | 'derived';
+  source?: 'osm_tag' | 'generated' | 'derived' | 'bhuvan';
 }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-[3px]">
@@ -50,7 +53,17 @@ function Row({
 }
 
 /** Marks a single value as mapped fact or as a demonstration value. */
-function SourceChip({ source }: { source: 'osm_tag' | 'generated' | 'derived' }) {
+function SourceChip({ source }: { source: 'osm_tag' | 'generated' | 'derived' | 'bhuvan' }) {
+  if (source === 'bhuvan') {
+    return (
+      <span
+        title="ISRO Bhuvan SISDP land use / land cover, 1:10,000 (2016–19), read by WMS GetFeatureInfo at the footprint centroid. Context, not a cadastral attribute."
+        className="chip shrink-0 border border-[rgb(var(--edge-strong))] text-[rgb(var(--muted))]"
+      >
+        isro
+      </span>
+    );
+  }
   if (source === 'osm_tag') {
     return (
       <span
@@ -71,6 +84,25 @@ function SourceChip({ source }: { source: 'osm_tag' | 'generated' | 'derived' })
       className="chip shrink-0 border border-dashed border-[rgb(var(--edge-strong))] text-[rgb(var(--muted-2))]"
     >
       {source === 'derived' ? 'derived' : 'demo'}
+    </span>
+  );
+}
+
+/**
+ * One derived hazard-exposure class, as a coloured chip.
+ *
+ * Colour comes from the same ramp the ground patch uses, so the panel and the
+ * map cannot disagree about what "high" looks like. Inline, like every other
+ * legend swatch, which is what the monochrome chrome audit exempts.
+ */
+function RiskChip({ cls }: { cls: RiskClass }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span
+        className="h-2 w-2.5 shrink-0 rounded-sm ring-1 ring-[rgb(var(--edge-strong))]"
+        style={{ background: RISK_HEX[cls] }}
+      />
+      <span className="capitalize">{cls}</span>
     </span>
   );
 }
@@ -168,6 +200,11 @@ export default function DetailPanel() {
   const loading = useDataStore((s) => s.loading);
   const detail = useEnsureDetail(activeBuildingId);
   const detailPending = useDetailPending(activeBuildingId);
+  // ISRO Bhuvan LULC at the footprint centroid. Fetched on selection, cached
+  // per building, and never waited on: the row below shimmers, nothing else.
+  const lulcLayer = useViewStore((s) => s.project?.bhuvan_layers?.lulc ?? null);
+  const lulc = useEnsureLulc(activeBuildingId, lulcLayer);
+  const lulcPending = useLulcPending(activeBuildingId);
 
   // Derived context selectors -- also called unconditionally, even when
   // they return an empty array (no active selection).
@@ -742,7 +779,69 @@ export default function DetailPanel() {
         <Row label="Height" value={m(bprops.height_m)} />
         <Row label="Storeys" value={`${bprops.floors} above ground`} />
         <Row label="Basements" value={bprops.basements} />
-        <Row label="Ground elevation" value={m(bprops.ground_elev)} />
+        <Row
+          label="Ground elevation"
+          value={
+            <span>
+              {m(bprops.ground_elev)}
+              <span className="ml-1 text-[rgb(var(--muted))]">
+                {bprops.ground_source === 'dsm_dem' ? '· CartoDEM 1″' : '· placeholder'}
+              </span>
+            </span>
+          }
+        />
+        {bprops.flood_risk || bprops.cyclone_risk ? (
+          <>
+            {bprops.flood_risk ? (
+              <Row
+                label="Flood exposure"
+                source="derived"
+                value={<RiskChip cls={bprops.flood_risk} />}
+              />
+            ) : null}
+            {bprops.cyclone_risk ? (
+              <Row
+                label="Cyclone exposure"
+                source="derived"
+                value={<RiskChip cls={bprops.cyclone_risk} />}
+              />
+            ) : null}
+            {typeof bprops.coast_dist_m === 'number' ? (
+              <Row
+                label="Distance to coast"
+                source="derived"
+                value={`${(bprops.coast_dist_m / 1000).toFixed(2)} km`}
+              />
+            ) : null}
+          </>
+        ) : null}
+        {lulcLayer ? (
+          lulcPending ? (
+            <Row label="LULC" value={<SkeletonBar w="w-28" />} />
+          ) : lulc && lulc !== 'none' ? (
+            <Row
+              label="LULC"
+              source="bhuvan"
+              value={
+                <span>
+                  {lulcClassLabel(lulc)}
+                  <span className="ml-1 text-[rgb(var(--muted))]">— {LULC_SOURCE_SHORT}</span>
+                </span>
+              }
+            />
+          ) : (
+            <Row
+              label="LULC"
+              source="bhuvan"
+              value={
+                <span className="text-[rgb(var(--muted))]">
+                  {lulc === 'none' ? 'no class at this point' : 'unavailable'}
+                  {` — ${LULC_SOURCE_SHORT}`}
+                </span>
+              }
+            />
+          )
+        ) : null}
         {bprops.built_up_m2 !== undefined ? (
           <Row label="Built-up area" value={m2(bprops.built_up_m2)} source="derived" />
         ) : null}

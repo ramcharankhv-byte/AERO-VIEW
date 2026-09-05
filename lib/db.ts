@@ -303,6 +303,7 @@ export async function backend(slug: string): Promise<'postgis' | 'snapshot'> {
 const PROJECTS_SQL = `
   SELECT p.slug, p.name, p.state_code, p.district_code, p.scheme_code,
          p.status, p.created_at, p.stats,
+         p.elev_source, p.elev_datum, p.bhuvan_layers,
          ST_XMin(p.bbox_geom) AS west,  ST_YMin(p.bbox_geom) AS south,
          ST_XMax(p.bbox_geom) AS east,  ST_YMax(p.bbox_geom) AS north
     FROM projects p ORDER BY p.created_at, p.id`;
@@ -311,6 +312,9 @@ interface ProjectRow {
   slug: string; name: string; state_code: string; district_code: string;
   scheme_code: string; status: Project['status']; created_at: Date | string;
   stats: ProjectStats | null;
+  elev_source: Project['elev_source'] | null;
+  elev_datum: string | null;
+  bhuvan_layers: Project['bhuvan_layers'];
   west: number; south: number; east: number; north: number;
 }
 
@@ -334,6 +338,9 @@ export async function projectsFromDb(): Promise<Project[] | null> {
       status: r.status,
       created_at: new Date(r.created_at).toISOString(),
       stats: r.stats && Object.keys(r.stats).length ? r.stats : null,
+      elev_source: r.elev_source ?? 'placeholder',
+      elev_datum: r.elev_datum ?? null,
+      bhuvan_layers: r.bhuvan_layers ?? null,
     }));
   } catch {
     // No projects table -- a pre-migration volume. The snapshot registry is
@@ -373,7 +380,10 @@ function buildingsSql(scope: Scope) {
       'properties', json_build_object(
         'id',b.id,'ulpin',b.ulpin,'parcel_id',b.parcel_id,
         'height_m',b.height_m,'floors',b.floors,'basements',b.basements,
-        'ground_elev',b.ground_elev,'use_type',b.use_type,
+        'ground_elev',b.ground_elev,'ground_source',b.ground_source,'use_type',b.use_type,
+        'flood_risk',b.flood_risk,'cyclone_risk',b.cyclone_risk,
+        'flood_score',b.flood_score,'cyclone_score',b.cyclone_score,
+        'coast_dist_m',b.coast_dist_m,'local_relief_m',b.local_relief_m,
         'height_source',b.height_source,'survey_synthetic',b.survey_synthetic,'name',b.name,'address',b.address,
         'osm_id',b.osm_id))),'[]'::json)) AS fc
   FROM building b ${f.clause}`,
@@ -445,7 +455,10 @@ function detailSql(scope: Scope, id: number) {
   SELECT json_build_object(
     'building', json_build_object(
       'id',b.id,'ulpin',b.ulpin,'parcel_id',b.parcel_id,'height_m',b.height_m,
-      'floors',b.floors,'basements',b.basements,'ground_elev',b.ground_elev,
+      'floors',b.floors,'basements',b.basements,'ground_elev',b.ground_elev,'ground_source',b.ground_source,
+      'flood_risk',b.flood_risk,'cyclone_risk',b.cyclone_risk,
+      'flood_score',b.flood_score,'cyclone_score',b.cyclone_score,
+      'coast_dist_m',b.coast_dist_m,'local_relief_m',b.local_relief_m,
       'use_type',b.use_type,'height_source',b.height_source,'survey_synthetic',b.survey_synthetic,'name',b.name,
       'address',b.address,'osm_id',b.osm_id,
       'footprint', ST_AsGeoJSON(b.footprint, 7)::json),

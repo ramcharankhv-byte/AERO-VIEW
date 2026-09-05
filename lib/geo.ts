@@ -441,3 +441,46 @@ export function clipRingToHalfPlane(ring: number[][], plane: HalfPlane): number[
   if (closed) out.push([out[0][0], out[0][1]]);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Ground-elevation reconciliation statistics.
+// ---------------------------------------------------------------------------
+
+export interface GroundDeltaStats {
+  /** Buildings with both a stored and a sampled height. */
+  n: number;
+  /** Mean of (sampled - stored), metres. Signed: the datum offset. */
+  mean: number;
+  /** Mean |sampled - stored|, metres. */
+  meanAbs: number;
+  /** Largest |sampled - stored|, metres. */
+  maxAbs: number;
+}
+
+/**
+ * How far the terrain the scene draws sits from the ground_elev the database
+ * stores, over a set of [stored, sampled] pairs. Null entries (no sample) are
+ * skipped; null is returned when nothing is left to compare.
+ *
+ * Pure, and here rather than in lib/cesium/terrain.ts so it can be tested
+ * without a Cesium import.
+ */
+export function groundDeltaStats(
+  pairs: ReadonlyArray<readonly [number, number] | null>,
+): GroundDeltaStats | null {
+  let n = 0;
+  let sum = 0;
+  let sumAbs = 0;
+  let maxAbs = 0;
+  for (const p of pairs) {
+    if (!p) continue;
+    const [stored, sampled] = p;
+    if (!Number.isFinite(stored) || !Number.isFinite(sampled)) continue;
+    const d = sampled - stored;
+    n++;
+    sum += d;
+    sumAbs += Math.abs(d);
+    if (Math.abs(d) > maxAbs) maxAbs = Math.abs(d);
+  }
+  return n ? { n, mean: sum / n, meanAbs: sumAbs / n, maxAbs } : null;
+}

@@ -13,6 +13,13 @@
       "district_code": "VSP",
       "scheme_code": "3D26",
       "status": "ready",
+      "elev_source": "cartodem_v3",
+      "elev_datum": "msl_egm96",
+      "bhuvan_layers": {
+        "lulc": "sisdpv2:AP_Visakhapatnam_lulc_v2",
+        "flood": "school:school_flood_hazard_zone",
+        "cyclone": "school:school_tropical_cyclone_hazard_zones"
+      },
       "created_at": "2026-09-01T04:49:47.000Z",
       "stats": {
         "units": 6462,
@@ -20,7 +27,7 @@
         "parcels": 326,
         "streets": 131,
         "buildings": 385,
-        "conflicts": 12,
+        "conflicts": 2,
         "utilities": 304
       }
     },
@@ -37,6 +44,9 @@
       "district_code": "HYD",
       "scheme_code": "3D26",
       "status": "ready",
+      "elev_source": "placeholder",
+      "elev_datum": null,
+      "bhuvan_layers": null,
       "created_at": "2026-09-03T20:48:29.416Z",
       "stats": {
         "units": 31807,

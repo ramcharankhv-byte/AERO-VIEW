@@ -37,7 +37,10 @@ def main():
     if not os.path.exists(path):
         raise SystemExit(f"run scripts/02_heights.py first (no {path})")
     with open(path, encoding="utf-8") as fh:
-        buildings = json.load(fh)["features"]
+        doc = json.load(fh)
+    buildings = doc["features"]
+    # Written by 02_heights.py: where ground_elev came from, and its datum.
+    elevation = doc.get("elevation") or {}
 
     hw_path = p.raw_highways_path
     highways = []
@@ -48,6 +51,8 @@ def main():
     # Publishes the project row and the seed_ctx table that build_geometry.sql
     # reads its scope from. Must happen before the SQL file runs.
     proj.make_seed_ctx(p)
+    proj.write_elevation(p, elevation.get("elev_source", "placeholder"),
+                         elevation.get("elev_datum"))
 
     print(f"staging {len(buildings)} buildings, {len(highways)} road ways")
     pg.run(STAGE_DDL, quiet=True)

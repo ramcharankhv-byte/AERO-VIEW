@@ -23,6 +23,25 @@ const OUT = process.argv[2] ?? path.join(process.cwd(), 'docs', 'shots');
  * the same project, so nothing else here had to change.
  */
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
+
+/**
+ * A session for the run. The viewer and the gallery redirect an anonymous
+ * browser to /login, and this harness has no login step, so an acceptance run
+ * hands it a signed `ulpin_session` cookie instead:
+ *
+ *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
+ *
+ * Unset, the page is loaded anonymously exactly as before.
+ */
+async function applySession(page, url) {
+  const value = process.env.ULPIN_SESSION_COOKIE;
+  if (!value) return;
+  const u = new globalThis.URL(url);
+  await page.setCookie({
+    name: 'ulpin_session', value, domain: u.hostname, path: '/',
+    httpOnly: true, sameSite: 'Lax',
+  });
+}
 const CHROME =
   process.env.CHROME_PATH ??
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -74,6 +93,7 @@ const browser = await puppeteer.launch({
 
 try {
   const page = await browser.newPage();
+  await applySession(page, URL);
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
   });
@@ -346,7 +366,7 @@ try {
 
   const sliceErrors = errors.filter(
     (e) => !/favicon|ERR_INTERNET_DISCONNECTED|tile\.openstreetmap|openstreetmap\.org/i.test(e)
-      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com/i.test(e),
+      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com|nrsc\.gov\.in/i.test(e),
   );
   check('no console errors through the floor/slice walk', sliceErrors.length === 0,
     sliceErrors.slice(0, 3).join(' | '));
@@ -534,7 +554,7 @@ try {
     // registry already falls back to CARTO when one is genuinely down.
     (e) =>
       !/favicon|ERR_INTERNET_DISCONNECTED|tile\.openstreetmap|openstreetmap\.org/i.test(e)
-      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com/i.test(e),
+      && !/arcgisonline\.com|maptiles\.arcgis\.com|cartocdn\.com|api\.mapbox\.com|nrsc\.gov\.in/i.test(e),
   );
   check('no runtime errors', real.length === 0, real.slice(0, 3).join(' | '));
 

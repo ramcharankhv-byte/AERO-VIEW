@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  clipRingToHalfPlane, insetRing, ringCentroid, slicePlane,
+  clipRingToHalfPlane, groundDeltaStats, insetRing, ringCentroid, slicePlane,
 } from './geo.ts';
 
 // Siripuram, so the longitude scaling is the one the app actually uses.
@@ -162,4 +162,27 @@ test('a cut ring comes back closed', () => {
   const ring = rect(20, 12);
   const cut = clipRingToHalfPlane(ring, slicePlane(ring, 'ns', 20));
   assert.deepEqual(cut[0], cut[cut.length - 1]);
+});
+
+// ------------------------------------------------------------ groundDeltaStats
+
+test('groundDeltaStats reports the signed mean and the largest absolute delta', () => {
+  // Stored MSL heights against ellipsoidal terrain: a constant geoid offset
+  // plus one building the DEM disagrees on.
+  const s = groundDeltaStats([
+    [20, -45],   // Δ = -65
+    [30, -35],   // Δ = -65
+    [12, -41],   // Δ = -53
+    null,        // no sample: skipped
+  ]);
+  assert.ok(s);
+  assert.equal(s.n, 3);
+  assert.ok(Math.abs(s.mean - (-61)) < 1e-9);
+  assert.ok(Math.abs(s.meanAbs - 61) < 1e-9);
+  assert.equal(s.maxAbs, 65);
+});
+
+test('groundDeltaStats is null with nothing to compare', () => {
+  assert.equal(groundDeltaStats([]), null);
+  assert.equal(groundDeltaStats([null, [1, Number.NaN]]), null);
 });

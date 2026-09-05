@@ -328,7 +328,7 @@ try {
   // ------------------------------------------------------------ CONSOLE
   console.log('\n[8] CONSOLE');
   const real = errors.filter(
-    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox/i.test(e)
+    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox|nrsc\.gov\.in/i.test(e)
       // This suite deliberately provokes 400 and 422 responses to prove the
       // read-only and validation guarantees. Chrome logs each as a console
       // error; that is the feature working, not a fault.

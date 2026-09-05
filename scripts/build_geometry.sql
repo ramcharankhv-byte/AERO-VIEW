@@ -247,8 +247,10 @@ SELECT b.osm_id,
 FROM b_norm b JOIN parcel_seq s USING (cluster_id);
 
 INSERT INTO building (id, project_id, parcel_id, ulpin, footprint, height_m, floors,
-                      basements, ground_elev, use_type, height_source, survey_synthetic,
-                      osm_id, name, address)
+                      basements, ground_elev, ground_source, use_type, height_source,
+                      survey_synthetic, osm_id, name, address,
+                      flood_risk, cyclone_risk, flood_score, cyclone_score,
+                      coast_dist_m, local_relief_m)
 SELECT q.bid,
        (SELECT project_id FROM seed_ctx),
        q.pid,
@@ -261,12 +263,19 @@ SELECT q.bid,
        (b.props ->> 'floors')::int,
        (b.props ->> 'basements')::int,
        (b.props ->> 'ground_elev')::double precision,
+       COALESCE(b.props ->> 'ground_source', 'placeholder'),
        b.props ->> 'use_type',
        b.props ->> 'height_source',
        COALESCE((b.props ->> 'survey_synthetic')::boolean, false),
        b.osm_id,
        b.props ->> 'name',
-       b.props ->> 'address'
+       b.props ->> 'address',
+       b.props ->> 'flood_risk',
+       b.props ->> 'cyclone_risk',
+       (b.props ->> 'flood_score')::double precision,
+       (b.props ->> 'cyclone_score')::double precision,
+       (b.props ->> 'coast_dist_m')::double precision,
+       (b.props ->> 'local_relief_m')::double precision
 FROM b_norm b JOIN building_seq q USING (osm_id);
 
 -- ---------------------------------------------------------------------------

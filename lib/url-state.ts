@@ -29,17 +29,20 @@ import { PROVIDER_LABELS, TREATMENT_LABELS } from './cesium/imagery-catalog';
 /** Layer keys in a fixed order, so the `layers` param is stable and diffable. */
 const LAYER_ORDER: LayerKey[] = [
   'parcels', 'buildings', 'roads', 'floors', 'utilities', 'terrain', 'basemap',
+  'bhuvanLulc', 'bhuvanFlood', 'bhuvanCyclone',
 ];
 
 /** Short codes; layers=pbf is legible in a way layers=parcels,buildings is not. */
 const LAYER_CODE: Record<LayerKey, string> = {
   parcels: 'p', buildings: 'b', roads: 'r', floors: 'f',
   utilities: 'u', terrain: 't', basemap: 'm',
+  bhuvanLulc: 'l', bhuvanFlood: 'h', bhuvanCyclone: 'c',
 };
 
 const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
   parcels: false, buildings: true, roads: true, floors: true,
   utilities: false, terrain: true, basemap: true,
+  bhuvanLulc: false, bhuvanFlood: false, bhuvanCyclone: false,
 };
 
 const DEFAULTS = {

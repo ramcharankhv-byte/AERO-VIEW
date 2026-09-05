@@ -47,7 +47,10 @@ SELECT json_build_object(
     'properties', json_build_object(
       'id', b.id, 'ulpin', b.ulpin, 'parcel_id', b.parcel_id,
       'height_m', b.height_m, 'floors', b.floors, 'basements', b.basements,
-      'ground_elev', b.ground_elev, 'use_type', b.use_type,
+      'ground_elev', b.ground_elev, 'ground_source', b.ground_source, 'use_type', b.use_type,
+      'flood_risk', b.flood_risk, 'cyclone_risk', b.cyclone_risk,
+      'flood_score', b.flood_score, 'cyclone_score', b.cyclone_score,
+      'coast_dist_m', b.coast_dist_m, 'local_relief_m', b.local_relief_m,
       'height_source', b.height_source, 'survey_synthetic', b.survey_synthetic, 'name', b.name, 'address', b.address,
       'osm_id', b.osm_id))), '[]'::json))
 FROM building b WHERE b.project_id = {SCOPE};
@@ -99,7 +102,10 @@ SELECT COALESCE(json_object_agg(s.id, s.doc), '{{}}'::json) FROM (
     'building', json_build_object(
       'id', b.id, 'ulpin', b.ulpin, 'parcel_id', b.parcel_id,
       'height_m', b.height_m, 'floors', b.floors, 'basements', b.basements,
-      'ground_elev', b.ground_elev, 'use_type', b.use_type,
+      'ground_elev', b.ground_elev, 'ground_source', b.ground_source, 'use_type', b.use_type,
+      'flood_risk', b.flood_risk, 'cyclone_risk', b.cyclone_risk,
+      'flood_score', b.flood_score, 'cyclone_score', b.cyclone_score,
+      'coast_dist_m', b.coast_dist_m, 'local_relief_m', b.local_relief_m,
       'height_source', b.height_source, 'survey_synthetic', b.survey_synthetic, 'name', b.name, 'address', b.address,
       'osm_id', b.osm_id,
       'footprint', ST_AsGeoJSON(b.footprint, 7)::json),
@@ -140,6 +146,9 @@ SELECT json_build_object('projects', COALESCE(json_agg(json_build_object(
   'district_code', p.district_code,
   'scheme_code', p.scheme_code,
   'status', p.status,
+  'elev_source', p.elev_source,
+  'elev_datum', p.elev_datum,
+  'bhuvan_layers', p.bhuvan_layers,
   'created_at', to_char(p.created_at AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   'stats', CASE WHEN p.stats = '{}'::jsonb THEN NULL ELSE p.stats END)

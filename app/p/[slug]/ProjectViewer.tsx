@@ -33,7 +33,8 @@ const Scene = dynamic(() => import('@/components/globe/Scene'), {
 
 export default function ProjectViewer({ project }: { project: Project }) {
   /**
-   * The single write of `projectSlug`, and the only one anywhere.
+   * The single write of `projectSlug` (and of `project`), and the only one
+   * anywhere.
    *
    * In a useState initialiser rather than an effect, because it has to land
    * BEFORE any child mounts: effects run child-first, so CesiumRoot's mount
@@ -48,7 +49,7 @@ export default function ProjectViewer({ project }: { project: Project }) {
    * "written once on mount and never mutated" holds.
    */
   useState(() => {
-    useViewStore.setState({ projectSlug: project.slug });
+    useViewStore.setState({ projectSlug: project.slug, project });
     return null;
   });
 

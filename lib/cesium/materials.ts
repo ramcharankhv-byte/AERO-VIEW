@@ -1,6 +1,6 @@
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
-import type { AssetType, Provenance, RoadClass, UseType } from '@/lib/types';
+import type { AssetType, Provenance, RiskClass, RoadClass, UseType } from '@/lib/types';
 
 /**
  * Every colour state in the scene, defined once.
@@ -448,6 +448,54 @@ export const CONFLICT_COLOR_DIM = rgba(120, 26, 26, 0.55);
  * greyscale and for a colour-blind reader -- the hue is the fast read, the
  * pattern is the reliable one.
  */
+/**
+ * The derived hazard-exposure ramp: four ordered classes, one sequential
+ * yellow-to-red scale used for BOTH flood and cyclone.
+ *
+ * Sequential, not categorical, because the classes are ordered -- the reader
+ * has to see "more" without consulting the key. One ramp for both hazards
+ * rather than two palettes: only one hazard is ever drawn at a time, the key
+ * names which, and a second hue set would imply the two are comparable
+ * categories rather than the same scale applied twice.
+ *
+ * `low` is deliberately pale and nearly transparent. No part of a coastal
+ * ward is at zero risk, and painting one flat would be a claim the data does
+ * not support -- so the least-exposed class reads as "not flagged" instead.
+ *
+ * These are MEANING colours in the sense of the rule at the top of this file:
+ * they are a legend entry, and hue is what makes the four legible at once.
+ */
+export const RISK_HEX: Record<RiskClass, string> = {
+  low: '#FDE68A',       // pale straw
+  moderate: '#FBBF24',  // amber
+  high: '#F97316',      // orange
+  severe: '#DC2626',    // deep red
+};
+
+/** Fill opacity of the ground patch per class. Ordered like the hues. */
+export const RISK_ALPHA: Record<RiskClass, number> = {
+  low: 0.14,
+  moderate: 0.3,
+  high: 0.42,
+  severe: 0.55,
+};
+
+/** The ground patch drawn under each parcel, per class. */
+export const RISK_COLOR: Record<RiskClass, Cesium.Color> = {
+  low: Cesium.Color.fromCssColorString(RISK_HEX.low).withAlpha(RISK_ALPHA.low),
+  moderate: Cesium.Color.fromCssColorString(RISK_HEX.moderate).withAlpha(RISK_ALPHA.moderate),
+  high: Cesium.Color.fromCssColorString(RISK_HEX.high).withAlpha(RISK_ALPHA.high),
+  severe: Cesium.Color.fromCssColorString(RISK_HEX.severe).withAlpha(RISK_ALPHA.severe),
+};
+
+/** Outline of a risk patch. Only the top two classes are outlined. */
+export const RISK_OUTLINE: Record<RiskClass, Cesium.Color> = {
+  low: Cesium.Color.fromCssColorString(RISK_HEX.low).withAlpha(0.0),
+  moderate: Cesium.Color.fromCssColorString(RISK_HEX.moderate).withAlpha(0.0),
+  high: Cesium.Color.fromCssColorString(RISK_HEX.high).withAlpha(0.5),
+  severe: Cesium.Color.fromCssColorString(RISK_HEX.severe).withAlpha(0.75),
+};
+
 export const PROVENANCE_HEX: Record<Provenance, string> = {
   surveyed_plan: '#4ADE80',  // measured
   osm_tag: '#38BDF8',        // mapped

@@ -8,18 +8,27 @@ Provenance is the product here, not a nicety. Every building carries a
     dsm_dem       height differenced from a DSM/DEM raster pair
     estimated     inferred from footprint area + building tag  (a guess)
 
+and a `ground_source` recording where its ground elevation came from:
+
+    dsm_dem       sampled from the project's DEM (scripts/dem.py) at the
+                  footprint centroid, converted to EGM96 orthometric metres
+    placeholder   no DEM, or nodata at that point: the 12.0 m default
+
 Only ~8% of this AOI has a usable OSM height tag, so the estimator drives the
 skyline. It is deliberately deterministic -- jitter is seeded from the OSM id
 -- so re-running never reshuffles the city, and a building's height is stable
 across rebuilds.
 
 IMPORTANT: this script never invents authoritative provenance. `surveyed_plan`
-is applied only for ids present in data/surveyed_plans.json, and `dsm_dem` only
-when a real raster is present at data/dem.tif. If those inputs are absent the
-buildings stay honestly marked `estimated`.
+is applied only for ids present in data/surveyed_plans.json, and a ground
+elevation is `dsm_dem` only when a real raster was actually read at that point.
+If those inputs are absent the buildings stay honestly marked `estimated` and
+`placeholder`.
 
-Input:  data/raw_buildings.geojson
-Output: data/buildings_attributed.geojson
+Input:  data/raw_buildings.geojson, data/projects/<slug>/dem.tif (optional)
+Output: data/buildings_attributed.geojson, with a top-level "elevation" block
+        {elev_source, elev_datum, dem, sampler, sampled, nodata} that
+        03_seed_db.py writes onto the project's registry row.
 """
 import hashlib
 import json
@@ -27,6 +36,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dem as demmod  # noqa: E402
 import project as proj  # noqa: E402
 from project import DEFAULT_GROUND_ELEV, FLOOR_HEIGHT  # noqa: E402
 
@@ -34,14 +44,10 @@ DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 
 # The DEM and the survey register are per project: a raster of Visakhapatnam
 # has nothing to say about a ward in Hyderabad, and a register keyed by OSM id
-# would silently mis-attribute if it were shared. Both live in the project's
-# own work directory, which for the demo project is data/ -- exactly where they
-# have always been, so nothing moves and neither of the two optional inputs
-# changes behaviour for it.
-def dem_path(p):
-    return os.path.join(p.work_dir, "dem.tif")
-
-
+# would silently mis-attribute if it were shared. The register lives in the
+# project's work directory (data/ for the demo project). The DEM lives under
+# data/projects/<slug>/ for every project -- see scripts/dem.py, which also
+# owns the clip, the sampler and the datum conversion.
 def survey_path(p):
     return os.path.join(p.work_dir, "surveyed_plans.json")
 
@@ -130,31 +136,6 @@ def basement_count(use_type, floors, osm_id):
     return 0
 
 
-def load_dem(p):
-    """Return a sampler(lon, lat) -> elevation, or None when no raster exists."""
-    path = dem_path(p)
-    if not os.path.exists(path):
-        return None
-    try:
-        import rasterio  # optional dependency, only needed if a DEM is supplied
-    except ImportError:
-        print(f"  {path} present but rasterio is not installed - skipping DEM")
-        return None
-    src = rasterio.open(path)
-    print(f"  DEM opened: {path} ({src.width}x{src.height})")
-
-    def sample(lon, lat):
-        try:
-            val = next(src.sample([(lon, lat)]))[0]
-            if val is None or val <= -1000:
-                return None
-            return float(val)
-        except (StopIteration, IndexError, ValueError):
-            return None
-
-    return sample
-
-
 def load_survey(p):
     """Optional survey register: {osm_id: storeys}. Absent by default.
 
@@ -189,9 +170,13 @@ def main():
     with open(p.raw_buildings_path, encoding="utf-8") as fh:
         fc = json.load(fh)
 
-    dem = load_dem(p)
+    dem = demmod.Sampler(p)
+    if not dem:
+        print(f"  no DEM at {demmod._rel(p.dem_path)} (or data/dem.tif); "
+              f"ground_elev will be the {DEFAULT_GROUND_ELEV} m placeholder")
     survey, survey_synthetic = load_survey(p)
     counts = {"osm_tag": 0, "estimated": 0, "dsm_dem": 0, "surveyed_plan": 0}
+    ground_counts = {"dsm_dem": 0, "placeholder": 0}
     out = []
 
     for feat in fc["features"]:
@@ -225,12 +210,13 @@ def main():
             height_m = floors * FLOOR_HEIGHT
 
         lon, lat = centroid(ring)
-        ground = dem(lon, lat) if dem else None
-        ground_source = "dsm_dem" if ground is not None else "default"
+        ground = dem.sample(lon, lat) if dem else None
+        ground_source = "dsm_dem" if ground is not None else "placeholder"
         if ground is None:
             ground = DEFAULT_GROUND_ELEV
 
         counts[source] += 1
+        ground_counts[ground_source] += 1
         props.update({
             "area_m2": round(area, 2),
             "use_type": use_type,
@@ -251,6 +237,19 @@ def main():
         out.append(feat)
 
     fc["features"] = out
+    # Project-level elevation provenance. 'cartodem_v3' only when a raster was
+    # opened AND at least one building was actually read from it.
+    sampled = ground_counts["dsm_dem"]
+    fc["elevation"] = {
+        "elev_source": demmod.ELEV_SOURCE if (dem and sampled) else "placeholder",
+        "elev_datum": dem.datum if (dem and sampled) else None,
+        "dem": demmod._rel(dem.path) if dem else None,
+        "sampler": dem.kind if dem else None,
+        "sampled": sampled,
+        "nodata": ground_counts["placeholder"],
+    }
+    if dem:
+        dem.close()
     os.makedirs(p.work_dir, exist_ok=True)
     with open(p.attributed_path, "w", encoding="utf-8") as fh:
         json.dump(fc, fh)
@@ -263,9 +262,14 @@ def main():
         print(f"  height_source={k:<14} {v:>4}  ({pct:.1f}%)")
     if counts["surveyed_plan"] == 0:
         print(f"  note: no survey register at {survey_path(p)}")
-    if counts["dsm_dem"] == 0 and not dem:
-        print(f"  note: no DEM at {dem_path(p)}; "
-              f"ground_elev defaulted to {DEFAULT_GROUND_ELEV} m")
+    elev = fc["elevation"]
+    if dem:
+        print(f"  ground_elev: {elev['sampled']} sampled from {elev['dem']} "
+              f"via {elev['sampler']} ({elev['elev_datum']}), "
+              f"{elev['nodata']} nodata -> {DEFAULT_GROUND_ELEV} m placeholder")
+    else:
+        print(f"  ground_elev: all {total} at the {DEFAULT_GROUND_ELEV} m placeholder "
+              f"(elev_source=placeholder)")
 
 
 if __name__ == "__main__":

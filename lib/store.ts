@@ -7,8 +7,10 @@ import { SUN_DEFAULT_HOUR, SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type { BuildingEdit, FieldError } from './data/building-schema';
 import type {
   BuildingDetail, BuildingStyle, ConflictRow, EnrichedBuilding, GeoFC, LayerKey,
-  Mode, ParcelInfo, RoadProps, SliceState, UtilityProps,
+  Mode, ParcelInfo, Project, RoadProps, SliceState, UtilityProps,
 } from './types';
+import { fetchLulcAt, type LulcResult } from './bhuvan';
+import { ringCentroid } from './geo';
 
 /**
  * View state. This is the single source of truth for what the scene shows.
@@ -32,6 +34,17 @@ export interface ViewState {
    * Null only before the first project page has mounted.
    */
   projectSlug: string | null;
+  /**
+   * The project row itself: bbox, codes, and the optional bhuvan_layers block.
+   *
+   * Same single writer and lifecycle as projectSlug (ProjectViewer's useState
+   * initialiser), and here for the same reason: the chrome -- LayerPanel,
+   * Legend, DetailPanel -- mounts in OverlayRoot, outside CesiumRoot's viewer
+   * context, and needs to know which overlays this project offers without
+   * seven layers of prop drilling. Layers under Scene keep using
+   * useViewer().project.
+   */
+  project: Project | null;
 
   /**
    * Who is signed in, as far as the BROWSER is concerned.
@@ -199,10 +212,16 @@ const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
   utilities: false,
   terrain: true,
   basemap: true,
+  // Bhuvan context overlays are opt-in: they are coarse relative to the
+  // footprints and they cost WMS round-trips to a government server.
+  bhuvanLulc: false,
+  bhuvanFlood: false,
+  bhuvanCyclone: false,
 };
 
 export const useViewStore = create<ViewState>((set) => ({
   projectSlug: null,
+  project: null,
   session: { role: null, floor: null, unit: null },
   mode: 'city',
   activeBuildingId: null,
@@ -370,6 +389,15 @@ export interface DataState {
    * with the same id, and without this each one fetched the same document.
    */
   pendingDetail: Record<number, true>;
+  /**
+   * ISRO Bhuvan LULC class per building id, looked up by GetFeatureInfo at
+   * the footprint centroid on first selection. 'none' means the WMS answered
+   * and no polygon covers the point. Failures are NOT cached, so a re-select
+   * retries. Records rather than Maps so Zustand's identity comparison works,
+   * like `detail` above.
+   */
+  lulc: Record<number, LulcEntry>;
+  pendingLulc: Record<number, true>;
   loading: boolean;
   error: string | null;
   /**
@@ -403,6 +431,9 @@ export interface DataState {
   patchBuilding: (id: number, props: Partial<EnrichedBuilding>) => void;
   beginDetail: (id: number) => void;
   endDetail: (id: number) => void;
+  putLulc: (id: number, r: LulcEntry) => void;
+  beginLulc: (id: number) => void;
+  endLulc: (id: number) => void;
   setLoading: (b: boolean) => void;
   setError: (e: string | null) => void;
 }
@@ -423,6 +454,8 @@ export const useDataStore = create<DataState>((set) => ({
   detail: {},
   detailOrder: [],
   pendingDetail: {},
+  lulc: {},
+  pendingLulc: {},
   loading: false,
   error: null,
   buildingsEpoch: 0,
@@ -485,9 +518,21 @@ export const useDataStore = create<DataState>((set) => ({
       delete next[id];
       return { pendingDetail: next };
     }),
+  putLulc: (id, r) => set((s) => ({ lulc: { ...s.lulc, [id]: r } })),
+  beginLulc: (id) => set((s) => ({ pendingLulc: { ...s.pendingLulc, [id]: true } })),
+  endLulc: (id) =>
+    set((s) => {
+      if (!s.pendingLulc[id]) return s;
+      const next = { ...s.pendingLulc };
+      delete next[id];
+      return { pendingLulc: next };
+    }),
   setLoading: (b) => set({ loading: b }),
   setError: (e) => set({ error: e }),
 }));
+
+/** A resolved LULC lookup: the class, or 'none' when no polygon covers the point. */
+export type LulcEntry = LulcResult | 'none';
 
 /** Utility helper: the detail record for the active building, if loaded. */
 export function useActiveDetail(): BuildingDetail | null {
@@ -649,6 +694,64 @@ export function useEnsureDetail(id: number | null): BuildingDetail | null {
 /** True while `/api/building/:id` is in flight. Distinct from "failed". */
 export function useDetailPending(id: number | null): boolean {
   const pending = useDataStore((s) => s.pendingDetail);
+  return id === null ? false : Boolean(pending[id]);
+}
+
+/** Give up on a Bhuvan lookup after this long; the panel never waits on it. */
+const LULC_TIMEOUT_MS = 8000;
+
+/**
+ * Ensure the ISRO Bhuvan LULC class for a building is being fetched, and
+ * return it once it is.
+ *
+ * The useEnsureDetail pattern -- data store only, one request per id, an
+ * AbortController for a selection the user has already left -- with two
+ * deliberate differences: it keys off `buildingsEpoch` rather than the
+ * `buildings` object, so an attribute edit does not abort a lookup in flight,
+ * and it never caches a failure, so the next selection retries. It is a no-op
+ * when the project defines no LULC layer.
+ */
+export function useEnsureLulc(id: number | null, layer: string | null): LulcEntry | null {
+  const cached = useDataStore((s) => (id === null ? undefined : s.lulc[id]));
+  const isCached = cached !== undefined;
+  const epoch = useDataStore((s) => s.buildingsEpoch);
+
+  useEffect(() => {
+    if (id === null || !layer || isCached) return undefined;
+    const st = useDataStore.getState();
+    if (st.pendingLulc[id]) return undefined;
+    const f = st.buildings?.features.find((x) => x.properties.id === id);
+    if (!f) return undefined;
+    const p = f.properties;
+    const c = p.lat !== undefined && p.lon !== undefined
+      ? { lon: p.lon, lat: p.lat }
+      : ringCentroid((f.geometry.coordinates as number[][][])[0]);
+
+    st.beginLulc(id);
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), LULC_TIMEOUT_MS);
+    (async () => {
+      try {
+        const r = await fetchLulcAt(layer, c.lon, c.lat, abort.signal);
+        useDataStore.getState().putLulc(id, r ?? 'none');
+      } catch {
+        /* aborted, timed out or WMS down: left uncached so a re-select retries */
+      } finally {
+        clearTimeout(timer);
+        useDataStore.getState().endLulc(id);
+      }
+    })();
+    return () => {
+      if (useDataStore.getState().lulc[id] === undefined) abort.abort();
+    };
+  }, [id, layer, isCached, epoch]);
+
+  return id === null ? null : cached ?? null;
+}
+
+/** True while the Bhuvan GetFeatureInfo for this building is in flight. */
+export function useLulcPending(id: number | null): boolean {
+  const pending = useDataStore((s) => s.pendingLulc);
   return id === null ? false : Boolean(pending[id]);
 }
 

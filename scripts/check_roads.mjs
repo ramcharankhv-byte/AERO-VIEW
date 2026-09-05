@@ -277,7 +277,7 @@ try {
   // ------------------------------------------------------------- CONSOLE
   console.log('\n[7] CONSOLE');
   const real = errors.filter(
-    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox/i.test(e),
+    (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox|nrsc\.gov\.in/i.test(e),
   );
   check('no runtime errors', real.length === 0, real.slice(0, 3).join(' | '));
 

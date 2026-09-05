@@ -72,7 +72,21 @@ const FL = 0.000340;        // footprint lon extent
 const FW = 0.000253;        // footprint lat extent
 const ABOVE_GROUND = 60;    // 20 floors × 3 m
 const BASEMENT_DEPTH = 12;  // 3 basements × 4 m
-const GROUND_ELEV = 12;     // matches existing data convention
+// Sampled from the project's CartoDEM clip at (CX, CY) with scripts/dem.py
+// (EGM96 orthometric), so this building stands on the same ground as its
+// neighbours now that siripuram's ground_elev is real. Re-sample if CX/CY move:
+//   .gdal-env/python.exe -c "import sys; sys.path.insert(0,'scripts'); import dem, project;
+//     print(dem.Sampler(project.default_project()).sample(83.3190, 17.7233))"
+const GROUND_ELEV = 55.31;
+const GROUND_SOURCE = 'dsm_dem';
+// Derived local hazard exposure for this footprint, from scripts/hazard.py run
+// over the real AOI with this building appended -- so its class is graded
+// against its actual neighbours, not invented. Re-compute if CX/CY/height move.
+const HAZARD = {
+  flood_risk: 'high', flood_score: 0.585,
+  cyclone_risk: 'moderate', cyclone_score: 0.495,
+  coast_dist_m: 1118, local_relief_m: 0.0,
+};
 const FLOOR_HEIGHT = 3;
 
 const lon0 = CX - FL / 2;
@@ -276,6 +290,8 @@ const newBuilding = {
     floors: 20,
     basements: 3,
     ground_elev: GROUND_ELEV,
+    ground_source: GROUND_SOURCE,
+    ...HAZARD,
     use_type: 'residential',
     height_source: 'surveyed_plan',
     survey_synthetic: true,
@@ -726,11 +742,17 @@ async function seedPostgis() {
     await client.query(
       `INSERT INTO building (id, parcel_id, ulpin, footprint, height_m, floors,
                              basements, ground_elev, use_type, height_source,
-                             survey_synthetic, osm_id, name, address, project_id)
-       VALUES ($1,$2,$3,ST_GeomFromEWKT($4),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+                             survey_synthetic, osm_id, name, address, project_id,
+                             ground_source, flood_risk, cyclone_risk,
+                             flood_score, cyclone_score, coast_dist_m,
+                             local_relief_m)
+       VALUES ($1,$2,$3,ST_GeomFromEWKT($4),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+               $17,$18,$19,$20,$21,$22)`,
       [BUILDING_ID, PARCEL_ID, bp.ulpin, ring2d(footprintRing), bp.height_m,
         bp.floors, bp.basements, bp.ground_elev, bp.use_type, bp.height_source,
-        bp.survey_synthetic, bp.osm_id, bp.name, bp.address, projectId],
+        bp.survey_synthetic, bp.osm_id, bp.name, bp.address, projectId,
+        bp.ground_source, bp.flood_risk, bp.cyclone_risk, bp.flood_score,
+        bp.cyclone_score, bp.coast_dist_m, bp.local_relief_m],
     );
 
     for (const f of floors) {

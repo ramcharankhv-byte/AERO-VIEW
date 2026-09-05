@@ -63,6 +63,25 @@ const CHROME =
  */
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 
+/**
+ * A session for the run. The viewer and the gallery redirect an anonymous
+ * browser to /login, and this harness has no login step, so an acceptance run
+ * hands it a signed `ulpin_session` cookie instead:
+ *
+ *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
+ *
+ * Unset, the page is loaded anonymously exactly as before.
+ */
+async function applySession(page, url) {
+  const value = process.env.ULPIN_SESSION_COOKIE;
+  if (!value) return;
+  const u = new globalThis.URL(url);
+  await page.setCookie({
+    name: 'ulpin_session', value, domain: u.hostname, path: '/',
+    httpOnly: true, sameSite: 'Lax',
+  });
+}
+
 const argv = process.argv.slice(2);
 let OUT = path.join(process.cwd(), 'docs', 'shots', 'rwd');
 let GALLERY = false;
@@ -117,6 +136,7 @@ try {
     const label = `${size.width}x${size.height}`;
     console.log(`\n=== ${label}${GALLERY ? ' (gallery)' : ''} ===`);
     const page = await browser.newPage();
+    await applySession(page, URL);
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
 
     const errors = [];
@@ -273,7 +293,7 @@ try {
     }
 
     const real = errors.filter(
-      (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox/i.test(e),
+      (e) => !/favicon|ERR_INTERNET_DISCONNECTED|openstreetmap|arcgisonline|cartocdn|mapbox|nrsc\.gov\.in/i.test(e),
     );
     if (real.length) { console.log(`  FAIL: ${real.length} console error(s): ${real.slice(0, 3).join(' | ')}`); failures++; }
     else console.log('  PASS: no console errors');

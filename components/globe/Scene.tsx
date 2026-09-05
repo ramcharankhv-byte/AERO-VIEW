@@ -3,6 +3,8 @@
 import CesiumRoot from './CesiumRoot';
 import CameraDirector from './CameraDirector';
 import Picker from './Picker';
+import BhuvanOverlayLayer from '../layers/BhuvanOverlayLayer';
+import HazardRiskLayer from '../layers/HazardRiskLayer';
 import ParcelsLayer from '../layers/ParcelsLayer';
 import BuildingsLayer from '../layers/BuildingsLayer';
 import BuildingsFarLayer from '../layers/BuildingsFarLayer';
@@ -36,6 +38,10 @@ export default function Scene({ project }: { project: Project }) {
       <CitizenAutoFrame />
 
       {/* Render-only layers, drawn back to front. */}
+      {/* ISRO Bhuvan WMS overlays on the globe, above the basemap. */}
+      <BhuvanOverlayLayer />
+      {/* The derived local grading painted on the ground, under the buildings. */}
+      <HazardRiskLayer />
       <ParcelsLayer />
       <RoadsLayer />
       <BuildingsLayer />

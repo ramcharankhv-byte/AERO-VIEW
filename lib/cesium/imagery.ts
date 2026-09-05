@@ -22,6 +22,7 @@ import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
 import { DRONE_ORTHO_CREDIT, DRONE_ORTHO_URL, MAPBOX_TOKEN } from './imagery-catalog';
 import type { ProviderId, TreatmentId } from './imagery-catalog';
+import { BHUVAN_CREDIT, BHUVAN_WMS_URL, type BhuvanKind } from '@/lib/bhuvan';
 
 // Re-exported so this module stays the single entry point for imagery, even
 // though the Cesium-free half of it lives in imagery-catalog.ts.
@@ -267,4 +268,101 @@ export function applyGisDarkScene(scene: Cesium.Scene): void {
   scene.skyAtmosphere.saturationShift = 0.0;
   scene.globe.enableLighting = false;
   scene.highDynamicRange = false;
+}
+
+// ---------------------------------------------------------------------------
+// ISRO Bhuvan WMS overlays.
+//
+// Not basemaps: they are drawn ABOVE layer 0 and switched independently of
+// it. Bhuvan's vector server carries no imagery, so it is never offered in
+// the provider registry above. Construction lives here because this module
+// is the single entry point for imagery; the URL builders, labels and the
+// GetFeatureInfo parser are Cesium-free and live in lib/bhuvan.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Opacity of each overlay over the basemap. An ImageryLayer alpha is a layer
+ * knob like the brightness and saturation in TREATMENTS, not a Cesium.Color,
+ * which is why it lives here and not in materials.ts.
+ *
+ * All three are backdrops, and all three are deliberately faint. Every one of
+ * these layers returns a SINGLE class over an AOI 1.2 km across -- the ward is
+ * uniformly built-up, and the hazard zones are national-scale -- so at any
+ * strength they are a flat wash that hides the map without telling the reader
+ * anything about which street is worse than which. The differentiation comes
+ * from the derived grading drawn on top (components/layers/HazardRiskLayer);
+ * these say "and the national dataset puts all of this in one class", which is
+ * worth showing and not worth shouting.
+ */
+export const BHUVAN_ALPHA: Record<BhuvanKind, number> = { lulc: 0.3, flood: 0.25, cyclone: 0.25 };
+
+/** ~0.6 m/px on a geographic scheme; SISDP 1:10k has nothing finer to show. */
+const BHUVAN_MAX_LEVEL = 18;
+
+/**
+ * The highest level at which the rectangle spans at most four tiles.
+ *
+ * Cesium refuses a minimumLevel whose rectangle covers more, and anything
+ * lower would ask the WMS to render a whole state into one 256 px tile for
+ * every coarse globe tile the camera can see.
+ */
+function minimumLevelFor(scheme: Cesium.GeographicTilingScheme, rect: Cesium.Rectangle): number {
+  const sw = Cesium.Rectangle.southwest(rect);
+  const ne = Cesium.Rectangle.northeast(rect);
+  for (let level = 12; level > 0; level--) {
+    const a = scheme.positionToTileXY(sw, level);
+    const b = scheme.positionToTileXY(ne, level);
+    if (a && b && (Math.abs(b.x - a.x) + 1) * (Math.abs(b.y - a.y) + 1) <= 4) return level;
+  }
+  return 0;
+}
+
+/**
+ * One Bhuvan overlay as an ImageryLayer, hidden and at the kind's alpha.
+ *
+ * WMS 1.3.0 with EPSG:4326: Cesium flips the GetMap BBOX template to
+ * south,west,north,east itself for this CRS (WebMapServiceImageryProvider's
+ * reverse-axis list), so `crs` is set and `srs` deliberately is not.
+ * `bbox` is west,south,east,north as the project row carries it.
+ */
+export function createBhuvanLayer(
+  kind: BhuvanKind,
+  layerName: string,
+  bbox: readonly [number, number, number, number],
+): Cesium.ImageryLayer {
+  const [w, s, e, n] = bbox;
+  // A quarter-bbox of context past the AOI edge; beyond that no tiles are
+  // requested, so a wide zoom-out never fans into state-wide GetMap calls.
+  const padLon = (e - w) * 0.25;
+  const padLat = (n - s) * 0.25;
+  const rectangle = Cesium.Rectangle.fromDegrees(w - padLon, s - padLat, e + padLon, n + padLat);
+  const tilingScheme = new Cesium.GeographicTilingScheme();
+  const provider = new Cesium.WebMapServiceImageryProvider({
+    url: BHUVAN_WMS_URL,
+    layers: layerName,
+    parameters: {
+      service: 'WMS',
+      version: '1.3.0',
+      request: 'GetMap',
+      format: 'image/png',
+      transparent: true,
+      styles: '',
+    },
+    crs: 'EPSG:4326',
+    tilingScheme,
+    rectangle,
+    tileWidth: 256,
+    tileHeight: 256,
+    minimumLevel: minimumLevelFor(tilingScheme, rectangle),
+    maximumLevel: BHUVAN_MAX_LEVEL,
+    // GetFeatureInfo is done once per building click by lib/bhuvan.ts, not
+    // on every scene pick.
+    enablePickFeatures: false,
+    credit: new Cesium.Credit(BHUVAN_CREDIT),
+  });
+  return new Cesium.ImageryLayer(provider, {
+    alpha: BHUVAN_ALPHA[kind],
+    show: false,
+    rectangle,
+  });
 }
