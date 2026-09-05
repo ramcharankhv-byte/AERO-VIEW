@@ -76,37 +76,46 @@ await test('cachedQueryPoint: second call is a hit', async () => {
 //   2. Read detail (cache miss, value stored in Redis)
 //   3. applyEdit the building (the PATCH path)
 //   4. Read detail again -- must be a HIT, and must include the new name
-//   5. Restore the original edits.json
+//   5. Restore the original edits.json (in finally, so a failed assertion
+//      or a thrown `await` does not leave the on-disk edits file corrupted
+//      for the next run)
 // ---------------------------------------------------------------------------
 const EDITS_FILE = path.join(process.cwd(), 'data', 'projects', 'siripuram', 'edits.json');
 const SENTINEL = `__RULE1_${Date.now()}__`;
-let originalEdits = null;
 
 await test('cachedDetail: PATCH-equivalent edit is visible on next read (Rule 1)', async () => {
-  originalEdits = await fs.readFile(EDITS_FILE, 'utf-8').catch(() => null);
+  // Read the backup OUTSIDE the try so a read failure still runs the
+  // restore branch with the right semantics. If the file did not exist
+  // originally, the restore must unlink (not write back a stale value).
+  const originalEdits = await fs.readFile(EDITS_FILE, 'utf-8').catch(() => null);
+  try {
+    const r1 = await cachedDetail('siripuram', 1);
+    assert.ok(r1.value, 'first read must return a document');
+    assert.equal(r1.cache, 'miss', 'first read must be a miss');
+    const beforeName = r1.value.building.name;
+    assert.notEqual(beforeName, SENTINEL, 'sentinel must not be the original name');
 
-  const r1 = await cachedDetail('siripuram', 1);
-  assert.ok(r1.value, 'first read must return a document');
-  assert.equal(r1.cache, 'miss', 'first read must be a miss');
-  const beforeName = r1.value.building.name;
-  assert.notEqual(beforeName, SENTINEL, 'sentinel must not be the original name');
+    // The PATCH path: only the edit record changes. The cache wrapper's
+    // import('ioredis') is not called, no cacheSet, no cacheDel, no scan,
+    // no del. Whatever Redis holds under detailKey(siripuram, 1) at this
+    // moment is the value the next read will return.
+    await applyEdit('siripuram', 1, { name: SENTINEL });
 
-  // The PATCH path: only the edit record changes. The cache wrapper's
-  // import('ioredis') is not called, no cacheSet, no cacheDel, no scan,
-  // no del. Whatever Redis holds under detailKey(siripuram, 1) at this
-  // moment is the value the next read will return.
-  await applyEdit('siripuram', 1, { name: SENTINEL });
-
-  const r2 = await cachedDetail('siripuram', 1);
-  assert.equal(r2.cache, 'hit', 'second read must be a cache hit (no PATCH invalidation)');
-  assert.equal(r2.value.building.name, SENTINEL, 'edit overlay must have applied the new name');
+    const r2 = await cachedDetail('siripuram', 1);
+    assert.equal(r2.cache, 'hit', 'second read must be a cache hit (no PATCH invalidation)');
+    assert.equal(r2.value.building.name, SENTINEL, 'edit overlay must have applied the new name');
+  } finally {
+    // Restore in finally so a failed assertion (assert.equal throws) still
+    // runs the restore. The previous shape had this at the top level of
+    // the script, after the test() await, which left edits.json mutated
+    // if the test fn threw past the .catch.
+    if (originalEdits !== null) {
+      await fs.writeFile(EDITS_FILE, originalEdits, 'utf-8');
+    } else {
+      await fs.unlink(EDITS_FILE).catch(() => {});
+    }
+  }
 });
-
-if (originalEdits !== null) {
-  await fs.writeFile(EDITS_FILE, originalEdits, 'utf-8');
-} else {
-  await fs.unlink(EDITS_FILE).catch(() => {});
-}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

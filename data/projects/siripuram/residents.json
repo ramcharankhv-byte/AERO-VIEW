@@ -1,0 +1,26 @@
+[
+  {
+    "aadhar": "111122223333",
+    "phone": "9876543210",
+    "name": "Ravi Kumar",
+    "building_id": 999,
+    "floor": 2,
+    "unit": "F-1"
+  },
+  {
+    "aadhar": "222233334444",
+    "phone": "9876543211",
+    "name": "Priya Sharma",
+    "building_id": 999,
+    "floor": 5,
+    "unit": "F-2"
+  },
+  {
+    "aadhar": "333344445555",
+    "phone": "9876543212",
+    "name": "Anand Rao",
+    "building_id": 999,
+    "floor": 9,
+    "unit": "F-3"
+  }
+]

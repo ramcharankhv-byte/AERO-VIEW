@@ -116,6 +116,15 @@ export default function BuildingsLayer() {
     cap: Cesium.Entity;
     base: number;
   }>());
+  /**
+   * Latches to false in the build effect's cleanup, before any other teardown.
+   * The cancel call below stops future slices from being scheduled; the alive
+   * flag stops the one that already passed the cancel point. Without it a
+   * late `addFootprint` slice can call `ds.entities.add(...)` on a disposed
+   * bucket, leaking entities into the (now-orphaned) data source, and the
+   * `onDone` mark can fire on a layer that no longer exists.
+   */
+  const aliveRef = useRef(true);
 
   // ---- build entities once -------------------------------------------------
   useEffect(() => {
@@ -144,6 +153,10 @@ export default function BuildingsLayer() {
      * doing all of it between two paints was.
      */
     const addFootprint = (feature: typeof buildings.features[number]) => {
+      // Late slice after teardown: skip the entity add so we do not write
+      // into a disposed bucket. The next effect run (if any) will rebuild
+      // from scratch. See aliveRef declaration above.
+      if (!aliveRef.current) return;
       const props = feature.properties;
       const ring = (feature.geometry.coordinates as number[][][])[0];
       const flat = flatLonLat(ring);
@@ -263,12 +276,25 @@ export default function BuildingsLayer() {
       // viewer runs in requestRenderMode, so without this the entities would
       // all appear at once when something else happened to trigger a render.
       onSlice: () => {
+        if (!aliveRef.current) return;
         if (!viewer.isDestroyed()) viewer.scene.requestRender();
       },
-      onDone: () => mark('buildings-built'),
+      onDone: () => {
+        // The effect was torn down between the last slice and now. The mark
+        // would otherwise land on a layer that no longer exists; the boot
+        // timeline would then show a "buildings-built" time for a viewer
+        // that was disposed before the mark fired.
+        if (!aliveRef.current) return;
+        mark('buildings-built');
+      },
     });
 
     return () => {
+      // Alive goes first: any slice still in flight when cancelBuild() runs
+      // sees false on its next read and short-circuits. The dispose calls
+      // below are the matching teardown for the slices that already
+      // completed.
+      aliveRef.current = false;
       cancelBuild();
       entitiesRef.current.clear();
       grid.dispose();

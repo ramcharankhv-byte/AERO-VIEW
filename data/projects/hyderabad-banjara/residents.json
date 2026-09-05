@@ -1,0 +1,26 @@
+[
+  {
+    "aadhar": "444455556666",
+    "phone": "9876543213",
+    "name": "Lakshmi Devi",
+    "building_id": 731,
+    "floor": 7,
+    "unit": "F-7"
+  },
+  {
+    "aadhar": "555566667777",
+    "phone": "9876543214",
+    "name": "Suresh Reddy",
+    "building_id": 1923,
+    "floor": 5,
+    "unit": "F-5"
+  },
+  {
+    "aadhar": "666677778888",
+    "phone": "9876543215",
+    "name": "Kavita Nair",
+    "building_id": 670,
+    "floor": 3,
+    "unit": "F-3"
+  }
+]

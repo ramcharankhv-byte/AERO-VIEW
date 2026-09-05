@@ -644,3 +644,83 @@ full accuracy. The decisions log records the trade; the brief did
 not call it out but the alternative (write the edited floor geometry
 to the conflict cache) would be a much larger change.
 
+---
+
+# Auth & citizen-view decisions (2026-09-05)
+
+## 1. Secure cookie is derived from the request, not NODE_ENV
+
+**Why:** the first cut wired the `Secure` flag to
+`process.env.NODE_ENV === 'production'`. `npm start` runs in production
+mode, so locally over plain HTTP the cookie was marked Secure and the
+browser would not send it back on subsequent requests. The smoke test
+caught this: `/api/me` returned `{role: null}` after a successful
+citizen login, every read path looked anonymous, and PATCH returned
+401 (anon) instead of 403 (citizen). The fix derives `Secure` from
+`x-forwarded-proto` (Vercel edge sets it) with a fallback to the
+request URL's protocol. A Vercel deployment gets Secure; a local
+plain-HTTP server gets an unmarked cookie that round-trips.
+
+## 2. Per-role cache key in `jsonPayload`
+
+**Why:** the role-aware API filters (buildings, parcels, utilities)
+return different collections to different roles on the same URL, but
+the payload memo in [lib/http/payload.ts](../lib/http/payload.ts) was
+keyed only on `(resource, encoding, rev)`. The first call cached the
+citizen's one-feature response, then anon and gov both got it back
+because the cookie was not in the key. The smoke test caught this
+too. The fix extracts the role claim from the `ulpin_session` cookie
+and folds it into the memo key (`{resource}:{encoding}:{role}`), and
+also adds `Vary: Accept-Encoding, Cookie` to the wire so a downstream
+CDN or browser back/forward cache does not serve one role's body to
+another. `ulpin_session` is the only cookie the auth routes set, so
+parsing it inline (not via `next/headers`, which is runtime-only) is
+safe and keeps the helper decoupled.
+
+## 3. Citizen parcel filter looks up `parcel_id` from buildings
+
+**Why:** the first version of `filterParcelsForCitizen` matched
+`f.properties.id === ctx.buildingId`. But the parcel that contains
+the citizen's building has its own id (9990, not 999), so every
+citizen got an empty parcel collection. The fix reads the buildings
+snapshot to find the building's `parcel_id` and matches against
+that. The buildings file is already on the hot path of every page
+load, so one extra read inside a citizen-only filter is cheap.
+
+## 4. Cesium `normalized result is not a number` on gov view
+
+**Why:** the gov UtilitiesLayer loads all 304 city utilities; three
+sewer features (ids 139, 171, 200) have a zero-length segment between
+two coordinates, which Cesium's `PolylineVolumeGeometry` normaliser
+turns into NaN. This is a pre-existing data condition in
+[data/api/siripuram/utilities.json](../data/api/siripuram/utilities.json)
+not introduced by the auth work. Per the data-preservation rule
+("don't delete anything under data/"), the right move is to record
+the finding here and leave the data file alone; a future re-seed from
+PostGIS will normalise the segments. The error is thrown by a web
+worker, the rest of the scene still renders, and the citizen view is
+unaffected (it loads only the three seeded utilities, none of which
+have a zero-length segment).
+
+## 5. Building 999 demo seed wrote 6 units across 6 floors
+
+**Why:** the brief asked for a 20-floor building with 6 flats
+"spaced clearly with appropriate spacing". The chosen floors
+(2, 5, 9, 13, 17, 20) put each flat on its own stack segment with at
+least two non-flat floors between, so the FloorsStackLayer and the
+FlatLadder both render without two flats sharing a level. The owners
+line up with the three demo citizens in
+[data/projects/siripuram/residents.json](../data/projects/siripuram/residents.json)
+(plus three more for variety).
+
+## 6. `access-pure.ts` is split from `access.ts`
+
+**Why:** the test runner (`scripts/test_auth.mjs`) uses Node's
+experimental TypeScript stripper, which loads `.ts` files directly.
+`next/server` and `next/headers` are runtime-only and crash the strip
+loader. The pure rules (`checkBuildingAccess`, `checkMutation`,
+`checkProjectAccess`, `isMutator`) return plain refusal objects
+(`{status, body}`), and `lib/auth/access.ts` wraps them in
+`NextResponse`. The test imports the pure module; the route handlers
+import the wrapper. Splitting the two also makes a future framework
+swap a localised change -- the rules do not move.

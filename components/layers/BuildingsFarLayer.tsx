@@ -103,6 +103,17 @@ export default function BuildingsFarLayer() {
    * unmount) cancels the slice loop before it writes into a stale array.
    */
   const cancelRef = useRef<(() => void) | null>(null);
+  /**
+   * Latches to false in the effect's cleanup, before any other teardown.
+   * `buildIncrementally` schedules its slices on a queue; cancelling the
+   * disposer stops the QUEUE, but a slice already in flight when cleanup
+   * runs can still reach `onDone`. The alive flag is the only signal the
+   * callback has that its effect is gone, and it short-circuits the
+   * primitive creation before the scene's primitive list is touched.
+   * Without this, a hot-reload or viewer re-create can leave a Primitive
+   * in the (now-disposed) scene's primitive list with no JS reference.
+   */
+  const aliveRef = useRef(true);
 
   // ---- build the primitive once ------------------------------------------
   useEffect(() => {
@@ -119,6 +130,10 @@ export default function BuildingsFarLayer() {
     const instances: Cesium.GeometryInstance[] = [];
 
     const addFootprint = (feature: typeof buildings.features[number]) => {
+      // A late slice: the effect is already gone, the array is on its way
+      // to the GC. Do not mutate it; the slice was cancelled in cleanup
+      // and the next onDone check will skip the Primitive creation.
+      if (!aliveRef.current) return;
       const props = feature.properties;
       const ring = (feature.geometry.coordinates as number[][][])[0];
       const flat = flatLonLat(ring);
@@ -171,6 +186,10 @@ export default function BuildingsFarLayer() {
       // looking at. The near tier's requestRender is the one that drives
       // progress visibility.
       onDone: () => {
+        // The effect was torn down between the last slice and now.
+        // Drop the work on the floor; there is no scene to add it to
+        // and the next effect run will start fresh.
+        if (!aliveRef.current) return;
         if (!viewer || viewer.isDestroyed()) return;
         const primitive = new Cesium.Primitive({
           geometryInstances: instances,
@@ -200,6 +219,12 @@ export default function BuildingsFarLayer() {
     });
 
     return () => {
+      // The alive flag goes first, before any cancellation: any in-flight
+      // slice that reads it sees false and the onDone check at completion
+      // sees false. The cancel call below stops future slices from being
+      // scheduled; the alive flag stops the one that already passed the
+      // cancel point.
+      aliveRef.current = false;
       cancelRef.current?.();
       cancelRef.current = null;
       const p = primitiveRef.current;

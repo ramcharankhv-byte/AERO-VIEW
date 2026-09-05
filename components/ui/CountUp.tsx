@@ -57,8 +57,16 @@ function subscribe(notify: Tick): () => void {
 }
 
 export default function CountUp({ value }: { value: number }) {
-  const skip = played || prefersReducedMotion();
-  const [shown, setShown] = useState(skip ? value : 0);
+  // ALWAYS start at 0 on the very first render -- both on the server and on
+  // the client's hydration pass. The first paint shows 0; the effect below
+  // then either jumps to the target (reduced-motion / replayed) or starts
+  // the count-up loop. This is the only state shape that guarantees the
+  // server-rendered text and the client-rendered text agree on hydration.
+  // The previous shape branched on `prefersReducedMotion()` during render,
+  // which on a user with the OS reduced-motion setting turned ON would
+  // cause the server to render 0 and the client to render `value` -- a
+  // hydration mismatch on the visible text.
+  const [shown, setShown] = useState(0);
 
   // Read through a ref so a value that settles mid-flight retargets the same
   // run rather than restarting it.
@@ -73,7 +81,10 @@ export default function CountUp({ value }: { value: number }) {
     return subscribe((eased) => setShown(Math.round(target.current * eased)));
   }, []);
 
-  // tabular-nums keeps the glyph width fixed, so the row does not twitch as the
-  // digits change.
-  return <span className="tabular-nums">{shown.toLocaleString()}</span>;
+  // `toLocaleString()` is locale-dependent and would diverge between server
+  // (Node's default locale) and client (the user's browser locale), causing
+  // a hydration mismatch on the digit grouping. Force a stable format that
+  // uses commas regardless of where the code runs; the count-up animation
+  // reads back through the same formatter.
+  return <span className="tabular-nums">{shown.toLocaleString('en-US')}</span>;
 }

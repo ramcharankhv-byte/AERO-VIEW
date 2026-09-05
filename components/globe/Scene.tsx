@@ -14,6 +14,7 @@ import UtilitiesLayer from '../layers/UtilitiesLayer';
 import ConflictLayer from '../layers/ConflictLayer';
 import ElevationRuler from '../ui/ElevationRuler';
 import BuildingTooltip from './BuildingTooltip';
+import CitizenAutoFrame from '@/components/citizen/CitizenAutoFrame';
 import type { Project } from '@/lib/types';
 
 /**
@@ -30,6 +31,9 @@ export default function Scene({ project }: { project: Project }) {
       <CameraDirector />
       {/* Owns all picking; writes to the store. */}
       <Picker />
+      {/* Citizen view: on a citizen session, snap to the user's building +
+         their floor, with their flat selected. Renders nothing for gov. */}
+      <CitizenAutoFrame />
 
       {/* Render-only layers, drawn back to front. */}
       <ParcelsLayer />

@@ -36,7 +36,22 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark">
+    /*
+     * `suppressHydrationWarning` is here for ONE specific reason: the
+     * "DEX Recorder" browser extension (and a handful of other dev tools,
+     * e.g. some testing overlays) injects `data-dex-recorder-ready="true"`
+     * onto the document's <html> element at runtime, after the server-
+     * rendered HTML has been parsed but before React has finished
+     * hydrating. Without the flag, React raises a hydration mismatch on
+     * the root element even though our server output and our client
+     * render agree perfectly -- the difference was added by the
+     * extension, not by the app. The flag is scoped to this single
+     * element, so genuine hydration bugs deeper in the tree still
+     * surface. This is the pattern the React docs recommend for
+     * browser-extension interference:
+     * https://react.dev/link/hydration-mismatch
+     */
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         {/*
           Open the connections the scene is about to need, before it needs them.

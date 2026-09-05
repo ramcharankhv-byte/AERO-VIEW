@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { parse } from '@/lib/ulpin';
+import SessionChip from '@/components/auth/SessionChip';
 
 /**
  * Brand, search and the tool menus.
@@ -183,6 +184,8 @@ export default function TopBar({
             <MenuButton label="Share" disabled />
           </>
         )}
+        <span className="ml-1 h-4 w-px bg-edge" />
+        <SessionChip />
       </div>
     </div>
   );
