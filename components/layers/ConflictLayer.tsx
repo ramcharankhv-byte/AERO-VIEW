@@ -8,6 +8,7 @@ import { useDataStore, useViewStore } from '@/lib/store';
 import { CONFLICT_COLOR, CONFLICT_COLOR_DIM, tubeShape } from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { datumShift } from '@/lib/cesium/terrain';
+import { planRunGeometry } from '@/lib/geo';
 import type { UtilityProps } from '@/lib/types';
 
 /**
@@ -67,23 +68,43 @@ export default function ConflictLayer() {
       const line = feature.geometry.coordinates as number[][];
       if (!Array.isArray(line) || line.length < 2) continue;
 
-      const flat: number[] = [];
-      for (const c of line) {
-        flat.push(c[0], c[1], (c.length > 2 ? c[2] : props.depth_m) + zShift);
-      }
+      // Same vertical-run split the base layer does: a conflicted riser would
+      // otherwise throw on normalise and take the whole batch with it. See
+      // planRunGeometry.
+      const { tube, risers } = planRunGeometry(
+        line,
+        (c) => (c.length > 2 ? c[2] : props.depth_m) + zShift,
+      );
+      const radius = Math.max(0.2, props.radius_m) * 1.55;
+      const material = new Cesium.ColorMaterialProperty(
+        new Cesium.CallbackProperty(pulse, false),
+      );
 
-      const entity = ds.entities.add({
-        polylineVolume: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-          shape: tubeShape(Math.max(0.2, props.radius_m) * 1.55),
-          cornerType: Cesium.CornerType.ROUNDED,
-          material: new Cesium.ColorMaterialProperty(
-            new Cesium.CallbackProperty(pulse, false),
-          ),
-          shadows: Cesium.ShadowMode.DISABLED,
-        },
-      });
-      tagEntity(entity, { kind: 'utility', id: props.id });
+      if (tube.length >= 6) {
+        const entity = ds.entities.add({
+          polylineVolume: {
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights(tube),
+            shape: tubeShape(radius),
+            cornerType: Cesium.CornerType.ROUNDED,
+            material,
+            shadows: Cesium.ShadowMode.DISABLED,
+          },
+        });
+        tagEntity(entity, { kind: 'utility', id: props.id });
+      }
+      for (const r of risers) {
+        const entity = ds.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, (r.z0 + r.z1) / 2),
+          cylinder: {
+            length: r.z1 - r.z0,
+            topRadius: radius,
+            bottomRadius: radius,
+            material,
+            shadows: Cesium.ShadowMode.DISABLED,
+          },
+        });
+        tagEntity(entity, { kind: 'utility', id: props.id });
+      }
     }
 
     return () => {

@@ -217,6 +217,43 @@ export const MATERIALS = {
    */
   unitDefault: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) => grey(198).withAlpha(alpha),
 
+  /**
+   * A flat's own tint, by its slot on the floor plate.
+   *
+   * Four flats on one plate used to be four volumes of the identical grey, so
+   * a floor read as a single quartered slab and "which one is mine" had no
+   * visual answer. The geometry now separates them; this separates them at a
+   * glance, before the labels are legible.
+   *
+   * Deliberately desaturated to roughly a tenth. The palette elsewhere spends
+   * saturation on MEANING -- use type on a facade, asset type on a utility,
+   * red on a conflict -- and a flat's slot means nothing beyond "not the one
+   * next to it". These have to be four things you can tell apart while still
+   * reading as the same kind of thing, so they differ mostly in hue at a
+   * near-constant value, and none of them competes with the white a selected
+   * flat turns.
+   */
+  unitTint: (slot: number, alpha: number = FLOOR_VIEW.UNIT_ALPHA) => {
+    const tints = [
+      Cesium.Color.fromBytes(205, 198, 186),  // warm sand
+      Cesium.Color.fromBytes(186, 200, 205),  // cool slate
+      Cesium.Color.fromBytes(196, 205, 188),  // pale sage
+      Cesium.Color.fromBytes(203, 190, 202),  // dusty mauve
+    ];
+    return tints[((slot % tints.length) + tints.length) % tints.length].withAlpha(alpha);
+  },
+
+  /**
+   * The signed-in citizen's own flat: warm, saturated, unmistakable.
+   *
+   * The one place in the unit palette that spends real saturation, because
+   * here the colour carries the only thing the citizen came to see. It has to
+   * win against the tints above and against the shell around it.
+   */
+  unitOwn: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
+    Cesium.Color.fromBytes(255, 196, 92).withAlpha(Math.max(alpha, 0.9)),
+  unitOwnOutline: Cesium.Color.fromBytes(255, 214, 138),
+
   /** Cursor is over it. The same brightening the buildings use for hover, so
    *  the gesture means one thing at every level of the hierarchy. */
   unitHover: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>

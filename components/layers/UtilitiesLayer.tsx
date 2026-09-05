@@ -9,6 +9,7 @@ import { UTILITY_COLOR, UTILITY_SELECTED, tubeShape } from '@/lib/cesium/materia
 import { tagEntity } from '@/lib/cesium/tag';
 import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { datumShift } from '@/lib/cesium/terrain';
+import { planRunGeometry } from '@/lib/geo';
 import type { AssetType, UtilityProps } from '@/lib/types';
 
 /**
@@ -56,25 +57,48 @@ export default function UtilitiesLayer() {
       const line = feature.geometry.coordinates as number[][];
       if (!Array.isArray(line) || line.length < 2) return;
 
-      const flat: number[] = [];
-      for (const c of line) {
-        // Some centrelines come through as 2D; fall back to depth off the datum.
-        const z = (c.length > 2 ? c[2] : props.depth_m) + zShift;
-        flat.push(c[0], c[1], z);
-      }
+      // Some centrelines come through as 2D; fall back to depth off the datum.
+      const { tube, risers } = planRunGeometry(
+        line,
+        (c) => (c.length > 2 ? c[2] : props.depth_m) + zShift,
+      );
 
       const colour = UTILITY_COLOR[props.asset_type as AssetType];
-      const entity = ds.entities.add({
-        polylineVolume: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-          shape: tubeShape(Math.max(0.2, props.radius_m)),
-          cornerType: Cesium.CornerType.ROUNDED,
-          material: new Cesium.ColorMaterialProperty(colour.withAlpha(0.9)),
-          shadows: Cesium.ShadowMode.DISABLED,
-          distanceDisplayCondition: visibility,
-        },
-      });
-      tagEntity(entity, { kind: 'utility', id: props.id });
+      const radius = Math.max(0.2, props.radius_m);
+      const material = new Cesium.ColorMaterialProperty(colour.withAlpha(0.9));
+
+      if (tube.length >= 6) {
+        const entity = ds.entities.add({
+          polylineVolume: {
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights(tube),
+            shape: tubeShape(radius),
+            cornerType: Cesium.CornerType.ROUNDED,
+            material,
+            shadows: Cesium.ShadowMode.DISABLED,
+            distanceDisplayCondition: visibility,
+          },
+        });
+        tagEntity(entity, { kind: 'utility', id: props.id });
+      }
+
+      // Vertical sections: a riser up a building, a drop into a trench. A
+      // swept volume cannot express these (see planRunGeometry), so each is a
+      // cylinder of the same radius, tagged with the same id -- clicking a
+      // riser selects the run it belongs to, exactly as clicking its tube does.
+      for (const r of risers) {
+        const entity = ds.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, (r.z0 + r.z1) / 2),
+          cylinder: {
+            length: r.z1 - r.z0,
+            topRadius: radius,
+            bottomRadius: radius,
+            material,
+            shadows: Cesium.ShadowMode.DISABLED,
+            distanceDisplayCondition: visibility,
+          },
+        });
+        tagEntity(entity, { kind: 'utility', id: props.id });
+      }
     };
 
     // PolylineVolume is the heaviest geometry here: a swept tube with rounded
@@ -112,26 +136,44 @@ export default function UtilitiesLayer() {
     const line = feature.geometry.coordinates as number[][];
     if (!Array.isArray(line) || line.length < 2) return;
 
-    const flat: number[] = [];
-    for (const c of line) {
-      flat.push(c[0], c[1], (c.length > 2 ? c[2] : props.depth_m) + zShift);
-    }
+    const { tube, risers } = planRunGeometry(
+      line,
+      (c) => (c.length > 2 ? c[2] : props.depth_m) + zShift,
+    );
 
     const ds = new Cesium.CustomDataSource('utility-selection');
     viewer.dataSources.add(ds);
-    const entity = ds.entities.add({
-      polylineVolume: {
-        positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-        // A hair fatter than the base tube so it cannot z-fight with it.
-        shape: tubeShape(Math.max(0.2, props.radius_m) * 1.06),
-        cornerType: Cesium.CornerType.ROUNDED,
-        material: new Cesium.ColorMaterialProperty(UTILITY_SELECTED),
-        shadows: Cesium.ShadowMode.DISABLED,
-      },
-    });
-    // Tagged like the base run, so clicking the highlight keeps the selection
-    // rather than reading as a click on bare ground.
-    tagEntity(entity, { kind: 'utility', id: props.id });
+    // A hair fatter than the base geometry so it cannot z-fight with it.
+    const radius = Math.max(0.2, props.radius_m) * 1.06;
+    const material = new Cesium.ColorMaterialProperty(UTILITY_SELECTED);
+
+    if (tube.length >= 6) {
+      const entity = ds.entities.add({
+        polylineVolume: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(tube),
+          shape: tubeShape(radius),
+          cornerType: Cesium.CornerType.ROUNDED,
+          material,
+          shadows: Cesium.ShadowMode.DISABLED,
+        },
+      });
+      // Tagged like the base run, so clicking the highlight keeps the selection
+      // rather than reading as a click on bare ground.
+      tagEntity(entity, { kind: 'utility', id: props.id });
+    }
+    for (const r of risers) {
+      const entity = ds.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(r.lon, r.lat, (r.z0 + r.z1) / 2),
+        cylinder: {
+          length: r.z1 - r.z0,
+          topRadius: radius,
+          bottomRadius: radius,
+          material,
+          shadows: Cesium.ShadowMode.DISABLED,
+        },
+      });
+      tagEntity(entity, { kind: 'utility', id: props.id });
+    }
     viewer.scene.requestRender();
 
     return () => {

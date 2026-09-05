@@ -5,7 +5,7 @@
     "name": "Ravi Kumar",
     "building_id": 999,
     "floor": 2,
-    "unit": "F-1"
+    "unit": "201"
   },
   {
     "aadhar": "222233334444",
@@ -13,7 +13,7 @@
     "name": "Priya Sharma",
     "building_id": 999,
     "floor": 5,
-    "unit": "F-2"
+    "unit": "502"
   },
   {
     "aadhar": "333344445555",
@@ -21,6 +21,6 @@
     "name": "Anand Rao",
     "building_id": 999,
     "floor": 9,
-    "unit": "F-3"
+    "unit": "903"
   }
 ]

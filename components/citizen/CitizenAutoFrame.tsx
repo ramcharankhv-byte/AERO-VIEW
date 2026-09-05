@@ -51,9 +51,22 @@ export default function CitizenAutoFrame() {
       try {
         const meRes = await fetch('/api/me', { credentials: 'same-origin' });
         const me = (await meRes.json()) as Me;
-        if (cancelled || me.role !== 'citizen') return;
+        if (cancelled) return;
+        // Recorded for EVERY role, before the citizen-only work below: the
+        // panel asks this to decide whether to offer an Edit button, and a
+        // gov session has to answer "gov" rather than stay null.
+        useViewStore.getState().setSession(
+          me.role === 'citizen'
+            ? { role: 'citizen', floor: me.floor, unit: me.unit }
+            : { role: me.role ?? null, floor: null, unit: null },
+        );
+        if (me.role !== 'citizen') return;
+        // PROJECT-SCOPED, not the unscoped alias. `/api/building/:id` resolves
+        // against the demo project whatever the session says, so a citizen on
+        // any other project used to get a 404 here and no framing at all.
+        const slug = useViewStore.getState().projectSlug ?? me.slug;
         const detailRes = await fetch(
-          `/api/building/${me.buildingId}`,
+          `/api/p/${slug}/building/${me.buildingId}`,
           { credentials: 'same-origin' },
         );
         if (!detailRes.ok) return;

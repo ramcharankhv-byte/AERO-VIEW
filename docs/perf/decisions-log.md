@@ -689,7 +689,9 @@ load, so one extra read inside a citizen-only filter is cheap.
 
 ## 4. Cesium `normalized result is not a number` on gov view
 
-**Why:** the gov UtilitiesLayer loads all 304 city utilities; three
+**Superseded — the diagnosis below was wrong on every count. See §7.**
+
+~~**Why:** the gov UtilitiesLayer loads all 304 city utilities; three
 sewer features (ids 139, 171, 200) have a zero-length segment between
 two coordinates, which Cesium's `PolylineVolumeGeometry` normaliser
 turns into NaN. This is a pre-existing data condition in
@@ -700,7 +702,7 @@ the finding here and leave the data file alone; a future re-seed from
 PostGIS will normalise the segments. The error is thrown by a web
 worker, the rest of the scene still renders, and the citizen view is
 unaffected (it loads only the three seeded utilities, none of which
-have a zero-length segment).
+have a zero-length segment).~~
 
 ## 5. Building 999 demo seed wrote 6 units across 6 floors
 
@@ -724,3 +726,50 @@ loader. The pure rules (`checkBuildingAccess`, `checkMutation`,
 `NextResponse`. The test imports the pure module; the route handlers
 import the wrapper. Splitting the two also makes a future framework
 swap a localised change -- the rules do not move.
+
+## 7. `normalized result is not a number` is a VERTICAL run, not a duplicate point
+
+**Why:** §4 above blamed exact duplicate vertices in three pre-existing
+sewer features and concluded the data should be left alone. Checking
+Cesium 1.126.0's own source disproves all three of its claims.
+
+`PolylineVolumeGeometry.createGeometry` opens with
+`arrayRemoveDuplicates(positions, Cartesian3.equalsEpsilon)`, whose
+EPSILON10 relative tolerance is ~0.6 mm at ECEF magnitudes. **Exactly
+duplicated vertices are stripped by Cesium before any normalisation
+happens**, so ids 139/171/200 -- and the ten other features in that file
+with duplicate vertices -- never throw.
+
+What actually throws is a run that is vertical. `computePositions` calls
+`scaleToSurface()` first, projecting every position onto the geodetic
+surface and stashing heights separately. Two vertices sharing a lon/lat
+survive the dedup (they are metres apart in 3D) and then collapse to the
+same surface point. The first segment's direction is computed before the
+main loop with no guard:
+
+    forward = normalize(subtract(next, position))   // zero vector -> NaN
+
+Cesium's in-loop `position.equals(nextPosition)` guard covers interior
+vertices only, never index 0.
+
+Simulating that pipeline over the snapshots, the only siripuram features
+that reach a degenerate segment are **99001** (the demo water riser: 24
+vertices at one lon/lat, a perfectly vertical line) and **99002** (the
+demo sewer lateral, whose first segment is a vertical drop). Both were
+added by the demo-building seed in this very branch, so §4's "pre-existing,
+not introduced by the auth work" is backwards. So is its "the citizen view
+is unaffected": `filterUtilitiesForCitizen` keeps exactly the features
+tagged with the citizen's building, which is precisely 99001-99003. The
+citizen view was the *only* view loading nothing but the throwing features.
+
+**The fix** is `planRunGeometry` in [lib/geo.ts](../../lib/geo.ts), used by
+UtilitiesLayer (base + selection) and ConflictLayer. It splits a centreline
+into horizontally-distinct tube vertices plus a list of vertical risers, and
+draws the risers as cylinders -- which is the correct primitive for a
+vertical run anyway, since a swept volume cannot represent one at all. The
+merge threshold is 1e-8 deg (~1 mm), sized against Cesium's own epsilon so
+the centimetre-scale jitter throughout the snapshots stays untouched.
+
+No data was deleted: a riser is still drawn, at its true position and depth.
+Verified across both projects -- siripuram 15 degenerate runs before, 0
+after; hyderabad-banjara 28 before, 0 after.

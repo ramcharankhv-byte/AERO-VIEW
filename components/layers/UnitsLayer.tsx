@@ -156,6 +156,21 @@ export default function UnitsLayer() {
     const floors = [...detail.floors].sort((a, b) => a.level_no - b.level_no);
     const byLevel = new Map(floors.map((f, i) => [f.level_no, { f, index: i }]));
 
+    /**
+     * Each flat's slot on its own plate, so neighbours never share a tint.
+     *
+     * Keyed on the unit code rather than on iteration order: the code is what
+     * is written on the door and what the citizen's session names, so a flat
+     * keeps its colour across a re-seed that happens to reorder the array.
+     */
+    const slotOf = new Map<number, number>();
+    for (const f of floors) {
+      const onFloor = detail.units
+        .filter((u) => u.level_no === f.level_no)
+        .sort((a, b) => a.unit_no.localeCompare(b.unit_no, 'en'));
+      onFloor.forEach((u, i) => slotOf.set(u.id, i));
+    }
+
     for (const unit of detail.units) {
       const entry = byLevel.get(unit.level_no);
       if (!entry) continue;                    // a unit with no floor record
@@ -165,6 +180,13 @@ export default function UnitsLayer() {
       const ring = insetRing(stored, FLOOR_VIEW.UNIT_INSET_M);
       const level = unit.level_no;
       const uid = unit.id;
+      const slot = slotOf.get(uid) ?? 0;
+      // The signed-in citizen's own flat. Matched on (level, code) because
+      // that is what the session carries -- see ownsUnit in lib/auth.
+      const sess = useViewStore.getState().session;
+      const isOwn = sess.role === 'citizen'
+        && sess.floor === unit.level_no
+        && sess.unit === unit.unit_no;
 
       const floorZ0 = toSceneZ(entry.f.z_min, bprops.ground_elev, terrainH);
       const floorZ1 = toSceneZ(entry.f.z_max, bprops.ground_elev, terrainH);
@@ -240,9 +262,13 @@ export default function UnitsLayer() {
             new Cesium.CallbackProperty(() => {
               const s = stateRef.current;
               const a = alpha();
+              // Own flat first: for a citizen this is the one thing on screen
+              // that has to stay findable, including while something else is
+              // selected and it is being dimmed.
+              if (isOwn) return MATERIALS.unitOwn(a);
               if (s.selectedId === uid) return MATERIALS.unitSelected(a);
               if (s.hoveredId === uid) return MATERIALS.unitHover(a);
-              return MATERIALS.unitDefault(a);
+              return MATERIALS.unitTint(slot, a);
             }, false),
           ),
           // The selected unit gets a silhouette outline, so it reads as chosen
@@ -250,9 +276,12 @@ export default function UnitsLayer() {
           outline: true,
           outlineWidth: 2,
           outlineColor: new Cesium.CallbackProperty(
-            () => (stateRef.current.selectedId === uid
-              ? MATERIALS.unitOutline
-              : MATERIALS.unitOutlineIdle),
+            () => {
+              if (isOwn) return MATERIALS.unitOwnOutline;
+              return stateRef.current.selectedId === uid
+                ? MATERIALS.unitOutline
+                : MATERIALS.unitOutlineIdle;
+            },
             false,
           ),
           shadows: Cesium.ShadowMode.DISABLED,

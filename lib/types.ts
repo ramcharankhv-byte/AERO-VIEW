@@ -94,6 +94,18 @@ export interface UnitInfo {
   tenure: string;
   encumbrance: string;
   ring: Ring;
+  /**
+   * Who holds this flat, where it is, and which way it looks.
+   *
+   * Optional because only the demo tower carries them: the OSM-derived
+   * buildings have no per-unit register behind them, and inventing one would
+   * be presenting a guess as a record. A flat without an owner is displayed
+   * as unknown, not as the parcel's owner -- which is what the panel used to
+   * do, attributing every flat in a tower to the developer.
+   */
+  owner?: string;
+  address?: string;
+  facing?: string;
 }
 
 export interface BuildingDetail {

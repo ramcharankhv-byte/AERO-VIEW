@@ -47,6 +47,103 @@ export function flatLonLat(ring: number[][]): number[] {
   return flat;
 }
 
+/** A vertical run of a utility: one lon/lat, two heights. */
+export interface Riser {
+  lon: number;
+  lat: number;
+  z0: number;
+  z1: number;
+}
+
+/** What a utility centreline can actually be drawn as. */
+export interface RunGeometry {
+  /**
+   * [lon,lat,height,...] for a PolylineVolume, with no two consecutive
+   * vertices sharing a horizontal position. Fewer than two positions means
+   * there is no sweepable line and the caller should draw only the risers.
+   */
+  tube: number[];
+  /** The vertical sections, which a PolylineVolume cannot represent. */
+  risers: Riser[];
+}
+
+/**
+ * Horizontal collapse threshold, in degrees. ~1 mm at this latitude.
+ *
+ * Sized against Cesium, not against the data. PolylineVolumeGeometry first
+ * runs `arrayRemoveDuplicates` with `Cartesian3.equalsEpsilon`, whose
+ * EPSILON10 relative tolerance is about 0.6 mm at ECEF magnitudes, so points
+ * further apart than that survive into the sweep. Anything at or below this
+ * threshold is what Cesium would treat as coincident once projected, and is
+ * exactly what has to be merged here. Deliberately far tighter than the
+ * centimetre-scale jitter present throughout the snapshots -- those points
+ * are distinct to Cesium and must stay distinct here.
+ */
+const HORIZ_EPS_DEG = 1e-8;
+
+/**
+ * Split a utility centreline into the parts Cesium can actually sweep.
+ *
+ * WHY THIS EXISTS. `PolylineVolumeGeometry` sweeps a cross-section along a
+ * line in the local horizontal frame, so a run's DIRECTION has to be
+ * horizontally well defined. Cesium computes the first segment's direction
+ * before its main loop and normalises it with no guard:
+ *
+ *     forward = normalize(subtract(next, position))
+ *
+ * `scaleToSurface` has already projected both positions onto the geodetic
+ * surface and stashed their heights separately, so two vertices that share a
+ * lon/lat -- a riser, a vertical drop into a trench -- collapse to the same
+ * surface point no matter how far apart they are in Z. Subtracting them gives
+ * a zero vector, and normalising that throws
+ * "developer error: normalized result is not a number", killing the whole
+ * geometry batch. The in-loop guard Cesium does have covers the interior
+ * vertices only, never index 0.
+ *
+ * So the vertical parts are separated out here and handed back as risers for
+ * the caller to draw as cylinders, which is the correct primitive for a
+ * vertical run anyway. Nothing is discarded: a riser is still drawn, at its
+ * true position and depth, just not as a swept volume.
+ */
+export function planRunGeometry(
+  coords: number[][],
+  heightOf: (c: number[]) => number,
+): RunGeometry {
+  const tube: number[] = [];
+  const risers: Riser[] = [];
+  if (!Array.isArray(coords) || coords.length === 0) return { tube, risers };
+
+  let i = 0;
+  while (i < coords.length) {
+    const lon = coords[i][0];
+    const lat = coords[i][1];
+    // Walk the group of consecutive vertices sharing this horizontal position.
+    let j = i;
+    let zMin = heightOf(coords[i]);
+    let zMax = zMin;
+    while (
+      j + 1 < coords.length
+      && Math.abs(coords[j + 1][0] - lon) <= HORIZ_EPS_DEG
+      && Math.abs(coords[j + 1][1] - lat) <= HORIZ_EPS_DEG
+    ) {
+      j++;
+      const z = heightOf(coords[j]);
+      if (z < zMin) zMin = z;
+      if (z > zMax) zMax = z;
+    }
+    // A group of two or more at one lon/lat is a vertical run.
+    if (j > i && zMax - zMin > 0) risers.push({ lon, lat, z0: zMin, z1: zMax });
+    // One vertex per horizontal position carries into the tube, at the height
+    // the line leaves the group with -- the run continues from there.
+    tube.push(lon, lat, heightOf(coords[j]));
+    i = j + 1;
+  }
+
+  // A single horizontal position is a purely vertical line: no tube at all.
+  if (tube.length < 6) return { tube: [], risers };
+  return { tube, risers };
+}
+
 /**
  * Oriented bounding box of a footprint ring, in metres.
  *

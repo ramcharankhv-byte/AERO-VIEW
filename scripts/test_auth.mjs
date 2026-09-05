@@ -29,7 +29,7 @@ const { encodeSession, decodeSession, makeCitizenSession, makeGovSession,
   _resetForTests, buildSetCookie, buildClearCookie } =
   await import('../lib/auth/session.ts');
 const { checkBuildingAccess, checkMutation, checkProjectAccess,
-  isMutator, callerContext: _cc } =
+  isMutator, ownsUnit, filterDetailForCaller, callerContext: _cc } =
   await import('../lib/auth/access-pure.ts');
 
 let pass = 0, fail = 0;
@@ -125,7 +125,7 @@ await test('checkBuildingAccess: gov passes', () => {
 
 await test('checkBuildingAccess: citizen on their own building passes', () => {
   const r = checkBuildingAccess(
-    { kind: 'citizen', slug: 'siripuram', buildingId: 999 },
+    { kind: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' },
     'siripuram', 999,
   );
   assert.equal(r, null);
@@ -133,7 +133,7 @@ await test('checkBuildingAccess: citizen on their own building passes', () => {
 
 await test('checkBuildingAccess: citizen on a different building is 404', () => {
   const r = checkBuildingAccess(
-    { kind: 'citizen', slug: 'siripuram', buildingId: 999 },
+    { kind: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' },
     'siripuram', 193,
   );
   assert.ok(r, 'expected a 404 response');
@@ -142,7 +142,7 @@ await test('checkBuildingAccess: citizen on a different building is 404', () => 
 
 await test('checkProjectAccess: citizen on a different project is 404', () => {
   const r = checkProjectAccess(
-    { kind: 'citizen', slug: 'siripuram', buildingId: 999 },
+    { kind: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' },
     'hyderabad-banjara',
   );
   assert.ok(r, 'expected a 404 response');
@@ -151,12 +151,12 @@ await test('checkProjectAccess: citizen on a different project is 404', () => {
 
 await test('isMutator: only gov can mutate', () => {
   assert.equal(isMutator({ kind: 'gov' }), true);
-  assert.equal(isMutator({ kind: 'citizen', slug: 'a', buildingId: 1 }), false);
+  assert.equal(isMutator({ kind: 'citizen', slug: 'a', buildingId: 1, floor: 1, unit: '101' }), false);
   assert.equal(isMutator({ kind: 'anon' }), false);
 });
 
 await test('checkMutation: citizen gets 403, anon gets 401', () => {
-  const citizen = checkMutation({ kind: 'citizen', slug: 'a', buildingId: 1 });
+  const citizen = checkMutation({ kind: 'citizen', slug: 'a', buildingId: 1, floor: 1, unit: '101' });
   assert.equal(citizen.status, 403);
   const anon = checkMutation({ kind: 'anon' });
   assert.equal(anon.status, 401);
@@ -180,6 +180,102 @@ await test('Citizen buildings filter keeps only the matching id', async () => {
   assert.ok(filtered.features[0].properties.id === 999);
   // Sanity: 999 is a real entry; before the seed script it would be 0.
   assert.ok(before > after, 'snapshot must include more than the one citizen building');
+});
+
+// ---- unit-level filtering on the real detail snapshot ----------------------
+const RAVI = { kind: 'citizen', slug: 'siripuram', buildingId: 999, floor: 2, unit: '201' };
+
+await test('ownsUnit: matches on (level, code), not on id', () => {
+  assert.equal(ownsUnit(RAVI, { level_no: 2, unit_no: '201' }), true);
+  // Same code on another floor, and another code on the same floor.
+  assert.equal(ownsUnit(RAVI, { level_no: 5, unit_no: '201' }), false);
+  assert.equal(ownsUnit(RAVI, { level_no: 2, unit_no: '202' }), false);
+  // Gov and anon are not narrowed to a flat at all.
+  assert.equal(ownsUnit({ kind: 'gov' }, { level_no: 9, unit_no: '903' }), true);
+  assert.equal(ownsUnit({ kind: 'anon' }, { level_no: 9, unit_no: '903' }), true);
+});
+
+await test('filterDetailForCaller: a citizen sees exactly one flat', async () => {
+  const raw = await fs.readFile(
+    path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'),
+    'utf-8',
+  );
+  const detail = JSON.parse(raw)['999'];
+  assert.ok(detail, 'building 999 must exist in the snapshot');
+  assert.ok(detail.units.length > 1, 'the demo tower must hold more than one flat');
+
+  const mine = filterDetailForCaller(RAVI, detail);
+  assert.equal(mine.units.length, 1, `expected 1 flat, got ${mine.units.length}`);
+  assert.equal(mine.units[0].unit_no, '201');
+  assert.equal(mine.units[0].level_no, 2);
+  // The floors survive: the flat has to be shown inside a real building.
+  assert.equal(mine.floors.length, detail.floors.length);
+
+  // And nothing about a neighbour is left anywhere in the payload.
+  const serialised = JSON.stringify(mine);
+  for (const code of ['202', '203', '204', '502', '903']) {
+    assert.ok(
+      !serialised.includes(`-${code}"`),
+      `neighbour flat ${code} must not appear in a citizen's document`,
+    );
+  }
+});
+
+await test('filterDetailForCaller: gov keeps every flat', async () => {
+  const raw = await fs.readFile(
+    path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'),
+    'utf-8',
+  );
+  const detail = JSON.parse(raw)['999'];
+  const all = filterDetailForCaller({ kind: 'gov' }, detail);
+  assert.equal(all.units.length, detail.units.length);
+});
+
+await test('Every flat carries owner and address', async () => {
+  const raw = await fs.readFile(
+    path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'),
+    'utf-8',
+  );
+  const detail = JSON.parse(raw)['999'];
+  for (const u of detail.units) {
+    assert.ok(u.owner, `flat ${u.unit_no} has no owner`);
+    assert.ok(u.address?.includes(u.unit_no), `flat ${u.unit_no} has no matching address`);
+  }
+  // Four flats per residential floor, each with its own footprint.
+  const byLevel = new Map();
+  for (const u of detail.units) {
+    byLevel.set(u.level_no, (byLevel.get(u.level_no) ?? 0) + 1);
+  }
+  for (const [level, n] of byLevel) {
+    assert.equal(n, 4, `level ${level} has ${n} flats, expected 4`);
+  }
+  const rings = new Set(detail.units
+    .filter((u) => u.level_no === 2)
+    .map((u) => JSON.stringify(u.ring)));
+  assert.equal(rings.size, 4, 'the four flats on a floor must have distinct footprints');
+});
+
+// ---- the residents roster must match the flats that exist ------------------
+await test('Every demo login points at a flat that exists', async () => {
+  const residents = JSON.parse(await fs.readFile(
+    path.join(process.cwd(), 'data', 'projects', 'siripuram', 'residents.json'),
+    'utf-8',
+  ));
+  const detail = JSON.parse(await fs.readFile(
+    path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'),
+    'utf-8',
+  ));
+  for (const r of residents) {
+    const doc = detail[String(r.building_id)];
+    assert.ok(doc, `resident ${r.name} points at missing building ${r.building_id}`);
+    const unit = doc.units.find(
+      (u) => u.level_no === r.floor && u.unit_no === r.unit,
+    );
+    assert.ok(unit, `resident ${r.name} points at missing flat ${r.unit} on floor ${r.floor}`);
+    // The roster name and the flat's owner are the same person, or the
+    // citizen would sign in and find someone else's name on their own flat.
+    assert.equal(unit.owner, r.name, `flat ${r.unit} owner disagrees with the roster`);
+  }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

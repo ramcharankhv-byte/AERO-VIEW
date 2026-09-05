@@ -113,6 +113,7 @@ export default function DetailPanel() {
   const selectedUtilityId = useViewStore((s) => s.selectedUtilityId);
   const selectedRoadId = useViewStore((s) => s.selectedRoadId);
   const underground = useViewStore((s) => s.underground);
+  const session = useViewStore((s) => s.session);
   const selectBuilding = useViewStore((s) => s.selectBuilding);
   const selectUtility = useViewStore((s) => s.selectUtility);
 
@@ -302,8 +303,14 @@ export default function DetailPanel() {
     const floor = detail.floors.find((f) => f.id === unit?.floor_id);
     if (unit) {
       const height = unit.z_max - unit.z_min;
+      const isOwn = session.role === 'citizen'
+        && session.floor === unit.level_no
+        && session.unit === unit.unit_no;
       return (
-        <Panel title={`Unit ${unit.unit_no}`} kicker="Titled unit">
+        <Panel
+          title={`Flat ${unit.unit_no}`}
+          kicker={isOwn ? 'Your flat' : 'Titled unit'}
+        >
           <UlpinCard ulpin={unit.ulpin} />
           <div className="mt-2">
             <Row label="Level" value={levelLabel(unit.level_no, bprops.floors - 1)} />
@@ -324,6 +331,7 @@ export default function DetailPanel() {
                 </span>
               }
             />
+            {unit.facing ? <Row label="Facing" value={unit.facing} /> : null}
             <Row
               label="Parent parcel"
               value={
@@ -332,7 +340,15 @@ export default function DetailPanel() {
                 </span>
               }
             />
-            <Row label="Registered owner" value={detail.parcel?.owner ?? '—'} />
+            {/*
+              The FLAT's holder, falling back to unknown rather than to the
+              parcel's owner. The parcel belongs to the developer, so the old
+              fallback confidently attributed every flat in the tower to
+              Sampath Estates -- a wrong answer stated as a right one.
+            */}
+            <Row label="Flat held by" value={unit.owner ?? 'Not on record'} />
+            <Row label="Parcel owner" value={detail.parcel?.owner ?? '—'} />
+            {unit.address ? <Row label="Address" value={unit.address} /> : null}
           </div>
           <ProvenanceRow
             source={(floor?.detect_source ?? bprops.height_source) as Provenance}
@@ -381,6 +397,10 @@ export default function DetailPanel() {
 
   // ---- building ----------------------------------------------------------
   const editing = editingId === bprops.id;
+  // Anonymous callers keep the button: the viewer is reachable without a
+  // session in dev, and hiding it there would be a change to how the app
+  // already behaves for them. Only a citizen is known to be refused.
+  const canEdit = session.role !== 'citizen';
   const totalUnits = detail?.units.length ?? 0;
   // Footprint dimensions: oriented bbox in metres. The buildings
   // FeatureCollection carries no footprint property -- only the per-building
@@ -422,7 +442,10 @@ export default function DetailPanel() {
       title={bprops.name ?? `${bprops.use_type} building`}
       kicker="Building"
       action={
-        editing ? null : (
+        // Only gov may edit. The PATCH already refuses a citizen with a 403
+        // (refuseMutation), so this is not the guard -- it just stops offering
+        // a button whose only outcome for this user is an error.
+        editing || !canEdit ? null : (
           <button
             type="button"
             onClick={() => beginEdit(bprops.id)}

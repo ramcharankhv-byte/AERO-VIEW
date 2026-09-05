@@ -33,6 +33,23 @@ export interface ViewState {
    */
   projectSlug: string | null;
 
+  /**
+   * Who is signed in, as far as the BROWSER is concerned.
+   *
+   * Read once from /api/me and kept here so more than one component can ask.
+   * It exists to drive presentation -- tint the citizen's own flat, hide an
+   * Edit button they may not use -- and for nothing else.
+   *
+   * It is NOT an access control. The server already filters a citizen's
+   * responses down to their own building and their own flat, so a tampered
+   * value here changes what the viewer draws and not one byte of what it is
+   * given. Any check that matters lives in lib/auth/access-pure.ts.
+   *
+   * Null until the first /api/me answers; `role: null` means anonymous or
+   * not yet known, and every consumer treats those the same way.
+   */
+  session: { role: 'gov' | 'citizen' | null; floor: number | null; unit: string | null };
+
   mode: Mode;
   activeBuildingId: number | null;
   isolatedFloor: number | null;      // level_no, not floor id
@@ -164,6 +181,8 @@ export interface ViewState {
   dismissPhotorealError: () => void;
   setStatsOpen: (on: boolean) => void;
   setSunHour: (h: number | null) => void;
+  /** Record who is signed in, once /api/me has answered. */
+  setSession: (s: ViewState['session']) => void;
   /** Bulk-apply state parsed from the URL on first paint. See lib/url-state.ts. */
   hydrate: (patch: Partial<ViewState>) => void;
   resetView: () => void;
@@ -184,6 +203,7 @@ const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
 
 export const useViewStore = create<ViewState>((set) => ({
   projectSlug: null,
+  session: { role: null, floor: null, unit: null },
   mode: 'city',
   activeBuildingId: null,
   isolatedFloor: null,
@@ -306,6 +326,7 @@ export const useViewStore = create<ViewState>((set) => ({
   dismissPhotorealError: () => set({ photorealError: null }),
 
   setStatsOpen: (on) => set({ statsOpen: on }),
+  setSession: (s) => set({ session: s }),
   setSunHour: (h) =>
     set({ sunHour: h === null ? null : Math.max(SUN_MIN_HOUR, Math.min(SUN_MAX_HOUR, h)) }),
 

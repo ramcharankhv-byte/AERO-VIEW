@@ -17,7 +17,9 @@
 
 export type CallerContext =
   | { kind: 'gov' }
-  | { kind: 'citizen'; slug: string; buildingId: number }
+  // `floor` and `unit` come straight off the session claims and are what
+  // narrows a citizen from "their building" to "their flat".
+  | { kind: 'citizen'; slug: string; buildingId: number; floor: number; unit: string }
   | { kind: 'anon' };
 
 export type AccessRefusal = { status: number; body: { error: string } };
@@ -67,4 +69,44 @@ export function checkProjectAccess(
     return { status: 404, body: { error: 'project not found' } };
   }
   return null;
+}
+
+/** The subset of a unit this module needs in order to decide who owns it. */
+interface UnitLike {
+  unit_no: string;
+  level_no: number;
+}
+
+/**
+ * Is this the citizen's own flat?
+ *
+ * Matched on (level, unit code) because that is what the session carries --
+ * the numeric unit id is assigned by the exporter and is not stable across a
+ * re-seed, so a claim built on it would silently stop matching the day the
+ * snapshot is regenerated. The code is the thing written on the door.
+ */
+export function ownsUnit(ctx: CallerContext, unit: UnitLike): boolean {
+  if (ctx.kind !== 'citizen') return true;
+  return unit.level_no === ctx.floor && unit.unit_no === ctx.unit;
+}
+
+/**
+ * Narrow a building detail document to what the caller may see.
+ *
+ * Gov and anon get it verbatim. A citizen gets their building, their floors,
+ * and ONLY their own flat -- the neighbours' ULPINs, areas, tenure and
+ * encumbrance are dropped before the document is serialised, not hidden in
+ * the client. Access control that runs in the browser is decoration; anyone
+ * can read the response in devtools.
+ *
+ * The floors are deliberately kept. The citizen is shown their flat inside
+ * the real building, so the storey plates around it have to exist; a floor
+ * carries no ownership, only a level and a height.
+ */
+export function filterDetailForCaller<
+  T extends { units?: UnitLike[] },
+>(ctx: CallerContext, detail: T): T {
+  if (ctx.kind !== 'citizen') return detail;
+  const units = Array.isArray(detail.units) ? detail.units : [];
+  return { ...detail, units: units.filter((u) => ownsUnit(ctx, u)) };
 }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { currentSession } from './guards';
 import {
   checkBuildingAccess, checkMutation, checkProjectAccess,
-  isMutator, type CallerContext,
+  filterDetailForCaller, isMutator, ownsUnit, type CallerContext,
 } from './access-pure';
 
 /**
@@ -38,11 +38,13 @@ export async function callerContext(req: Request): Promise<CallerContext> {
     kind: 'citizen',
     slug: me.claims.slug,
     buildingId: me.claims.buildingId,
+    floor: me.claims.floor,
+    unit: me.claims.unit,
   };
 }
 
 /** True when this caller may write to the cadastre. */
-export { isMutator };
+export { isMutator, ownsUnit, filterDetailForCaller };
 
 function toResponse(refusal: { status: number; body: unknown }): NextResponse {
   return NextResponse.json(refusal.body, { status: refusal.status });

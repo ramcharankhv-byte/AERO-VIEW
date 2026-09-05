@@ -13,7 +13,8 @@ import {
   cachedDetail, cachedConflicts, cachedQueryPoint, type CacheStatus,
 } from '@/lib/cache/store';
 import {
-  callerContext, enforceBuildingAccess, enforceProjectAccess, refuseMutation,
+  callerContext, enforceBuildingAccess, enforceProjectAccess,
+  filterDetailForCaller, refuseMutation,
 } from '@/lib/auth/access';
 import type { GeoFC } from '@/lib/types';
 
@@ -299,7 +300,11 @@ export async function buildingDetailRoute(
         { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
       );
     }
-    return await jsonPayload(req, detail, {
+    // A citizen owns one flat, not the tower. The neighbours' units are
+    // dropped here, on the server, before the document is serialised --
+    // filtering them in the viewer would leave every ULPIN, area and
+    // encumbrance in the response body for anyone with devtools open.
+    return await jsonPayload(req, filterDetailForCaller(ctx, detail), {
       resource: `${slug}:building:${id}`,
       rev: String(editsRev(slug)),
       headers: withCacheHeader(await baseHeaders(slug), cache),
@@ -371,7 +376,9 @@ export async function buildingSummaryRoute(
         building: detail.building,
         parcel: detail.parcel,
         floor_count: detail.floors.length,
-        unit_count: detail.units.length,
+        // Counted after the role filter: telling a citizen the tower holds 24
+        // flats is itself a disclosure about the flats they cannot see.
+        unit_count: filterDetailForCaller(ctx, detail).units.length,
       },
       {
         resource: `${slug}:building-summary:${id}`,
@@ -468,9 +475,12 @@ export async function buildingUnitsRoute(
         { status: 404, headers: withCacheHeader(await baseHeaders(slug), cache) },
       );
     }
+    // Role first, then the level filter: a citizen paging this endpoint must
+    // not be able to walk their neighbours' flats one page at a time.
+    const visible = filterDetailForCaller(ctx, detail).units;
     const matching = level === null
-      ? detail.units
-      : detail.units.filter((u) => u.level_no === level);
+      ? visible
+      : visible.filter((u) => u.level_no === level);
     return await jsonPayload(
       req,
       {
