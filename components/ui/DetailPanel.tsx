@@ -306,28 +306,43 @@ export default function DetailPanel() {
       const isOwn = session.role === 'citizen'
         && session.floor === unit.level_no
         && session.unit === unit.unit_no;
+      // A flat the server redacted. UnitsLayer leaves these untagged so a
+      // click cannot select one, but the panel says plainly why it is empty
+      // rather than rendering a card full of dashes.
+      if (unit.restricted) {
+        return (
+          <Panel title={`Flat ${unit.unit_no}`} kicker="Not your flat">
+            <p className="mt-2 text-[12px] leading-relaxed text-muted">
+              This flat is on your floor, but its register entry is not yours
+              to read. You can see where it is and how big it is; its ULPIN,
+              owner, areas and tenure are only served to the person who holds
+              it and to the revenue department.
+            </p>
+          </Panel>
+        );
+      }
       return (
         <Panel
           title={`Flat ${unit.unit_no}`}
           kicker={isOwn ? 'Your flat' : 'Titled unit'}
         >
-          <UlpinCard ulpin={unit.ulpin} />
+          {unit.ulpin ? <UlpinCard ulpin={unit.ulpin} /> : null}
           <div className="mt-2">
             <Row label="Level" value={levelLabel(unit.level_no, bprops.floors - 1)} />
-            <Row label="Carpet area" value={m2(unit.carpet_m2)} />
-            <Row label="Built-up area" value={m2(unit.built_m2)} />
-            <Row label="Volume" value={`${(unit.built_m2 * height).toFixed(0)} m³`} />
+            <Row label="Carpet area" value={m2(unit.carpet_m2 ?? 0)} />
+            <Row label="Built-up area" value={m2(unit.built_m2 ?? 0)} />
+            <Row label="Volume" value={`${((unit.built_m2 ?? 0) * height).toFixed(0)} m³`} />
             <Row
               label="Z extent"
               value={`${unit.z_min.toFixed(2)} → ${unit.z_max.toFixed(2)} m`}
             />
             <Row label="Clear height" value={m(height)} />
-            <Row label="Tenure" value={unit.tenure} />
+            <Row label="Tenure" value={unit.tenure ?? '—'} />
             <Row
               label="Encumbrance"
               value={
                 <span className={unit.encumbrance === 'None' ? '' : 'font-semibold text-ink'}>
-                  {unit.encumbrance}
+                  {unit.encumbrance ?? '—'}
                 </span>
               }
             />
@@ -336,7 +351,7 @@ export default function DetailPanel() {
               label="Parent parcel"
               value={
                 <span className="font-mono text-[11px]">
-                  {detail.parcel?.ulpin ?? parentOf(unit.ulpin) ?? '—'}
+                  {detail.parcel?.ulpin ?? (unit.ulpin ? parentOf(unit.ulpin) : null) ?? '—'}
                 </span>
               }
             />
@@ -368,7 +383,10 @@ export default function DetailPanel() {
     const floor = detail.floors.find((f) => f.level_no === isolatedFloor);
     if (floor) {
       const units = detail.units.filter((u) => u.level_no === isolatedFloor);
-      const gross = units.reduce((a, u) => a + u.built_m2, 0);
+      // Redacted flats contribute nothing: a citizen's floor total covers the
+      // flats they may see, and inferring a neighbour's area from a total
+      // would undo the redaction the server just applied.
+      const gross = units.reduce((a, u) => a + (u.built_m2 ?? 0), 0);
       return (
         <Panel
           title={`Level ${levelLabel(floor.level_no, bprops.floors - 1)}`}
@@ -417,6 +435,10 @@ export default function DetailPanel() {
     if (!detail) return null;
     let total = 0, above = 0, below = 0, aboveCount = 0, belowCount = 0;
     for (const u of detail.units) {
+      // Redacted flats are counted in neither the area nor the tally: the
+      // caller was not told their size, and a count they are absent from is
+      // the honest summary of what the caller can actually see.
+      if (u.built_m2 === undefined) continue;
       total += u.built_m2;
       if (u.level_no >= 0) { above += u.built_m2; aboveCount++; }
       else { below += u.built_m2; belowCount++; }
@@ -429,6 +451,7 @@ export default function DetailPanel() {
     const counts: Record<string, number> = { None: 0, Mortgage: 0, Lien: 0, Disputed: 0 };
     for (const u of detail.units) {
       const e = u.encumbrance;
+      if (e === undefined) continue;    // redacted: not disclosed, not 'None'
       if (e === 'None') counts.None++;
       else if (e.startsWith('Mortgage')) counts.Mortgage++;
       else if (e.startsWith('Lien')) counts.Lien++;

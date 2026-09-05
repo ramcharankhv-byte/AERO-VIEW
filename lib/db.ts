@@ -423,6 +423,7 @@ function detailSql(scope: Scope, id: number) {
          'id',u.id,'floor_id',u.floor_id,'ulpin',u.ulpin,'unit_no',u.unit_no,
          'z_min',u.z_min,'z_max',u.z_max,'carpet_m2',u.carpet_m2,
          'built_m2',u.built_m2,'tenure',u.tenure,'encumbrance',u.encumbrance,
+         'owner',u.owner,'address',u.address,'facing',u.facing,
          'level_no',f2.level_no,
          'ring', ST_AsGeoJSON(ST_Force2D(ST_GeometryN(u.geom_3d,1)), 7)::json)
          ORDER BY f2.level_no, u.unit_no)
@@ -562,7 +563,9 @@ async function unitIndex(slug: string): Promise<Map<number, UnitFacts>> {
   const all = await snapshot<Record<string, BuildingDetail>>(slug, 'detail.json');
   for (const [key, doc] of Object.entries(all)) {
     let builtM2 = 0;
-    for (const u of doc.units ?? []) builtM2 += u.built_m2;
+    // Reads the on-disk snapshot, which is never redacted -- the ?? 0 is for
+    // the optional type, not for a case that occurs here.
+    for (const u of doc.units ?? []) builtM2 += u.built_m2 ?? 0;
     out.set(Number(key), { builtM2, unitCount: doc.units?.length ?? 0 });
   }
   return unitIndexCache.set(slug, out);
@@ -989,7 +992,7 @@ async function queryPointFromSnapshot(
     for (const u of detail.units) {
       if (z >= u.z_min && z <= u.z_max && inRing(firstRing(u.ring), lon, lat)) {
         out.push({
-          level: 'unit', id: u.id, ulpin: u.ulpin, label: u.unit_no,
+          level: 'unit', id: u.id, ulpin: u.ulpin ?? '', label: u.unit_no,
           z_min: u.z_min, z_max: u.z_max, provenance: null,
         });
       }

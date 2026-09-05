@@ -142,7 +142,18 @@ CREATE TABLE unit (
   carpet_m2   double precision NOT NULL,
   built_m2    double precision NOT NULL,
   tenure      text NOT NULL,               -- Freehold / Leasehold / Rented / Co-operative
-  encumbrance text NOT NULL DEFAULT 'None'
+  encumbrance text NOT NULL DEFAULT 'None',
+  -- Who holds the flat, where it is, which way it looks.
+  --
+  -- Nullable, unlike every column above, because only a surveyed building
+  -- has them: the OSM-derived stock has no per-unit register behind it, and
+  -- a NOT NULL default would turn "we do not know" into a fact on screen.
+  -- The viewer shows a flat with no owner as unknown rather than falling
+  -- back to the parcel's owner, which would attribute every flat in a tower
+  -- to its developer.
+  owner       text,
+  address     text,
+  facing      text
 );
 
 -- ---------------------------------------------------------------- utility

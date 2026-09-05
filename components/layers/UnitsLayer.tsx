@@ -266,6 +266,11 @@ export default function UnitsLayer() {
               // that has to stay findable, including while something else is
               // selected and it is being dimmed.
               if (isOwn) return MATERIALS.unitOwn(a);
+              // A flat that cannot be opened does not offer itself: no tint of
+              // its own, no hover response. It is massing, so the floor reads
+              // as a real floor and the citizen's own flat reads as the one
+              // thing on it that is theirs.
+              if (unit.restricted) return MATERIALS.unitRestricted(a);
               if (s.selectedId === uid) return MATERIALS.unitSelected(a);
               if (s.hoveredId === uid) return MATERIALS.unitHover(a);
               return MATERIALS.unitTint(slot, a);
@@ -317,9 +322,23 @@ export default function UnitsLayer() {
           }, false),
         },
       });
-      // `level` travels with the tag so a click on the exploded stack can
-      // isolate the floor and select the flat in ONE store write.
-      tagEntity(entity, { kind: 'unit', id: uid, level });
+      // A restricted flat is deliberately left UNTAGGED.
+      //
+      // Picker resolves a click through the tag, so an untagged volume is not
+      // a unit as far as the pick is concerned and the drill falls through to
+      // the floor beneath it. That is the behaviour wanted: a citizen can
+      // click their own floor and inspect it, and clicking a neighbour's flat
+      // selects the floor rather than the flat. No "you may not open this"
+      // dialog, because there is nothing there to open.
+      //
+      // Selection is defended twice over regardless: the neighbour arrives
+      // with no registry data, so there is nothing for the panel to show even
+      // if a selection did somehow land on it.
+      if (!unit.restricted) {
+        // `level` travels with the tag so a click on the exploded stack can
+        // isolate the floor and select the flat in ONE store write.
+        tagEntity(entity, { kind: 'unit', id: uid, level });
+      }
     }
 
     return () => {

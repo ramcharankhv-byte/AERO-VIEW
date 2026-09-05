@@ -21,7 +21,24 @@
 //   Patches data/api/siripuram/parcels.json
 //   Patches data/api/siripuram/detail.json     (adds 999 with full document)
 //   Patches data/api/siripuram/utilities.json  (adds 3 building-internal lines)
-//   Patches data/api/projects.json             (bumps project stats)
+//   Patches data/api/projects.json             (recounts project stats)
+//   Upserts the same building into PostGIS, when DATABASE_URL is reachable
+//
+// WHY IT WRITES TO POSTGIS TOO
+//
+// The API serves from PostGIS whenever the database answers, and falls back
+// to these snapshots when it does not. This script used to write only the
+// snapshots, so the demo building existed in exactly one of the two
+// backends. With docker running, siripuram held 384 buildings and no 999:
+// the gov view was missing Sampath Skyline entirely, and the citizen -- whose
+// buildings collection is filtered to their own id -- got an EMPTY collection
+// and a viewer with no buildings in it at all. The bug looked like "the
+// citizen view is broken" and was really "the demo building was never in the
+// database".
+//
+// Writing both keeps the two backends telling the same story. If the
+// database is unreachable the snapshot half still runs, which is what a
+// contributor without docker needs.
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -464,3 +481,137 @@ console.log(`  each ${builtM2} m² built-up / ${carpetM2} m² carpet`);
 console.log('  3 basements (B1, B2, B3)');
 console.log('  1 water riser, 1 sewer lateral, 1 sewer tank');
 console.log('Snapshot files updated.');
+
+// ---------------------------------------------------------------------------
+// 6. PostGIS -- the same building, so both backends agree.
+// ---------------------------------------------------------------------------
+await seedPostgis();
+
+async function seedPostgis() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.log('PostGIS: DATABASE_URL unset, snapshot only.');
+    return;
+  }
+  let Client;
+  try {
+    ({ Client } = await import('pg'));
+  } catch {
+    console.log('PostGIS: `pg` not installed, snapshot only.');
+    return;
+  }
+  const client = new Client({ connectionString: url, connectionTimeoutMillis: 3000 });
+  try {
+    await client.connect();
+  } catch (err) {
+    // Not an error: a contributor without docker still gets the snapshots,
+    // and the API falls back to them anyway.
+    console.log(`PostGIS: unreachable (${err.message.split('\n')[0]}), snapshot only.`);
+    return;
+  }
+
+  const ring2d = (ring) =>
+    `SRID=4326;POLYGON((${ring.map(([x, y]) => `${x} ${y}`).join(',')}))`;
+
+  try {
+    const { rows } = await client.query(
+      'SELECT id FROM projects WHERE slug = $1', [SLUG],
+    );
+    if (!rows.length) {
+      console.log(`PostGIS: project ${SLUG} not seeded, skipping.`);
+      return;
+    }
+    const projectId = rows[0].id;
+
+    await client.query('BEGIN');
+    // The new nullable columns, added to db/01_schema.sql. Applied here too so
+    // an existing volume does not have to be dropped and re-seeded.
+    await client.query(`
+      ALTER TABLE unit ADD COLUMN IF NOT EXISTS owner text,
+                       ADD COLUMN IF NOT EXISTS address text,
+                       ADD COLUMN IF NOT EXISTS facing text`);
+
+    // Delete first, in dependency order. floor/unit cascade from building.
+    await client.query('DELETE FROM building WHERE id = $1', [BUILDING_ID]);
+    await client.query('DELETE FROM parcel WHERE id = $1', [PARCEL_ID]);
+    await client.query('DELETE FROM utility WHERE id = ANY($1)', [[99001, 99002, 99003]]);
+
+    await client.query(
+      `INSERT INTO parcel (id, ulpin, geom, area_m2, owner, project_id)
+       VALUES ($1,$2,ST_GeomFromEWKT($3),$4,$5,$6)`,
+      [PARCEL_ID, newParcel.properties.ulpin, ring2d(footprintRing),
+        newParcel.properties.area_m2, newParcel.properties.owner, projectId],
+    );
+
+    const bp = newBuilding.properties;
+    await client.query(
+      `INSERT INTO building (id, parcel_id, ulpin, footprint, height_m, floors,
+                             basements, ground_elev, use_type, height_source,
+                             survey_synthetic, osm_id, name, address, project_id)
+       VALUES ($1,$2,$3,ST_GeomFromEWKT($4),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [BUILDING_ID, PARCEL_ID, bp.ulpin, ring2d(footprintRing), bp.height_m,
+        bp.floors, bp.basements, bp.ground_elev, bp.use_type, bp.height_source,
+        bp.survey_synthetic, bp.osm_id, bp.name, bp.address, projectId],
+    );
+
+    for (const f of floors) {
+      await client.query(
+        // floor.geom is a PolyhedralSurfaceZ too: a storey is the solid
+        // between its two heights, not a flat plate.
+        `INSERT INTO floor (id, building_id, ulpin, level_no, z_min, z_max,
+                            geom, detect_source)
+         VALUES ($1,$2,$3,$4,$5,$6,make_prism(ST_GeomFromEWKT($7),$5,$6),$8)`,
+        [f.id, BUILDING_ID, f.ulpin, f.level_no, f.z_min, f.z_max,
+          ring2d(footprintRing), f.detect_source],
+      );
+    }
+
+    for (const u of units) {
+      // geom_3d is a PolyhedralSurfaceZ. make_prism() in db/02_functions.sql
+      // is the project's own extruder -- written by hand precisely because
+      // ST_Extrude needs SFCGAL, which this image does not carry -- and it is
+      // what seed.py uses for every other unit. Using it here means the demo
+      // flats are the same kind of solid as the rest of the cadastre, so the
+      // 3D conflict tests treat them identically.
+      await client.query(
+        `INSERT INTO unit (id, floor_id, ulpin, unit_no, geom_3d, z_min, z_max,
+                           carpet_m2, built_m2, tenure, encumbrance,
+                           owner, address, facing)
+         VALUES ($1,$2,$3,$4,
+                 make_prism(ST_GeomFromEWKT($5), $6, $7),
+                 $6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [u.id, u.floor_id, u.ulpin, u.unit_no,
+          ring2d(u.ring.coordinates[0]), u.z_min, u.z_max,
+          u.carpet_m2, u.built_m2, u.tenure, u.encumbrance,
+          u.owner, u.address, u.facing],
+      );
+    }
+
+    for (const f of [waterRiser, sewerLateral, sewerTank]) {
+      const p = f.properties;
+      const ewkt = `SRID=4326;LINESTRING Z(${
+        f.geometry.coordinates.map(([x, y, z]) => `${x} ${y} ${z}`).join(',')})`;
+      // envelope_3d stays NULL: it is the solid corridor the 3D conflict test
+      // intersects against, and these three runs are internal to the building
+      // and flagged in_conflict:false. The column is nullable for exactly
+      // this case, and a wrong solid would be worse than no solid.
+      await client.query(
+        `INSERT INTO utility (id, asset_type, geom_3d, envelope_3d, depth_m,
+                              radius_m, authority, status, project_id)
+         VALUES ($1,$2,ST_GeomFromEWKT($3),NULL,$4,$5,$6,$7,$8)`,
+        [p.id, p.asset_type, ewkt, p.depth_m, p.radius_m,
+          p.authority, p.status, projectId],
+      );
+    }
+
+    await client.query('COMMIT');
+    console.log(`PostGIS: building ${BUILDING_ID}, ${floors.length} floors, `
+      + `${units.length} flats, 3 utilities upserted.`);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(`PostGIS: FAILED, snapshot is still correct -- ${err.message}`);
+    process.exitCode = 1;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}

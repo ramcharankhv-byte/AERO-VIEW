@@ -376,9 +376,7 @@ export async function buildingSummaryRoute(
         building: detail.building,
         parcel: detail.parcel,
         floor_count: detail.floors.length,
-        // Counted after the role filter: telling a citizen the tower holds 24
-        // flats is itself a disclosure about the flats they cannot see.
-        unit_count: filterDetailForCaller(ctx, detail).units.length,
+        unit_count: detail.units.length,
       },
       {
         resource: `${slug}:building-summary:${id}`,

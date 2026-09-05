@@ -254,6 +254,17 @@ export const MATERIALS = {
     Cesium.Color.fromBytes(255, 196, 92).withAlpha(Math.max(alpha, 0.9)),
   unitOwnOutline: Cesium.Color.fromBytes(255, 214, 138),
 
+  /**
+   * A flat the viewer may see but not open.
+   *
+   * Quieter and flatter than any of the tints -- it has to read as the shape
+   * of a home without inviting the click that would do nothing. Kept solid
+   * enough to occlude properly, so the floor still reads as full rather than
+   * as one flat floating in a gap.
+   */
+  unitRestricted: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>
+    grey(170).withAlpha(Math.min(alpha, 0.55)),
+
   /** Cursor is over it. The same brightening the buildings use for hover, so
    *  the gesture means one thing at every level of the hierarchy. */
   unitHover: (alpha: number = FLOOR_VIEW.UNIT_ALPHA) =>

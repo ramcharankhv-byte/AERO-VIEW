@@ -195,7 +195,7 @@ await test('ownsUnit: matches on (level, code), not on id', () => {
   assert.equal(ownsUnit({ kind: 'anon' }, { level_no: 9, unit_no: '903' }), true);
 });
 
-await test('filterDetailForCaller: a citizen sees exactly one flat', async () => {
+await test('filterDetailForCaller: a citizen keeps every flat, but only one is readable', async () => {
   const raw = await fs.readFile(
     path.join(process.cwd(), 'data', 'api', 'siripuram', 'detail.json'),
     'utf-8',
@@ -205,19 +205,39 @@ await test('filterDetailForCaller: a citizen sees exactly one flat', async () =>
   assert.ok(detail.units.length > 1, 'the demo tower must hold more than one flat');
 
   const mine = filterDetailForCaller(RAVI, detail);
-  assert.equal(mine.units.length, 1, `expected 1 flat, got ${mine.units.length}`);
-  assert.equal(mine.units[0].unit_no, '201');
-  assert.equal(mine.units[0].level_no, 2);
-  // The floors survive: the flat has to be shown inside a real building.
+  // Every flat is still there -- the citizen can see their whole building.
+  assert.equal(mine.units.length, detail.units.length);
+  // The floors survive too: the flat is shown inside a real building.
   assert.equal(mine.floors.length, detail.floors.length);
 
-  // And nothing about a neighbour is left anywhere in the payload.
+  const own = mine.units.filter((u) => !u.restricted);
+  assert.equal(own.length, 1, `expected 1 readable flat, got ${own.length}`);
+  assert.equal(own[0].unit_no, '201');
+  assert.equal(own[0].owner, 'Ravi Kumar');
+  assert.ok(own[0].ulpin, 'the citizen keeps their own ULPIN');
+
+  // Every other flat keeps its shape and loses its register entry.
+  for (const u of mine.units.filter((x) => x.restricted)) {
+    assert.ok(u.ring, `flat ${u.unit_no} must keep its geometry`);
+    assert.ok(typeof u.level_no === 'number', 'and its level');
+    for (const field of ['ulpin', 'owner', 'address', 'carpet_m2',
+      'built_m2', 'tenure', 'encumbrance', 'facing']) {
+      assert.equal(u[field], undefined,
+        `restricted flat ${u.unit_no} must not carry ${field}`);
+    }
+  }
+
+  // Belt and braces: no neighbour's ULPIN survives anywhere in the payload.
   const serialised = JSON.stringify(mine);
   for (const code of ['202', '203', '204', '502', '903']) {
     assert.ok(
       !serialised.includes(`-${code}"`),
-      `neighbour flat ${code} must not appear in a citizen's document`,
+      `neighbour flat ${code}'s ULPIN must not appear in a citizen's document`,
     );
+  }
+  // Nor any neighbour's name.
+  for (const name of ['Meena Patnaik', 'Joseph Fernandes', 'Sanjay Varma']) {
+    assert.ok(!serialised.includes(name), `${name} must not appear`);
   }
 });
 

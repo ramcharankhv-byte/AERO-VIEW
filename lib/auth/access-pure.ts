@@ -91,22 +91,45 @@ export function ownsUnit(ctx: CallerContext, unit: UnitLike): boolean {
 }
 
 /**
+ * The geometry and placement every unit keeps, whoever is asking. None of it
+ * says anything about who lives there.
+ */
+const PUBLIC_UNIT_FIELDS = [
+  'id', 'floor_id', 'unit_no', 'level_no', 'z_min', 'z_max', 'ring',
+] as const;
+
+/**
  * Narrow a building detail document to what the caller may see.
  *
- * Gov and anon get it verbatim. A citizen gets their building, their floors,
- * and ONLY their own flat -- the neighbours' ULPINs, areas, tenure and
- * encumbrance are dropped before the document is serialised, not hidden in
- * the client. Access control that runs in the browser is decoration; anyone
- * can read the response in devtools.
+ * Gov and anon get it verbatim. A citizen gets their building, all of its
+ * floors, and the SHAPE of every flat -- but the register behind a
+ * neighbour's door is redacted: no ULPIN, no owner, no address, no areas, no
+ * tenure or encumbrance. They keep `unit_no`, because a door number is
+ * written on the door and the floor would be unreadable without it.
  *
- * The floors are deliberately kept. The citizen is shown their flat inside
- * the real building, so the storey plates around it have to exist; a floor
- * carries no ownership, only a level and a height.
+ * Shown-but-redacted rather than removed, because a citizen is meant to be
+ * able to look at their building and their floor. Deleting the neighbours
+ * left them standing in an empty plate, which is a less honest picture of
+ * where they live than four flats of which one is theirs.
+ *
+ * Done here, on the server, and not in the viewer: anyone can read a
+ * response in devtools, so a filter that runs in the browser is decoration.
  */
 export function filterDetailForCaller<
   T extends { units?: UnitLike[] },
 >(ctx: CallerContext, detail: T): T {
   if (ctx.kind !== 'citizen') return detail;
   const units = Array.isArray(detail.units) ? detail.units : [];
-  return { ...detail, units: units.filter((u) => ownsUnit(ctx, u)) };
+  return {
+    ...detail,
+    units: units.map((u) => {
+      if (ownsUnit(ctx, u)) return u;
+      const source = u as unknown as Record<string, unknown>;
+      const redacted: Record<string, unknown> = { restricted: true };
+      for (const k of PUBLIC_UNIT_FIELDS) {
+        if (k in source) redacted[k] = source[k];
+      }
+      return redacted as unknown as UnitLike;
+    }),
+  };
 }

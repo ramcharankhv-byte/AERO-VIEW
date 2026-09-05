@@ -84,16 +84,30 @@ export interface FloorInfo {
 export interface UnitInfo {
   id: number;
   floor_id: number;
-  ulpin: string;
   unit_no: string;
   level_no: number;
   z_min: number;
   z_max: number;
-  carpet_m2: number;
-  built_m2: number;
-  tenure: string;
-  encumbrance: string;
   ring: Ring;
+  /**
+   * Set on a flat the caller may see but may not inspect.
+   *
+   * A citizen is shown their whole building -- the tower, its storeys, and
+   * the shape of every flat on the floor -- but the register behind a
+   * neighbour's door is not theirs to read. Such a unit arrives carrying its
+   * GEOMETRY and nothing else: no ULPIN, no owner, no areas, no tenure. The
+   * server strips them (filterDetailForCaller); this flag is what the viewer
+   * reads to keep the volume on screen and out of the pick.
+   *
+   * The fields below are therefore optional for exactly this reason, and a
+   * missing one means "not disclosed", never "zero".
+   */
+  restricted?: boolean;
+  ulpin?: string;
+  carpet_m2?: number;
+  built_m2?: number;
+  tenure?: string;
+  encumbrance?: string;
   /**
    * Who holds this flat, where it is, and which way it looks.
    *
