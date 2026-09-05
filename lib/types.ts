@@ -148,14 +148,14 @@ export interface GeoGeometry {
   coordinates: unknown;
 }
 
-export interface GeoFeature<P = Record<string, unknown>> {
+export interface GeoFeature<P = object> {
   type: 'Feature';
   id?: number | string;
   geometry: GeoGeometry;
   properties: P;
 }
 
-export interface GeoFC<P = Record<string, unknown>> {
+export interface GeoFC<P = object> {
   type: 'FeatureCollection';
   features: GeoFeature<P>[];
   /** The project's name. Written by the buildings query on both backends. */

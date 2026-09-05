@@ -9,6 +9,9 @@ __pycache__/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+# Tooling scratch: Playwright MCP capture, project probe screenshots.
+.playwright-mcp/
+site-probe.png
 # Manual edits are local demonstration state, never a register, and are never
 # committed. One file per project now -- see lib/data/edits.ts. The
 # pre-multi-project global file is still ignored because it is still read once,

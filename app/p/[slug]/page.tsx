@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveProject, unavailableMessage } from '@/lib/projects';
+import RoleGate from '@/components/auth/RoleGate';
 import ProjectViewer from './ProjectViewer';
 
 export const dynamic = 'force-dynamic';
@@ -48,7 +49,11 @@ export default async function Page(
       name={resolution.project.name} />;
   }
 
-  return <ProjectViewer project={resolution.project} />;
+  return (
+    <RoleGate slug={resolution.project.slug}>
+      <ProjectViewer project={resolution.project} />
+    </RoleGate>
+  );
 }
 
 /**

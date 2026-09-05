@@ -12,6 +12,10 @@ import { warmProject } from '@/lib/server-cache';
 import {
   cachedDetail, cachedConflicts, cachedQueryPoint, type CacheStatus,
 } from '@/lib/cache/store';
+import {
+  callerContext, enforceBuildingAccess, enforceProjectAccess, refuseMutation,
+} from '@/lib/auth/access';
+import type { GeoFC } from '@/lib/types';
 
 /**
  * The seven cadastre endpoints, written once.
@@ -107,18 +111,31 @@ async function gateProject(slug: string): Promise<NextResponse | null> {
  * layer could have. It carries the project's edit revision for the same
  * reason lib/http/payload.ts documents: a save must be visible immediately,
  * and `editsRev` is already per-slug on this branch.
+ *
+ * ROLE FILTER. For a citizen, the collection is replaced with a one-feature
+ * FeatureCollection (or empty array) containing only their own building /
+ * parcel / utility / conflict. The full FeatureCollection shape is preserved
+ * so the rendering layer does not need a "if citizen" branch -- it just gets
+ * a small collection and behaves normally.
  */
-async function serve<T>(
+async function serve<T extends GeoFC>(
   slug: string,
   what: string,
   load: (slug: string) => Promise<T>,
   req: Request,
   extra: Record<string, string> = {},
+  filter?: (value: T, ctx: { kind: 'citizen'; buildingId: number; slug: string }) => T | Promise<T>,
 ): Promise<NextResponse> {
   const gate = await gateProject(slug);
   if (gate) return gate;
+  const ctx = await callerContext(req);
+  const projectGuard = enforceProjectAccess(ctx, slug);
+  if (projectGuard) return projectGuard;
   try {
-    const body = await load(slug);
+    const raw: T = await load(slug);
+    const body: T = ctx.kind === 'citizen' && filter
+      ? await filter(raw, { kind: 'citizen', buildingId: ctx.buildingId, slug: ctx.slug })
+      : raw;
     return await jsonPayload(req, body, {
       resource: `${slug}:${what}`,
       rev: String(editsRev(slug)),
@@ -134,26 +151,94 @@ async function serve<T>(
 
 /** GET .../buildings -> GeoJSON FeatureCollection of every footprint. */
 export function buildingsRoute(slug: string, req: Request) {
-  return serve(slug, 'buildings', getBuildings, req);
+  return serve(slug, 'buildings', getBuildings, req, {}, filterBuildingsForCitizen);
+}
+
+/** Citizen view: only the one building they own. */
+function filterBuildingsForCitizen(
+  value: GeoFC,
+  ctx: { kind: 'citizen'; buildingId: number; slug: string },
+): GeoFC {
+  const features = Array.isArray(value.features) ? value.features : [];
+  return {
+    ...value,
+    features: features.filter((f) => {
+      const id = (f.properties as { id?: number } | null)?.id;
+      return id === ctx.buildingId;
+    }),
+  };
 }
 
 /** GET .../parcels -> GeoJSON of surface parcel polygons. */
 export function parcelsRoute(slug: string, req: Request) {
-  return serve(slug, 'parcels', getParcels, req);
+  return serve(slug, 'parcels', getParcels, req, {}, filterParcelsForCitizen);
+}
+
+/** Citizen view: only the parcel that contains the citizen's building.
+ *  The match is by the building's parcel_id, looked up in the buildings
+ *  snapshot -- a single file read that is already on the hot path. */
+async function filterParcelsForCitizen(
+  value: GeoFC,
+  ctx: { kind: 'citizen'; buildingId: number; slug: string },
+): Promise<GeoFC> {
+  const features = Array.isArray(value.features) ? value.features : [];
+  // Look up the building's parcel_id. The buildings file is already on the
+  // hot path; one more read inside a citizen filter is fine.
+  const buildings = await getBuildings(ctx.slug);
+  const bFeature = buildings.features.find(
+    (b) => (b.properties as { id?: number })?.id === ctx.buildingId,
+  );
+  const parcelId = (bFeature?.properties as { parcel_id?: number } | null)?.parcel_id;
+  if (parcelId === undefined) {
+    return { ...value, features: [] };
+  }
+  return {
+    ...value,
+    features: features.filter((f) => {
+      const id = (f.properties as { id?: number } | null)?.id;
+      return id === parcelId;
+    }),
+  };
 }
 
 /** GET .../utilities -> utility centrelines with depth/radius/authority. */
 export function utilitiesRoute(slug: string, req: Request) {
-  return serve(slug, 'utilities', getUtilities, req);
+  return serve(slug, 'utilities', getUtilities, req, {}, filterUtilitiesForCitizen);
+}
+
+/** Citizen view: only utilities tagged with the citizen's building.
+ *  City-wide mains (metro, power trunks) are suppressed -- they cross
+ *  the AOI but are not what a citizen's screen is for. The demo
+ *  building's own risers and laterals come from the building detail
+ *  document, not from this endpoint, so a citizen does not lose
+ *  anything they should see. */
+function filterUtilitiesForCitizen(
+  value: GeoFC,
+  ctx: { kind: 'citizen'; buildingId: number; slug: string },
+): GeoFC {
+  const features = Array.isArray(value.features) ? value.features : [];
+  return {
+    ...value,
+    features: features.filter((f) => {
+      const pid = (f.properties as { building_id?: number } | null)?.building_id;
+      return typeof pid === 'number' && pid === ctx.buildingId;
+    }),
+  };
 }
 
 /** GET .../conflicts -> utility/basement intersections found by ST_3DIntersects. */
 export async function conflictsRoute(slug: string, req: Request) {
   const gate = await gateProject(slug);
   if (gate) return gate;
+  const ctx = await callerContext(req);
+  const projectGuard = enforceProjectAccess(ctx, slug);
+  if (projectGuard) return projectGuard;
   try {
     const { value, cache } = await cachedConflicts(slug);
-    return await jsonPayload(req, value, {
+    const filtered = ctx.kind === 'citizen'
+      ? (Array.isArray(value) ? value.filter((c) => c?.building_id === ctx.buildingId) : [])
+      : value;
+    return await jsonPayload(req, filtered, {
       resource: `${slug}:conflicts`,
       rev: String(editsRev(slug)),
       headers: withCacheHeader(await baseHeaders(slug), cache),
@@ -194,6 +279,9 @@ export async function buildingDetailRoute(
   if (id === null) {
     return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
   }
+  const ctx = await callerContext(req);
+  const denied = enforceBuildingAccess(ctx, slug, id);
+  if (denied) return denied;
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
@@ -246,6 +334,9 @@ export async function buildingSummaryRoute(
   if (id === null) {
     return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
   }
+  const ctx = await callerContext(req);
+  const denied = enforceBuildingAccess(ctx, slug, id);
+  if (denied) return denied;
   const gate = await gateProject(slug);
   if (gate) return gate;
   // The first building-scoped call a session makes, and it does not await the
@@ -305,6 +396,9 @@ export async function buildingFloorsRoute(
   if (id === null) {
     return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
   }
+  const ctx = await callerContext(req);
+  const denied = enforceBuildingAccess(ctx, slug, id);
+  if (denied) return denied;
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
@@ -361,6 +455,9 @@ export async function buildingUnitsRoute(
     : UNITS_DEFAULT_LIMIT;
   const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
 
+  const ctx = await callerContext(req);
+  const denied = enforceBuildingAccess(ctx, slug, id);
+  if (denied) return denied;
   const gate = await gateProject(slug);
   if (gate) return gate;
   try {
@@ -435,6 +532,12 @@ export async function buildingPatchRoute(
   } catch {
     return NextResponse.json({ error: 'body must be valid JSON' }, { status: 400 });
   }
+
+  const ctx = await callerContext(req);
+  const mutationRefused = refuseMutation(ctx);
+  if (mutationRefused) return mutationRefused;
+  const buildingRefused = enforceBuildingAccess(ctx, slug, id);
+  if (buildingRefused) return buildingRefused;
 
   const coerced = coerceEdit(body);
   if (!coerced.ok) {
@@ -542,10 +645,27 @@ export async function queryRoute(slug: string, req: Request): Promise<NextRespon
   // instead of 30 ms.
   const gate = await gateProject(slug);
   if (gate) return gate;
+  const ctx = await callerContext(req);
+  const projectGuard = enforceProjectAccess(ctx, slug);
+  if (projectGuard) return projectGuard;
   try {
     const { value: stack, cache } = await cachedQueryPoint(slug, lon, lat, z);
+    // A citizen's clicks should only ever land on their own building; the
+    // server still filters the stack so a misclick does not leak neighbours
+    // (e.g. a stack entry whose top-level entity is a different building).
+    const filtered = ctx.kind === 'citizen'
+      ? stack.filter((entry) => {
+        const id = (entry as { building_id?: number } | null)?.building_id;
+        // Building level entries drop out unless they are the citizen's
+        // own building. Parcel / floor / unit entries always belong to
+        // a building, and the building is checked above; the absence
+        // of building_id on a sub-building entry is therefore a leak
+        // (the entry is about some other building) and is dropped.
+        return id === ctx.buildingId;
+      })
+      : stack;
     return NextResponse.json(
-      { point: { lon, lat, z }, count: stack.length, stack },
+      { point: { lon, lat, z }, count: filtered.length, stack: filtered },
       {
         headers: withCacheHeader(
           { ...(await baseHeaders(slug)),
