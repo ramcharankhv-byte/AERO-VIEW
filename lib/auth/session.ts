@@ -79,6 +79,21 @@ function getSecret(): Buffer {
   } else {
     // Dev-only: random per process. A real deployment sets SESSION_SECRET.
     // Documented at the top of the file; not a bug, not a backdoor.
+    //
+    // It IS a bug the moment a second process exists. The login route signs
+    // with this process's key and the next request may be served by another
+    // process -- another Vercel lambda, another `next dev` worker, the same
+    // server after a restart -- whose key is different. The signature check
+    // then fails, currentSession() returns null, and the user lands back on
+    // /login with no error shown. That reads as "wrong password" and is not.
+    // Say so once, loudly, rather than letting it present as a login loop.
+    console.warn(
+      '[ulpin-auth] SESSION_SECRET is not set; signing sessions with a random '
+      + 'per-process key. Sessions will NOT survive a server restart, and on any '
+      + 'multi-process deployment (Vercel included) login will loop back to '
+      + '/login because the verifying process has a different key. Set '
+      + 'SESSION_SECRET to a stable high-entropy string -- see .env.example.',
+    );
     _secret = randomBytes(32);
   }
   return _secret;
