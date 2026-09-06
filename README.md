@@ -191,6 +191,7 @@ This distinction is enforced in the data model, not just in the prose.
 | Building names, 59 of 384 | OSM `name` tag | **Real** (`name_source: osm_tag`) |
 | Building names, 325 of 384 | `lib/mock/` name banks, seeded by building id | **Synthetic** (`generated`) |
 | Building type, area, occupancy, owner, status | `lib/mock/`, derived from real floors/units | **Synthetic demo register** |
+| Façade texture and window grid | drawn per `use_type` by `lib/cesium/textures.ts` | **Synthetic, illustrative** |
 | Manual edits | typed into the viewer, stored in `data/edits.json` | **Local, no authority** |
 
 `data/surveyed_plans.json` carries a `_synthetic: true` flag, and that flag is
@@ -219,6 +220,70 @@ difference between the stored `ground_elev` and Cesium World Terrain. Expect a
 mean near −65 m for Siripuram even now: World Terrain is ellipsoidal and the
 stored values are MSL, and that constant offset is exactly what the
 reconciliation removes.
+
+### How the buildings are drawn
+
+Two styles, switched in the layer panel and carried in the URL as
+`?style=schematic|photoreal`.
+
+**Schematic** is our own geometry: one extruded polygon per footprint, plus a
+flat roof cap 0.05 m above it. The wall carries a window-grid texture drawn per
+`use_type` onto a canvas at runtime — warm plaster for residential, a curtain
+wall for commercial, sandstone for institutional, coated metal for industrial.
+Four canvases exist in total and every wall in the project shares them --
+2,213 of them in Banjara Hills -- so the texture costs no HTTP request and no
+per-building upload. The tile is 3 m × 3.2 m — one
+bay, one storey — and it is repeated `(perimeter ÷ 3 m, storeys)` times, so the
+number of window rows on a building **equals its storey count**. That is the
+same rhythm `BuildingModelLayer` uses for the one building being inspected, so
+nothing jumps when a block is opened.
+
+Each building takes a deterministic ±8% brightness, seeded from its id with the
+same generator `lib/mock/` uses for the synthetic register. Without it a row of
+same-use blocks is one image repeated, and the eye reads that as a single long
+building rather than as several.
+
+Past 1,500 m the entity tier hands off to `BuildingsFarLayer`, a single batched
+`Primitive` carrying a flat-coloured silhouette. The two distance conditions are
+back-to-back, so nothing is ever drawn twice.
+
+**Photoreal** is Google Photorealistic 3D Tiles, brokered through Cesium ion.
+It is a scene primitive rather than an entity — 3D Tiles have no entity form —
+and it is built lazily, so a session that never opens it spends no quota. The
+schematic extrusions do not go away underneath it: they drop to alpha 0.01 and
+keep rendering, because `scene.pick` does not hit an entity with `show: false`.
+Everything downstream of a pick — the ULPIN card, the floor ladder, the
+basement conflict list — therefore keeps working with no photoreal-specific
+code path anywhere else in the app. If Google's tiles fail (quota, token,
+network) the style falls back to Schematic and the toast says why.
+
+### Light
+
+The scene boots at **16:30 local** on a fixed date, not at noon. At that hour
+the sun sits about 20° above the horizon and throws a shadow roughly three times
+a building's height, which is long enough that a six-storey block and a
+two-storey one are told apart by their shadows before anyone reads a label.
+Noon is the wrong default for exactly that reason: an overhead sun puts the
+shadow underneath the building and the massing goes flat. The Sun slider moves
+the hour between 06:00 and 18:00; its off position removes lighting and shadows
+entirely, which is also the cheap path for a weak GPU.
+
+Ambient occlusion (`lib/cesium/lighting.ts`) does the job the shadow map cannot:
+it darkens the contact between a wall and the ground, and the gap between two
+blocks, at a scale a 2048-pixel shadow map spread over four kilometres has no
+hope of resolving. The sun tells you a building is tall; ambient occlusion tells
+you a street is narrow. It is skipped on the low-end GPU profile rather than
+degraded — a full-screen horizon-based ray march is precisely the per-fragment
+cost that profile exists to avoid — and the StatusBar says so when it is off,
+distinguishing "this GPU cannot" from "we chose not to".
+
+Antialiasing is 4× MSAA on a capable GPU and FXAA on a weak one, decided once at
+boot by `lib/cesium/perf.ts` from the WebGL renderer string.
+
+The basemap keeps its own colour. The `gisDark` treatment dims the exposure and
+lifts saturation, which lands this AOI's dense vegetation on a deep green that
+the neutral massing separates from by value *and* by chroma at once. Draining it
+to grey was tried and reverted: it took the ground's legibility with it.
 
 ### Streets
 
@@ -595,13 +660,29 @@ Both suites were run against **PostGIS and the snapshot backend**, and the
   6,438 units · 301 utility runs · 12 conflicts
 - **hyderabad-banjara** — 2,213 buildings · 1,309 parcels · 350 streets ·
   8,119 floors · 31,807 units · 1,214 utility runs · 80 conflicts
-- `tsc --noEmit` clean, 34/34 unit tests, 46/46 UI checks, 26/26 street checks,
-  31/31 edit checks, responsive checks green at 1680/1280/834/390 px on both
-  the viewer and the gallery
+- `tsc --noEmit` clean, 57/57 unit tests, 73/73 UI checks, 26/26 street checks,
+  26/26 building-style checks, 31/31 edit checks, underground depth checks green
+  across all three projects, responsive checks green at 1680/1280/834/390 px on
+  both the viewer and the gallery
+- The UI walk covers **both building styles**: city → building → floor → unit →
+  underground is walked in Schematic and again in Photoreal, and each pass
+  asserts that saving an edit updates one entity rather than rebuilding the
+  layer (770 → 770 building entities either way)
 - The chrome audit reports **0 off-palette elements** at every viewport, and the
-  scene audit a frame that is roughly 45% coloured: dark green ground under
-  neutral off-white massing, with Cesium's attribution logo — which may not be
-  restyled — excluded from the count
+  scene audit a frame that is 48–65% coloured: dark green ground under lit
+  massing, with Cesium's attribution logo — which may not be restyled —
+  excluded from the count
+- The acceptance harness renders on the **real GPU** (ANGLE on the system
+  adapter), not a software rasteriser. Shadows, ambient occlusion and MSAA are
+  GPU features, so a screenshot taken under swiftshader could not speak to any
+  of them. `ULPIN_GPU=0` restores software rendering for a machine with no
+  adapter, and every run prints the renderer it actually bound
+
+`npm run check:edit` needs a clean edit store: it asserts that three
+deliberately-failing saves write nothing, and does not clear
+`data/projects/<slug>/edits.json` first, so a record left by a previous
+successful run makes that one assertion red. Delete the file between runs.
+The other 30 checks, including the entity-count guarantee, pass either way.
 
 ### Not implemented
 
