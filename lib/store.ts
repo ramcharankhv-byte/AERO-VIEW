@@ -151,6 +151,22 @@ export interface ViewState {
   imageryActive: ProviderId;
 
   /**
+   * Whether ambient occlusion is actually running.
+   *
+   * The same shape as imageryActive, and for the same reason: what the scene
+   * asked for and what the GPU agreed to are two different facts, and the
+   * StatusBar reports the second. Null until the rig has run.
+   *
+   * 'unsupported' means the WebGL context cannot do it; 'low-end' means it
+   * could and we chose not to (see lib/cesium/lighting.ts). Those read very
+   * differently to someone deciding whether their machine is the problem, so
+   * they are not collapsed into one boolean.
+   *
+   * Written by CesiumRoot only, like imageryActive.
+   */
+  ambientOcclusion: { on: boolean; reason: 'unsupported' | 'low-end' | null } | null;
+
+  /**
    * Schematic extrusions vs Google Photorealistic 3D Tiles.
    *
    * Unlike imagery there is no separate "active" key. A failed tileset is not
@@ -234,6 +250,7 @@ export interface ViewState {
   setImageryProvider: (id: ProviderId) => void;
   setImageryTreatment: (t: TreatmentId) => void;
   setImageryActive: (id: ProviderId) => void;
+  setAmbientOcclusion: (s: ViewState['ambientOcclusion']) => void;
   setBuildingStyle: (s: BuildingStyle) => void;
   /** Report a Google-tiles failure and fall back to Schematic in one write. */
   failPhotoreal: (message: string) => void;
@@ -309,6 +326,7 @@ export const useViewStore = create<ViewState>((set) => ({
   imageryProvider: 'esri',
   imageryTreatment: 'gisDark',
   imageryActive: 'esri',
+  ambientOcclusion: null,
   // Schematic is the default and the fallback: it is the only mode that
   // carries provenance, and it needs no third-party quota to draw.
   buildingStyle: 'schematic',
@@ -447,6 +465,7 @@ export const useViewStore = create<ViewState>((set) => ({
   setImageryProvider: (id) => set({ imageryProvider: id }),
   setImageryTreatment: (t) => set({ imageryTreatment: t }),
   setImageryActive: (id) => set({ imageryActive: id }),
+  setAmbientOcclusion: (ao) => set({ ambientOcclusion: ao }),
 
   // Switching style by hand clears any previous failure, so retrying Photoreal
   // after a transient network blip is just clicking the toggle again.

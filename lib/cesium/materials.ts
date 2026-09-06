@@ -66,6 +66,55 @@ const OFF_WHITE = 245;
  */
 export const BUILDING_ALPHA = 0.45;
 
+/**
+ * Opacity of a city-scale building mass, as actually rendered.
+ *
+ * Distinct from BUILDING_ALPHA above, which is still the correct resting alpha
+ * for the OTHER translucent surfaces -- the parcel overlay, the section shell,
+ * the floor slab in the architectural model -- and is left at 0.45 for them.
+ * Only the city-scale masses are solid, and this is their number.
+ *
+ * 0.95, not 1.0. A fully opaque edge reads as a die-cut sticker against a
+ * satellite photograph; a little softness keeps the boundary of a building
+ * from looking painted on at a raking angle.
+ *
+ * Previously a local constant inside BuildingsLayer.tsx, which was a real
+ * breach of the rule at the top of this file -- a component was deciding the
+ * resting look of the primary object in the scene, and the two alphas could
+ * not be compared without opening two files.
+ */
+export const CITY_BUILDING_ALPHA = 0.95;
+
+/**
+ * How far a building fades in underground mode.
+ *
+ * Low enough that the buildings stop competing with the utilities -- which are
+ * the whole point of the mode -- and not zero, because the corridors have to be
+ * read in relation to the plots they run under. This is the floor the
+ * transparency slider is driven to when underground is on; it is not a slider
+ * position the user can reach.
+ */
+export const UNDERGROUND_BUILDING_ALPHA = 0.1;
+
+/**
+ * Horizon-based ambient occlusion, applied by lib/cesium/lighting.ts.
+ *
+ * Not a colour, but it belongs to the same family of decisions and to the same
+ * "stated once" rule: these two numbers are how dark the contact between a wall
+ * and the ground gets, which is a look, not a setting.
+ *
+ * INTENSITY 2.5 against Cesium's default of 3.0: the default crushes a narrow
+ * lane between two blocks to near-black under a low sun, which is the exact
+ * hour this scene boots at. LENGTH_CAP_M 0.5 against a default of 0.26 --
+ * sampling stops half a metre out, roughly the width of the wall-to-ground
+ * contact this is meant to draw, and stopping sooner leaves it invisible at
+ * city altitude.
+ */
+export const AMBIENT_OCCLUSION = {
+  INTENSITY: 2.5,
+  LENGTH_CAP_M: 0.5,
+} as const;
+
 // -------------------------------------------------------------- floor view
 /**
  * Every dimension and threshold the floor/unit view is tuned by, in one block.

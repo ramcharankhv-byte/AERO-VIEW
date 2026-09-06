@@ -26,6 +26,7 @@ export default function StatusBar({
   const ionFallback = useViewStore((s) => s.ionFallback);
   const imageryProvider = useViewStore((s) => s.imageryProvider);
   const imageryActive = useViewStore((s) => s.imageryActive);
+  const ao = useViewStore((s) => s.ambientOcclusion);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   /**
@@ -129,6 +130,20 @@ export default function StatusBar({
             )}
           </>
         )}
+        {/* Ambient occlusion, on the same principle as the basemap fallback
+            beside it: what the scene asked for and what this GPU agreed to are
+            two different facts, and only the second one is on screen. Silent
+            when it is simply running -- a working feature is not news. */}
+        {ao && !ao.on ? (
+          <>
+            <Sep />
+            <span className="font-medium text-ink">
+              {ao.reason === 'unsupported'
+                ? 'No ambient occlusion · unsupported'
+                : 'No ambient occlusion · reduced quality'}
+            </span>
+          </>
+        ) : null}
         <Sep />
         <span className="uppercase tracking-wide text-[rgb(var(--ink))]">
           {underground ? 'underground' : mode}

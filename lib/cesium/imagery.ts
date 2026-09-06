@@ -262,7 +262,12 @@ export function applyGisDarkScene(scene: Cesium.Scene): void {
   // the un-tiled wedge is large and anything lighter glows through it.
   scene.globe.baseColor = Cesium.Color.fromCssColorString('#0D1710');
   scene.fog.enabled = true;
-  scene.fog.density = 0.0002;
+  // Doubled from 0.0002. Aerial perspective is the cue that separates the far
+  // side of the ward from the near side, and at the old density a 1.2 km AOI
+  // was inside the fog's onset entirely -- the whole scene sat at one depth.
+  // 0.0004 puts a visible gradient across the AOI without reaching far enough
+  // to start culling terrain tiles the camera can still see.
+  scene.fog.density = 0.0004;
   scene.skyAtmosphere.brightnessShift = -0.2;
   // Left at 0. The horizon band belongs to the scene, not to the chrome.
   scene.skyAtmosphere.saturationShift = 0.0;
