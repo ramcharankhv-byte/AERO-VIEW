@@ -8,6 +8,7 @@ import HazardRiskLayer from '../layers/HazardRiskLayer';
 import ParcelsLayer from '../layers/ParcelsLayer';
 import BuildingsLayer from '../layers/BuildingsLayer';
 import BuildingsFarLayer from '../layers/BuildingsFarLayer';
+import BuildingEdgeLayer from '../layers/BuildingEdgeLayer';
 import RoadsLayer from '../layers/RoadsLayer';
 import BuildingModelLayer from '../layers/BuildingModelLayer';
 import FloorStackLayer from '../layers/FloorStackLayer';
@@ -47,6 +48,9 @@ export default function Scene({ project }: { project: Project }) {
       <RoadsLayer />
       <BuildingsLayer />
       <BuildingsFarLayer />
+      {/* Accent edge on the selected mass, quiet one on the hovered mass.
+         Three entities, moved rather than rebuilt. */}
+      <BuildingEdgeLayer />
       <BuildingModelLayer />
       <FloorStackLayer />
       <UnitsLayer />

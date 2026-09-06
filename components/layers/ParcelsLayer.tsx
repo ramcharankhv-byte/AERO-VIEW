@@ -2,7 +2,7 @@
 
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
 import { MATERIALS } from '@/lib/cesium/materials';
@@ -43,6 +43,24 @@ export default function ParcelsLayer() {
   const parcels = useDataStore((s) => s.parcels);
   const buildings = useDataStore((s) => s.buildings);
   const showParcels = useViewStore((s) => s.layers.parcels);
+  /**
+   * The live value of showParcels, readable from inside the build.
+   *
+   * A bucket is created ON FIRST USE (lib/cesium/spatial-buckets.ts), which
+   * happens DURING the incremental build -- after the visibility effect below
+   * has already swept the buckets that existed when it ran. A bucket born
+   * after that sweep kept Cesium's default `show: true`, so with the toggle
+   * OFF most of the parcel grid was still drawn: a bright boundary hugging
+   * every footprint in the city view, which is the thin white outline the
+   * buildings appeared to have and never did.
+   *
+   * A ref rather than a dependency: putting showParcels in the build effect's
+   * deps would tear down and rebuild 928 entities every time the checkbox is
+   * clicked. This is the idiom UtilitiesLayer already uses (visibleRef) for
+   * exactly the same reason.
+   */
+  const showRef = useRef(showParcels);
+  showRef.current = showParcels;
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
 
   /** The parcel under the active building, or null. */
@@ -76,6 +94,9 @@ export default function ParcelsLayer() {
 
       const pid = props.id;
       const ds = grid.forPoint(ring[0][0], ring[0][1]);
+      // See showRef: a bucket created mid-build has not been swept by the
+      // visibility effect and would otherwise default to visible.
+      ds.show = showRef.current;
       const entity = ds.entities.add({
         polygon: {
           hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flat)),

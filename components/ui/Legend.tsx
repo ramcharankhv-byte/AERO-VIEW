@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { RISK_HEX, ROAD_COLOR, ROAD_STYLE } from '@/lib/cesium/materials';
+import {
+  RISK_HEX, ROAD_COLOR, ROAD_STYLE, USE_TYPE_LABEL, USE_WALL_HEX,
+} from '@/lib/cesium/materials';
 import {
   UNDERGROUND_LAYERS, categoryOfAssetType, type UtilityCategory,
 } from '@/lib/underground/categories';
@@ -12,7 +14,7 @@ import {
   HAZARD_CAVEAT, HAZARD_DRIVERS, HAZARD_LABEL, RISK_MEANING,
 } from '@/lib/hazard';
 import { RISK_ORDER } from '@/lib/types';
-import type { RiskClass, RoadClass } from '@/lib/types';
+import type { RiskClass, RoadClass, UseType } from '@/lib/types';
 import { ProvenanceBadge } from './Provenance';
 
 /**
@@ -21,6 +23,13 @@ import { ProvenanceBadge } from './Provenance';
  * Not all nine classes: the key exists to explain that line weight encodes
  * hierarchy, which three examples do better than an exhaustive list.
  */
+/**
+ * The order the use-type key is read in: commonest first for this AOI, so the
+ * colour a viewer is looking at is the one at the top. Not alphabetical --
+ * `commercial` would lead a key for a ward that is 99% residential.
+ */
+const USE_ORDER: UseType[] = ['residential', 'commercial', 'institutional', 'industrial'];
+
 const ROAD_KEY: { cls: RoadClass; label: string }[] = [
   { cls: 'primary', label: 'Arterial' },
   { cls: 'tertiary', label: 'Collector' },
@@ -42,6 +51,8 @@ export default function Legend() {
   const roads = useDataStore((s) => s.roads);
   const showRoads = useViewStore((s) => s.layers.roads);
   const buildings = useDataStore((s) => s.buildings);
+  const showBuildings = useViewStore((s) => s.layers.buildings);
+  const buildingStyle = useViewStore((s) => s.buildingStyle);
   const showLulc = useViewStore((s) => s.layers.bhuvanLulc);
   const showFlood = useViewStore((s) => s.layers.bhuvanFlood);
   const showCyclone = useViewStore((s) => s.layers.bhuvanCyclone);
@@ -70,6 +81,12 @@ export default function Legend() {
   }
 
   // Counted, not written down: the mix is a property of the loaded data.
+  const useCounts = new Map<UseType, number>();
+  for (const f of buildings?.features ?? []) {
+    const u = f.properties.use_type;
+    useCounts.set(u, (useCounts.get(u) ?? 0) + 1);
+  }
+
   const provCounts = new Map<string, number>();
   let synthetic = 0;
   for (const f of buildings?.features ?? []) {
@@ -114,6 +131,44 @@ export default function Legend() {
           <p className="pt-1 text-[9px] leading-snug text-[rgb(var(--muted))]">
             Counts are buildings by height source. Only OSM tag and Surveyed plan
             are authoritative.
+          </p>
+        </div>
+      ) : null}
+
+      {/* What the four façade colours mean.
+          Keyed whenever the masses are on screen: at city scale the surface of
+          a building IS its use type, and a four-colour code with no key is a
+          code with no meaning. Suppressed underground (the masses are dimmed
+          to a tenth there and the strata key needs the space) and in Photoreal
+          (Google's mesh is photography, and none of these colours is on it).
+
+          Counted from the loaded data rather than written down, like the
+          provenance key above: a use type that does not occur in this project
+          is not offered as if it did. Every swatch sets its colour INLINE --
+          scripts/shoot.mjs's chrome audit fails a coloured element inside a
+          panel unless it does, which is exactly the data-swatch exemption. */}
+      {showBuildings && !underground && buildingStyle !== 'photoreal' && useCounts.size > 0 ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Building use</div>
+          <div className="mt-1.5 space-y-1">
+            {USE_ORDER.filter((u) => useCounts.has(u)).map((u) => (
+              <div key={u} className="flex items-center gap-2">
+                <span
+                  className="h-2 w-4 shrink-0 rounded-sm ring-1 ring-[rgb(var(--edge-strong))]"
+                  style={{ background: USE_WALL_HEX[u] }}
+                />
+                <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">
+                  {USE_TYPE_LABEL[u]}
+                </span>
+                <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
+                  {useCounts.get(u)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            Façade colour and window pattern are drawn from the use type; they
+            are illustrative, not a photograph of the building.
           </p>
         </div>
       ) : null}

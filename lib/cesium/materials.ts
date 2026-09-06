@@ -190,6 +190,55 @@ const USE_COLOR: Record<UseType, Cesium.Color> = {
 };
 
 /**
+ * The wall tone of each use type's FAÇADE TEXTURE.
+ *
+ * Distinct from USE_VALUE above, which is the flat fill the far tier still
+ * uses. These are the colours actually on screen at city scale: warm plaster,
+ * curtain-wall glass, sandstone, coated metal.
+ *
+ * They were hex literals inside the drawers in lib/cesium/textures.ts, which
+ * meant the one thing in the app that decides what a building LOOKS like was
+ * the one thing not stated here. That mattered the moment a legend had to name
+ * them: a key drawn from a second copy of the numbers is a key that can drift
+ * from the façade it claims to describe. textures.ts imports these now, so
+ * there is one set of four and the legend cannot lie.
+ *
+ * Note these are not in the neutral off-white band the rest of the built form
+ * lives in. That is the point and it predates this file knowing about them:
+ * the texture's warm plaster against its dark window pane is what reads as
+ * "this is wall, that is glass" at a glance, and draining it to greys is
+ * exactly the mistake DL-K.1 rolled back.
+ */
+export const USE_WALL_HEX: Record<UseType, string> = {
+  residential: '#d3c9b6',
+  commercial: '#33445a',
+  institutional: '#d7cbae',
+  industrial: '#a3aab3',
+};
+
+/**
+ * The commercial curtain wall is a gradient, not a flat tone: three stops
+ * across the bay, which is what stops a glass façade reading as flat paint.
+ * USE_WALL_HEX.commercial is the middle stop, and it is the one the legend
+ * swatch shows.
+ */
+export const COMMERCIAL_GLASS_HEX = ['#41556a', USE_WALL_HEX.commercial, '#2a3849'] as const;
+
+/**
+ * How the use types are NAMED, for the legend key.
+ *
+ * `institutional` is the fourth value, not "public" -- the data has schools,
+ * hospitals and government offices under one code, and calling that "public"
+ * would quietly widen it to include things it does not contain.
+ */
+export const USE_TYPE_LABEL: Record<UseType, string> = {
+  residential: 'Residential',
+  commercial: 'Commercial',
+  institutional: 'Institutional',
+  industrial: 'Industrial',
+};
+
+/**
  * Roof palette. All roofs in this AOI are flat slabs. Each tone sits a clear
  * step BELOW its wall tone -- far enough that the top face reads as a separate
  * plane, close enough that it is plainly the same building. With a raking
@@ -227,6 +276,68 @@ export const MATERIALS = {
   /** Cursor is over it. Well above the base band, so it cannot be mistaken
    *  for an unusually pale neighbour. */
   buildingHover: grey(255),
+
+  /**
+   * Tint multiplied over a city-scale wall's window-grid texture.
+   *
+   * WHITE, not the use-type colour: the texture already carries the hue, and a
+   * coloured tint multiplies it away -- a warm tint over warm plaster pushes it
+   * to grey and the windows vanish. That is DL-K.2's finding and it stands.
+   *
+   * What DOES vary per building is VALUE. `jitter` is a deterministic ±8%
+   * seeded from the building id (see BuildingsLayer), so two identical blocks
+   * side by side are not the same block twice. Eight percent is small on
+   * purpose: it has to read as "these were rendered at different times" and
+   * never as "these are different categories", which is a distinction the
+   * legend key beside it is making with hue.
+   *
+   * Clamped at 1.0 -- above it the tint stops multiplying and starts clipping
+   * the texture's highlights to flat white.
+   */
+  cityFacadeTint: (jitter = 1, alpha = CITY_BUILDING_ALPHA) =>
+    grey(Math.round(255 * Math.min(1, jitter)), alpha),
+
+  /**
+   * The edge of the building the user has selected.
+   *
+   * Drawn as a polyline round the roof and down the corners, NOT as
+   * `outline: true` on the extrusion. Two reasons, and the second is the one
+   * that matters: an outlined polygon leaves Cesium's batched static path, and
+   * turning it on for 2,213 extrusions to highlight ONE of them is the whole
+   * layer paying for a single building. The polyline set is drawn once and
+   * repositioned, so the cost is constant.
+   *
+   * White, which is what --accent is throughout the chrome. Amber is not
+   * available here: it already means "the signed-in citizen's own flat"
+   * (unitOwn below), and a second meaning would make the first ambiguous.
+   */
+  buildingSelectedEdge: grey(255, 0.95),
+
+  /**
+   * A dark casing drawn one step wider beneath the selection ring.
+   *
+   * The same device ROAD_CASING uses, for the same reason and it is needed
+   * more here: the roof cap the ring traces is grey(203-221) and under a low
+   * sun it renders close to white, so a white ring on it is invisible exactly
+   * where the user is looking. The casing gives the ring an edge to be seen
+   * against on a pale roof, and costs nothing on a dark one.
+   *
+   * Keeping the accent white and adding a casing -- rather than making the
+   * accent itself a colour -- is what keeps the scene's one accent the same
+   * white as --accent in the chrome, and leaves amber meaning "the citizen's
+   * own flat" and red meaning "conflict", which are the only two hues in this
+   * palette that carry a fact.
+   */
+  buildingSelectedEdgeCasing: grey(8, 0.7),
+
+  /**
+   * The edge of the building under the cursor.
+   *
+   * Deliberately much quieter than the selection. Hover is a question and
+   * selection is an answer; if they read at the same strength then sweeping
+   * the mouse across a block looks like repeatedly selecting things.
+   */
+  buildingHoverEdge: grey(255, 0.4),
 
   /** An above-ground floor slab in the exploded stack. */
   floorSlab: grey(210, 0.34),

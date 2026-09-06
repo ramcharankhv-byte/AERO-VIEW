@@ -1,4 +1,5 @@
 import type { UseType } from '@/lib/types';
+import { COMMERCIAL_GLASS_HEX, USE_WALL_HEX } from './materials';
 
 /**
  * Facade textures for the architectural model.
@@ -157,7 +158,7 @@ function drawResidential(
   tileWM: number, tileHM: number,
 ) {
   // Warm plaster wall.
-  ctx.fillStyle = '#d3c9b6';
+  ctx.fillStyle = USE_WALL_HEX.residential;
   ctx.fillRect(0, 0, w, h);
   grain(ctx, w, h, 0.10);
 
@@ -211,9 +212,9 @@ function drawCommercial(
 
   // Vision glass.
   const glass = ctx.createLinearGradient(0, 0, w * 0.4, h);
-  glass.addColorStop(0, '#41556a');
-  glass.addColorStop(0.45, '#33445a');
-  glass.addColorStop(1, '#2a3849');
+  glass.addColorStop(0, COMMERCIAL_GLASS_HEX[0]);
+  glass.addColorStop(0.45, COMMERCIAL_GLASS_HEX[1]);
+  glass.addColorStop(1, COMMERCIAL_GLASS_HEX[2]);
   ctx.fillStyle = glass;
   ctx.fillRect(0, 0, w, h - spandrelH);
 
@@ -241,7 +242,7 @@ function drawInstitutional(
   _tileWM: number, _tileHM: number,
 ) {
   // Sandstone with coursing.
-  ctx.fillStyle = '#d7cbae';
+  ctx.fillStyle = USE_WALL_HEX.institutional;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = 'rgba(90,78,58,0.08)';
   const course = Math.round(PX_PER_M * 0.4);
@@ -298,7 +299,7 @@ function drawIndustrial(
   // Coated metal cladding. The ribs are a 6% tonal step -- the earlier 0.18 m
   // dark-every-0.36 m stripes at full contrast were the worst offender in the
   // "printed" look.
-  ctx.fillStyle = '#a3aab3';
+  ctx.fillStyle = USE_WALL_HEX.industrial;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = 'rgba(60,66,74,0.10)';
   const ribPitch = Math.round(PX_PER_M * 0.6);
@@ -352,12 +353,7 @@ function drawEntryDoor(
   // doesn't ghost through around the frame. Commercial keeps its curtain
   // glass -- there the "door" is a glazed shopfront gate.
   if (use !== 'commercial') {
-    const wall: Record<string, string> = {
-      residential: '#d3c9b6',
-      institutional: '#d7cbae',
-      industrial: '#a3aab3',
-    };
-    ctx.fillStyle = wall[use] ?? '#d3c9b6';
+    ctx.fillStyle = USE_WALL_HEX[use] ?? USE_WALL_HEX.residential;
     ctx.fillRect(0, 0, w, h);
   }
 
