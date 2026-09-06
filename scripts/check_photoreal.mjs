@@ -14,6 +14,7 @@
  * Usage: node scripts/check_photoreal.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
+import { chromeArgs, reportBackend } from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -113,17 +114,12 @@ async function clickButton(page, label) {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--window-size=1680,950',
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--hide-scrollbars',
-  ],
+  args: chromeArgs({ window: '1680,950', noSandbox: false }),
   defaultViewport: { width: 1680, height: 950 },
 });
 
 const page = await browser.newPage();
+await reportBackend(page);
 
 const googleRequests = [];
 page.on('request', (r) => {

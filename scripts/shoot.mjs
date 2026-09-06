@@ -46,6 +46,7 @@
  *   node scripts/shoot.mjs --gallery             # audit / instead of a viewer
  */
 import puppeteer from 'puppeteer-core';
+import { chromeArgs, reportBackend } from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -121,16 +122,13 @@ function isDangerRed(r, g, b) {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--hide-scrollbars',
-    '--no-sandbox',
-  ],
+  args: chromeArgs(),
 });
 
 let failures = 0;
+// Reported once, from the first page: the backend is a property of the browser,
+// not of the viewport being shot.
+let backendReported = false;
 try {
   for (const size of sizes) {
     const label = `${size.width}x${size.height}`;
@@ -138,6 +136,7 @@ try {
     const page = await browser.newPage();
     await applySession(page, URL);
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
+    if (!backendReported) { await reportBackend(page); backendReported = true; }
 
     const errors = [];
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
