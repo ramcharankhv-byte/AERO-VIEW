@@ -192,6 +192,78 @@ export default function FloorStackLayer() {
       });
       tagEntity(entity, { kind: 'floor', id: fl.id, level });
 
+      // ---- context plate ----------------------------------------------------
+      /**
+       * The levels the user is NOT on, put back.
+       *
+       * Isolating a level used to hide the whole rest of the stack, so the
+       * chosen floor floated with nothing to say WHICH floor it was -- level 2
+       * of a five-storey block and level 9 of a tower looked identical. This
+       * draws the levels BELOW it as thin plates at their own heights, so the
+       * isolated plate visibly sits on a stack rather than on the ground.
+       *
+       * BELOW ONLY, and the levels above are deliberately not drawn. Two
+       * reasons, and the second is a hard limit rather than a preference:
+       *
+       *   - The camera in floor mode looks DOWN at the plate. Every level
+       *     above the isolated one is therefore between the camera and the
+       *     thing the user opened this view to see, and a stack of them --
+       *     even at a tenth alpha -- is a veil over it. The levels below
+       *     occlude nothing.
+       *   - Picker drills a bounded SIX deep (DRILL_LIMIT), a number already
+       *     raised from four to clear the height shell and the base plate in
+       *     front of every flat. Each level above the isolated one would add
+       *     another translucent surface to that queue. On this five-storey
+       *     block that still fits; on a 28-storey tower in Banjara Hills,
+       *     isolating level 2 would put 26 surfaces in front of every flat and
+       *     no flat on the floor could be clicked at all. Drawing something
+       *     that breaks selection on tall buildings is not a trade worth
+       *     making for context the level ladder already gives in words.
+       *
+       * DELIBERATELY UNTAGGED, and that is the load-bearing detail. Picker
+       * resolves a pick through the entity's `.tag`, so an untagged entity is
+       * invisible to it: these plates can sit between the camera and a flat
+       * without ever stealing the click, and verify_ui's unit-centroid pick
+       * (which projects a unit polygon to canvas space and asserts the panel
+       * shows a UNIT) keeps landing where it did. They are context, not
+       * targets, and the code says so by giving them no identity.
+       *
+       * A SEPARATE entity rather than reusing the slab above, because the slab
+       * is tagged and has to stay hidden here -- one entity cannot be both the
+       * clickable floor and the un-clickable ghost of it.
+       */
+      const ctx = sectionedRing(ring, readSection);
+      ds.entities.add({
+        polygon: {
+          hierarchy: ctx.hierarchy,
+          height: new Cesium.CallbackProperty(() => z0 + lift(), false),
+          extrudedHeight: new Cesium.CallbackProperty(
+            () => z0 + FLOOR_VIEW.PLATE_THICKNESS_M + lift(), false,
+          ),
+          material: new Cesium.ColorMaterialProperty(
+            new Cesium.CallbackProperty(() => {
+              // Always the "below" tone: the show callback lets nothing else
+              // through. The flag stays in the signature because the two
+              // alphas are a pair and splitting them across files would hide
+              // that only one of them is currently reachable.
+              return MATERIALS.floorContext(false);
+            }, false),
+          ),
+          outline: false,
+          shadows: Cesium.ShadowMode.DISABLED,
+          show: new Cesium.CallbackProperty(() => {
+            const s = stateRef.current;
+            if (!s.visible) return false;
+            // Above-grade detail is what underground mode exists to remove.
+            if (s.underground || isBasement) return false;
+            // Only meaningful as context FOR an isolated level. With none
+            // isolated (a whole-building section) every slab already draws.
+            if (s.isolated === null || level >= s.isolated) return false;
+            return ctx.survives();
+          }, false),
+        },
+      });
+
       // ---- height envelope --------------------------------------------------
       // Only ever drawn for the isolated level: at city or building scale a
       // shell per storey is a stack of fog, and the slabs already carry the

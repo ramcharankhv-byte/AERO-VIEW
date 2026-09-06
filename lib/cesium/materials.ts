@@ -151,6 +151,29 @@ export const FLOOR_VIEW = {
   /** Opacity of the units NOT selected. Dimmed, never hidden. */
   UNIT_DIM_ALPHA: 0.45,
 
+  /**
+   * Alpha of the levels that are NOT isolated, drawn as context around the one
+   * that is.
+   *
+   * Isolating a level used to HIDE every other level, so the chosen floor
+   * floated in space with nothing to say which floor it was. BELOW puts the
+   * stack underneath it back: the levels beneath occlude nothing (the camera
+   * is above them) and they are what makes the isolated plate read as sitting
+   * at a HEIGHT rather than on the ground.
+   *
+   * ABOVE is currently unreachable, and the number is kept here with its
+   * reasoning rather than deleted, because the decision is worth being able to
+   * find. The levels over the user's head sit between the camera and the floor
+   * they opened the view to inspect, and -- decisively -- each one adds a
+   * translucent surface to Picker's SIX-deep drill (DRILL_LIMIT), which is
+   * already spending slots on the height shell and the base plate. On a
+   * 28-storey tower, isolating level 2 would put 26 surfaces in front of every
+   * flat and nothing on the floor could be clicked. See FloorStackLayer's
+   * context-plate block.
+   */
+  CONTEXT_ABOVE_ALPHA: 0.12,
+  CONTEXT_BELOW_ALPHA: 0.6,
+
   /** Unit code labels are decluttered beyond this camera distance, metres. */
   LABEL_MAX_DISTANCE_M: 250,
 
@@ -339,15 +362,44 @@ export const MATERIALS = {
    */
   buildingHoverEdge: grey(255, 0.4),
 
-  /** An above-ground floor slab in the exploded stack. */
-  floorSlab: grey(210, 0.34),
+  /**
+   * The floor-view surfaces are GLASS, not white ledges.
+   *
+   * A deliberate, narrow exception to the neutral-off-white rule at the top of
+   * this file, and the only one in the built form. Every surface in the floor
+   * view is translucent and they are stacked, so a viewer is nearly always
+   * looking through two or three of them at once; in neutral grey those
+   * overlaps compound into a white haze and the stack loses its depth. A few
+   * points of cool cast give each layer of the stack a hue to be told apart by
+   * as well as a value, which is the same value-AND-chroma argument the ground
+   * treatment rests on, applied one level down.
+   *
+   * The cast is small on purpose -- a dozen values off neutral. It has to read
+   * as "this is glass" and never as "this is a category", because a category
+   * is what the unit tints below are for.
+   */
+  floorSlab: rgba(198, 212, 224, 0.34),
+
+  /** The levels around the isolated one. See FLOOR_VIEW.CONTEXT_*_ALPHA. */
+  floorContext: (above: boolean) =>
+    rgba(198, 212, 224, above
+      ? FLOOR_VIEW.CONTEXT_ABOVE_ALPHA
+      : FLOOR_VIEW.CONTEXT_BELOW_ALPHA),
 
   /**
    * The isolated level's base plate. Solid enough to read as a floor the flats
    * stand on, and it is the surface a click resolves to as "the floor" when no
    * unit is under the cursor -- corridors, lobbies, the level's own space.
    */
-  floorPlate: grey(198, 0.82),
+  /**
+   * The isolated level's base plate: the floor the flats stand on.
+   *
+   * The one surface in the floor view kept close to neutral and well up the
+   * value scale. It is the plane the whole view is ABOUT, it is what a click
+   * resolves to as "the floor", and every unit tint has to read against it --
+   * so it is the reference the glass around it is cool relative to.
+   */
+  floorPlate: grey(206, 0.86),
 
   /**
    * The isolated level's height envelope, drawn as a full-Z-extent shell so the
@@ -358,8 +410,8 @@ export const MATERIALS = {
    * inside are plainly visible, and Picker's drill-to-unit rule keeps the shell
    * from swallowing the pick ray as well.
    */
-  floorShell: grey(230, FLOOR_VIEW.SHELL_ALPHA),
-  floorShellOutline: grey(235, 0.55),
+  floorShell: rgba(214, 228, 240, FLOOR_VIEW.SHELL_ALPHA),
+  floorShellOutline: rgba(220, 232, 242, 0.55),
 
   /** Edge of the isolated floor: pure white, so the highlight has a crisp rim. */
   floorActiveOutline: grey(255),
@@ -388,10 +440,18 @@ export const MATERIALS = {
    * visual answer. The geometry now separates them; this separates them at a
    * glance, before the labels are legible.
    *
+   * SIX, not four. The bank cycles by slot, so a plate with more flats than
+   * tints gives two of them the same colour -- and with four, the pair that
+   * collided were slots 0 and 4, which on a typical plate are not adjacent but
+   * are frequently in the same line of sight. Six pushes the first repeat past
+   * the flat count of nearly every plate in both projects. It is not a fix: a
+   * cycle always repeats eventually. It moves the repeat to where it stops
+   * mattering.
+   *
    * Deliberately desaturated to roughly a tenth. The palette elsewhere spends
    * saturation on MEANING -- use type on a facade, asset type on a utility,
    * red on a conflict -- and a flat's slot means nothing beyond "not the one
-   * next to it". These have to be four things you can tell apart while still
+   * next to it". These have to be six things you can tell apart while still
    * reading as the same kind of thing, so they differ mostly in hue at a
    * near-constant value, and none of them competes with the white a selected
    * flat turns.
@@ -402,6 +462,8 @@ export const MATERIALS = {
       Cesium.Color.fromBytes(186, 200, 205),  // cool slate
       Cesium.Color.fromBytes(196, 205, 188),  // pale sage
       Cesium.Color.fromBytes(203, 190, 202),  // dusty mauve
+      Cesium.Color.fromBytes(188, 196, 210),  // pale blue
+      Cesium.Color.fromBytes(208, 194, 184),  // warm clay
     ];
     return tints[((slot % tints.length) + tints.length) % tints.length].withAlpha(alpha);
   },
