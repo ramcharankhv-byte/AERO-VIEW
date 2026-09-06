@@ -12,7 +12,9 @@
  * Usage: node scripts/check_basemap.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
-import { chromeArgs, reportBackend } from './_chrome.mjs';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -132,7 +134,7 @@ const browser = await puppeteer.launch({
   // thread for long stretches there while terrain and the first tiles come in,
   // which outlives the 180 s default and fails CDP calls that are actually
   // fine. On the GPU path it is simply never reached.
-  protocolTimeout: 900000,
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
   args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
@@ -140,6 +142,7 @@ const browser = await puppeteer.launch({
 try {
   const page = await browser.newPage();
   await reportBackend(page);
+  await applySession(page, URL);
   const hosts = new Map();
   const warnings = [];
   page.on('request', (r) => {

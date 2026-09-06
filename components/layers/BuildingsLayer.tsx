@@ -12,7 +12,7 @@ import { rngFor } from '@/lib/mock/prng';
 import { tagEntity } from '@/lib/cesium/tag';
 import { windowGrid } from '@/lib/cesium/textures';
 import { toSceneZ } from '@/lib/cesium/terrain';
-import { flatLonLat } from '@/lib/geo';
+import { flatLonLat, haversineM } from '@/lib/geo';
 import { mark } from '@/lib/boot-marks';
 import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { createBucketGrid, extentOf } from '@/lib/cesium/spatial-buckets';
@@ -249,17 +249,61 @@ export default function BuildingsLayer() {
       // `fade` is clamped rather than multiplied: it is an absolute alpha for
       // the buildings you are not inspecting, so clamping keeps "faded" below
       // "at rest" without ever multiplying two transparencies into nothing.
+      /**
+       * How many times the tile repeats around the wall and up it.
+       *
+       * WITHOUT THIS the texture was never tiled at all. Cesium maps an image
+       * material across a polygon's UVs once by default, so a single
+       * 3 m x 3.2 m tile -- one bay, one storey -- was being stretched over
+       * the ENTIRE facade of every building: one storey-high window blown up
+       * to the full height of a nine-storey block. That is why the city read
+       * as pale smeared masses rather than as windowed buildings, and it is
+       * what check_photoreal's "facade texture repeats once per storey"
+       * assertion has been reporting since the texture landed.
+       *
+       * X is the perimeter divided by the 3 m bay: the wall UV runs around the
+       * footprint, so this puts one bay every three metres whatever the
+       * building's plan. Y is the storey count, which is the whole point --
+       * the window rows then EQUAL the storeys, and a nine-storey block shows
+       * nine rows rather than a taller version of a one-storey block.
+       *
+       * Rounded to whole tiles so the pattern closes on itself instead of
+       * cutting a window in half at the seam, and floored at 1 so a single-
+       * storey shed still gets one row rather than none.
+       *
+       * A ConstantProperty by construction (a plain Cartesian2): this is
+       * static geometry and must stay on Cesium's static updater path.
+       */
+      let perimeterM = 0;
+      for (let i = 0; i < ring.length - 1; i += 1) {
+        perimeterM += haversineM(
+          { lon: ring[i][0], lat: ring[i][1] },
+          { lon: ring[i + 1][0], lat: ring[i + 1][1] },
+        );
+      }
+      const storeys = Math.max(1, props.floors || Math.round(props.height_m / 3.2));
+      const repeat = new Cesium.Cartesian2(
+        Math.max(1, Math.round(perimeterM / 3)),
+        Math.max(1, storeys),
+      );
+
       const wallMaterial = new Cesium.ImageMaterialProperty({
         image: windowGrid(use, 3, 3.2),
+        repeat,
         color: new Cesium.CallbackProperty(() => {
           const s = stateRef.current;
           // Photoreal: present for picking, invisible on screen. Checked first
           // so neither hover nor fade can bring the ghost back into view.
           if (s.style === 'photoreal') return MATERIALS.buildingGhost;
           if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
-          if (s.activeId === null || s.activeId === id) {
-            return MATERIALS.cityFacadeTint(jitter, CITY_BUILDING_ALPHA);
-          }
+          // Clamped by `fade` on BOTH branches, and that is the fix for a
+          // real defect: this branch used to return the full resting alpha,
+          // so with NO building selected the eased fade had nothing to act on
+          // -- and underground mode drives that fade for every building at
+          // once, selection or not. Entering underground from the city view
+          // therefore left 385 near-solid masses standing over the buried
+          // network the mode exists to show. At rest `fade` is 1 and the
+          // clamp is a no-op, so the resting look is unchanged.
           return MATERIALS.cityFacadeTint(
             jitter, Math.min(CITY_BUILDING_ALPHA, s.fade),
           );
@@ -310,10 +354,10 @@ export default function BuildingsLayer() {
               const s = stateRef.current;
               if (s.style === 'photoreal') return MATERIALS.buildingGhost;
               if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
-              if (s.activeId === null || s.activeId === id) {
-                return MATERIALS.buildingRoofCap(use, CITY_BUILDING_ALPHA);
-              }
-              return MATERIALS.buildingRoofCap(use, Math.min(CITY_BUILDING_ALPHA, s.fade));
+              // Clamped on both branches, for the reason the wall states.
+              return MATERIALS.buildingRoofCap(
+                use, Math.min(CITY_BUILDING_ALPHA, s.fade),
+              );
             }, false),
           ),
           outline: false,

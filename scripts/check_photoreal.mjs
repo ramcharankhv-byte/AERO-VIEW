@@ -14,7 +14,9 @@
  * Usage: node scripts/check_photoreal.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
-import { chromeArgs, reportBackend } from './_chrome.mjs';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -84,11 +86,22 @@ const sceneState = (page) =>
         const c = e.polygon.material.color.getValue(v.clock.currentTime);
         return Math.round(c.alpha * 1000) / 1000;
       })(),
-      // Proves the facade texture is on, and repeats once per storey.
+      // Proves the facade texture is on AND tiled -- see the assertion below
+      // for why the tile count is read alongside the wall it is tiling.
       repeat: (() => {
         const e = firstBuildingEntity(v);
-        const r = e?.polygon?.material?.repeat?.getValue(v.clock.currentTime);
-        return r ? { x: r.x, y: r.y } : null;
+        const t = v.clock.currentTime;
+        const r = e?.polygon?.material?.repeat?.getValue(t);
+        if (!r) return null;
+        const base = e.polygon.height?.getValue(t);
+        const top = e.polygon.extrudedHeight?.getValue(t);
+        return {
+          x: r.x,
+          y: r.y,
+          wallHeightM: typeof base === 'number' && typeof top === 'number'
+            ? top - base
+            : null,
+        };
       })(),
     };
   });
@@ -114,12 +127,14 @@ async function clickButton(page, label) {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
   args: chromeArgs({ window: '1680,950', noSandbox: false }),
   defaultViewport: { width: 1680, height: 950 },
 });
 
 const page = await browser.newPage();
 await reportBackend(page);
+await applySession(page, APP_URL);
 
 const googleRequests = [];
 page.on('request', (r) => {
@@ -155,10 +170,34 @@ try {
     s0.terrain !== 'EllipsoidTerrainProvider',
     s0.terrain,
   );
+  /**
+   * The facade texture is TILED, one bay per 3 m around and one row per storey up.
+   *
+   * This assertion used to read `repeat.x === 1 && repeat.y >= 1`, and it could
+   * never pass: BuildingsLayer set no `repeat` at all, so the property was
+   * undefined and the probe returned null. The effect on screen was a single
+   * 3 m x 3.2 m tile -- one bay, one storey -- stretched over the whole facade
+   * of every building, which is why the city read as pale smeared masses.
+   *
+   * `x === 1` was the wrong shape to ask for even once repeat existed: a
+   * polygon's wall UV runs around the FOOTPRINT, so x is the bay count for the
+   * perimeter and is 1 only on a building three metres around. What the check
+   * is really for is in its name -- one window row per storey -- so it now
+   * asserts that directly, against the height of the very wall being tiled.
+   */
+  const storeysFromWall = s0.repeat && s0.repeat.wallHeightM !== null
+    ? Math.max(1, Math.round(s0.repeat.wallHeightM / 3.2))
+    : null;
   check(
     'facade texture repeats once per storey',
-    s0.repeat !== null && s0.repeat.x === 1 && s0.repeat.y >= 1,
-    JSON.stringify(s0.repeat),
+    s0.repeat !== null
+      && Number.isInteger(s0.repeat.x) && s0.repeat.x >= 1
+      && Number.isInteger(s0.repeat.y) && s0.repeat.y >= 1
+      && storeysFromWall !== null
+      // +/-1: the layer prefers the recorded floor count and falls back to
+      // height/3.2, and the two can disagree by a storey on a rounded height.
+      && Math.abs(s0.repeat.y - storeysFromWall) <= 1,
+    `${JSON.stringify(s0.repeat)} vs ~${storeysFromWall} storeys from the wall`,
   );
   check(
     'schematic extrusions are visible',

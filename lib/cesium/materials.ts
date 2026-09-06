@@ -659,6 +659,40 @@ export const UTILITY_COLOR: Record<UtilityCategory, Cesium.Color> =
     UNDERGROUND_LAYERS.map((l) => [l.key, Cesium.Color.fromCssColorString(l.colour)]),
   ) as Record<UtilityCategory, Cesium.Color>;
 
+/**
+ * The colour a buried tube is actually DRAWN in.
+ *
+ * A lifted version of UTILITY_COLOR, and the lift is standing in for an
+ * emissive term this renderer does not offer. A Cesium entity's
+ * `polylineVolume` / `cylinder` takes a MaterialProperty, and none of the
+ * built-in materials has an emissive channel -- there is no "this surface
+ * gives off light" to set. PolylineGlowMaterialProperty exists but applies to
+ * `polyline`, not to a swept volume, and adding a glow polyline alongside each
+ * tube would double an entity count that reaches 1,214 runs in Banjara Hills
+ * for a highlight.
+ *
+ * So the tube is lit by being brighter. Underground is the one view with no
+ * sun in it -- the globe is translucent, the buildings are at a tenth, and the
+ * ground is nearly black -- and against that a tube at its legend value reads
+ * as a dark line in a dark room. Mixing 22% toward white keeps the hue exactly
+ * (the hue is the encoding, and the legend swatch beside it is the untouched
+ * UTILITY_COLOR) while lifting the value to where the network reads as the
+ * thing emitting in the scene rather than the thing hiding in it.
+ *
+ * 0.9 alpha, unchanged: several networks cross in one view and the one behind
+ * has to stay legible through the one in front.
+ */
+const TUBE_LIFT = 0.22;
+
+export const UTILITY_TUBE_COLOR: Record<UtilityCategory, Cesium.Color> =
+  Object.fromEntries(
+    (Object.keys(UTILITY_COLOR) as UtilityCategory[]).map((k) => {
+      const c = UTILITY_COLOR[k];
+      const lift = (v: number) => v + (1 - v) * TUBE_LIFT;
+      return [k, new Cesium.Color(lift(c.red), lift(c.green), lift(c.blue), 0.9)];
+    }),
+  ) as Record<UtilityCategory, Cesium.Color>;
+
 /** The network's name, for the layer panel and the legend. */
 export const UTILITY_LABEL: Record<UtilityCategory, string> =
   Object.fromEntries(

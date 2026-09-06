@@ -10,7 +10,9 @@
  * Usage: node scripts/verify_ui.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
-import { chromeArgs, reportBackend } from './_chrome.mjs';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -25,24 +27,6 @@ const OUT = process.argv[2] ?? path.join(process.cwd(), 'docs', 'shots');
  */
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 
-/**
- * A session for the run. The viewer and the gallery redirect an anonymous
- * browser to /login, and this harness has no login step, so an acceptance run
- * hands it a signed `ulpin_session` cookie instead:
- *
- *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
- *
- * Unset, the page is loaded anonymously exactly as before.
- */
-async function applySession(page, url) {
-  const value = process.env.ULPIN_SESSION_COOKIE;
-  if (!value) return;
-  const u = new globalThis.URL(url);
-  await page.setCookie({
-    name: 'ulpin_session', value, domain: u.hostname, path: '/',
-    httpOnly: true, sameSite: 'Lax',
-  });
-}
 const CHROME =
   process.env.CHROME_PATH ??
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -99,6 +83,7 @@ function check(label, ok, detail = '') {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
   args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });

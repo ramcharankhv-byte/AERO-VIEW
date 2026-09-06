@@ -13,7 +13,9 @@
  * Usage: node scripts/check_roads.mjs
  */
 import puppeteer from 'puppeteer-core';
-import { chromeArgs, reportBackend } from './_chrome.mjs';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -51,6 +53,7 @@ const panelText = (page) =>
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
   args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
@@ -58,6 +61,7 @@ const browser = await puppeteer.launch({
 try {
   const page = await browser.newPage();
   await reportBackend(page);
+  await applySession(page, URL);
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));

@@ -5,7 +5,9 @@ import * as Cesium from 'cesium';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { MATERIALS, UTILITY_COLOR, UTILITY_SELECTED, tubeShape } from '@/lib/cesium/materials';
+import {
+  MATERIALS, UTILITY_SELECTED, UTILITY_TUBE_COLOR, tubeShape,
+} from '@/lib/cesium/materials';
 import { tagEntity } from '@/lib/cesium/tag';
 import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { createBucketGrid, extentOf, type BucketGrid } from '@/lib/cesium/spatial-buckets';
@@ -219,7 +221,7 @@ function CategoryRuns({
     // One material for the whole category rather than one per run: 400 runs
     // that share a colour should share the object that says so.
     const material = new Cesium.ColorMaterialProperty(
-      UTILITY_COLOR[category].withAlpha(0.9),
+      UTILITY_TUBE_COLOR[category],
     );
 
     const addRun = (run: DisplayRun) => {

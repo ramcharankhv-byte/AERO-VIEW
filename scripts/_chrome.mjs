@@ -28,6 +28,21 @@
  * get to look at.
  */
 
+/**
+ * How long a single CDP call may take before puppeteer gives up.
+ *
+ * Puppeteer's default is 180 s, and several checks ask page.waitForFunction to
+ * wait 240-300 s for Cesium to report its building count. Those two numbers
+ * disagree: the transport abandons the call at 180 s and the script reports
+ * "Waiting failed / Runtime.callFunctionOn timed out" long before its own
+ * deadline. check_basemap.mjs already carried a local workaround; this is that
+ * workaround, stated once, so a script's stated patience is the patience it
+ * actually gets.
+ *
+ * It is a ceiling, not a delay. A run that is healthy never reaches it.
+ */
+export const PROTOCOL_TIMEOUT_MS = 900000;
+
 /** Windows binds ANGLE to D3D11; everything else to desktop GL. */
 const GPU_BACKEND = process.platform === 'win32' ? 'd3d11' : 'gl';
 
@@ -95,4 +110,32 @@ export async function reportBackend(page) {
     console.log('  NOTE: fell back to software rendering; lighting-dependent frames are not representative');
   }
   return { renderer, software };
+}
+
+/**
+ * Hand the page a signed session, if the run was given one.
+ *
+ * The viewer and the gallery redirect an anonymous browser to /login, and this
+ * harness has no login step, so an acceptance run passes a real cookie:
+ *
+ *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
+ *
+ * verify_ui and shoot already did this privately. check_roads, check_edit,
+ * check_photoreal, check_ion and check_basemap did not -- so against a server
+ * with auth enforced they navigated to the viewer, were redirected to /login,
+ * and then waited out their full readiness timeout for a status bar that was
+ * never going to render. The failure surfaced as "Waiting failed: 300000ms
+ * exceeded" pointing at the wait, which is the symptom and not the cause.
+ * Sharing one implementation is what stops the next script forgetting.
+ *
+ * Unset, the page loads anonymously exactly as before.
+ */
+export async function applySession(page, url) {
+  const value = process.env.ULPIN_SESSION_COOKIE;
+  if (!value) return;
+  const u = new globalThis.URL(url);
+  await page.setCookie({
+    name: 'ulpin_session', value, domain: u.hostname, path: '/',
+    httpOnly: true, sameSite: 'Lax',
+  });
 }
