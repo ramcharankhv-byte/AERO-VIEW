@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
 import {
-  RISK_HEX, ROAD_COLOR, ROAD_STYLE, USE_TYPE_LABEL, USE_WALL_HEX,
+  MATERIALS, RISK_HEX, ROAD_COLOR, ROAD_STYLE, SURVEY_PARCEL_VIEW,
+  USE_TYPE_LABEL, USE_WALL_HEX,
 } from '@/lib/cesium/materials';
 import {
   UNDERGROUND_LAYERS, categoryOfAssetType, type UtilityCategory,
@@ -72,6 +73,15 @@ export default function Legend() {
   const [override, setOverride] = useState<boolean | null>(null);
   const provenanceOpen = override ?? mode === 'city';
 
+  const gis2d = useViewStore((s) => s.gis2d);
+  const surveyParcels = useDataStore((s) => s.surveyParcels);
+  // Read from the data, not assumed. Every row this repository ships is
+  // derived; the day scripts/import_survey_parcels.py loads a real register,
+  // this key has to stop calling it derived without anyone remembering to
+  // come back and edit it.
+  const surveyProvenance = (surveyParcels?.features[0]?.properties as
+    { provenance?: string } | undefined)?.provenance ?? 'derived';
+
   // Counted per DISPLAY category, not per stored asset_type, so the section
   // below and the underground panel agree about what "Electrical" contains.
   const counts = new Map<UtilityCategory, number>();
@@ -131,6 +141,45 @@ export default function Legend() {
           <p className="pt-1 text-[9px] leading-snug text-[rgb(var(--muted))]">
             Counts are buildings by height source. Only OSM tag and Surveyed plan
             are authoritative.
+          </p>
+        </div>
+      ) : null}
+
+      {/* The 2D cadastral layer's one line weight, and what it is NOT.
+          Present only while that view is on, like every other section here.
+          The swatch is inline-styled, which is the data-swatch exemption
+          scripts/shoot.mjs's chrome audit relies on -- though this one is grey
+          either way, because the parcel layer carries no hue to key. */}
+      {gis2d ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Cadastral parcels</div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="flex h-2 w-4 shrink-0 items-center">
+              <span
+                className="w-full rounded-full"
+                style={{
+                  height: `${SURVEY_PARCEL_VIEW.OUTLINE_PX}px`,
+                  background: MATERIALS.surveyParcelOutline.toCssColorString(),
+                }}
+              />
+            </span>
+            <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">
+              {surveyProvenance === 'survey_dept'
+                ? 'Survey parcel boundary'
+                : 'Derived parcel boundary'}
+            </span>
+            <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
+              {surveyParcels?.features.length ?? 0}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {surveyProvenance === 'survey_dept'
+              ? 'Boundaries as supplied by the issuing survey department; the '
+                + 'panel names the source and its date.'
+              : 'Unofficial. Voronoi plots around clustered OpenStreetMap '
+                + 'footprints, clipped to road corridors. The number in each '
+                + 'plot is a per-project ordinal, NOT a survey number, a TS '
+                + 'number or a Bhu-Aadhaar.'}
           </p>
         </div>
       ) : null}

@@ -7,8 +7,8 @@ import { SUN_DEFAULT_HOUR, SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type { BuildingEdit, FieldError } from './data/building-schema';
 import type {
   BuildingDetail, BuildingStyle, ConflictRow, EnrichedBuilding, GeoFC, LayerKey,
-  Mode, ParcelInfo, Project, RoadProps, SliceState, SurveyParcelProps,
-  UtilityProps,
+  Mode, ParcelInfo, Project, RoadProps, SliceState, SurveyParcelDetail,
+  SurveyParcelProps, UtilityProps,
 } from './types';
 import { fetchLulcAt, type LulcResult } from './bhuvan';
 import type { SiteIndexEntry, SiteSpec } from './infra/types';
@@ -695,6 +695,20 @@ export interface DataState {
   surveyParcels: GeoFC<SurveyParcelProps> | null;
   /** True while that one fetch is in flight, so it is not issued twice. */
   pendingSurveyParcels: boolean;
+  /**
+   * The parcel document the panel is showing: parcel -> buildings -> floors
+   * -> units.
+   *
+   * ONE, not a cache keyed by id, unlike `detail` next to it. The document
+   * contains a full building record per building on the plot, so a cache of
+   * them would duplicate -- several times over, for a parcel with four
+   * buildings -- the documents `detail` is already holding under an LRU cap.
+   * The panel shows one parcel at a time and the server side is cached
+   * anyway, so the second copy would buy a re-click and cost a multiple of the
+   * largest thing in this store.
+   */
+  surveyParcelDetail: { id: number; doc: SurveyParcelDetail } | null;
+  pendingSurveyParcelDetail: number | null;
   utilities: GeoFC<UtilityProps> | null;
   roads: GeoFC<RoadProps> | null;
   conflicts: ConflictRow[];
@@ -753,6 +767,8 @@ export interface DataState {
   setParcels: (fc: GeoFC<ParcelInfo>) => void;
   setSurveyParcels: (fc: GeoFC<SurveyParcelProps> | null) => void;
   beginSurveyParcels: () => void;
+  setSurveyParcelDetail: (id: number, doc: SurveyParcelDetail | null) => void;
+  beginSurveyParcelDetail: (id: number) => void;
   setUtilities: (fc: GeoFC<UtilityProps>) => void;
   setRoads: (fc: GeoFC<RoadProps>) => void;
   setConflicts: (rows: ConflictRow[]) => void;
@@ -791,6 +807,8 @@ export const useDataStore = create<DataState>((set) => ({
   parcels: null,
   surveyParcels: null,
   pendingSurveyParcels: false,
+  surveyParcelDetail: null,
+  pendingSurveyParcelDetail: null,
   utilities: null,
   roads: null,
   conflicts: [],
@@ -811,6 +829,16 @@ export const useDataStore = create<DataState>((set) => ({
   setParcels: (fc) => set({ parcels: fc }),
   setSurveyParcels: (fc) => set({ surveyParcels: fc, pendingSurveyParcels: false }),
   beginSurveyParcels: () => set({ pendingSurveyParcels: true }),
+  setSurveyParcelDetail: (id, doc) =>
+    set((st) => ({
+      surveyParcelDetail: doc ? { id, doc } : null,
+      // Only clear the flag if THIS request is the one in flight. A slow
+      // fetch for a parcel the user has already clicked past must not
+      // announce that the newer one has finished.
+      pendingSurveyParcelDetail:
+        st.pendingSurveyParcelDetail === id ? null : st.pendingSurveyParcelDetail,
+    })),
+  beginSurveyParcelDetail: (id) => set({ pendingSurveyParcelDetail: id }),
   setUtilities: (fc) => set({ utilities: fc }),
   setRoads: (fc) => set({ roads: fc }),
   setConflicts: (rows) => set({ conflicts: rows }),
@@ -1334,6 +1362,59 @@ export function useEnsureSurveyParcels(
   }, [enabled, slug]);
 
   return fc;
+}
+
+/**
+ * The parcel document for one survey parcel: parcel -> buildings -> floors ->
+ * units, assembled server-side from the same cached building documents
+ * /building/:id serves.
+ *
+ * Returns `{ doc, pending }` rather than a bare document, because the panel
+ * has three states to render and two of them are not "no data": a plot with no
+ * buildings on it is a real answer and must not shimmer forever.
+ */
+export function useEnsureSurveyParcelDetail(
+  id: number | null,
+): { doc: SurveyParcelDetail | null; pending: boolean } {
+  const entry = useDataStore((s) => s.surveyParcelDetail);
+  const pending = useDataStore((s) => s.pendingSurveyParcelDetail === id);
+  const slug = useViewStore((s) => s.projectSlug);
+
+  useEffect(() => {
+    if (id === null || slug === null) return undefined;
+    const st = useDataStore.getState();
+    if (st.surveyParcelDetail?.id === id) return undefined;
+    if (st.pendingSurveyParcelDetail === id) return undefined;
+    st.beginSurveyParcelDetail(id);
+
+    const abort = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/p/${encodeURIComponent(slug)}/survey-parcel/${id}`,
+          { signal: abort.signal },
+        );
+        useDataStore.getState().setSurveyParcelDetail(
+          id, res.ok ? ((await res.json()) as SurveyParcelDetail) : null,
+        );
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        useDataStore.getState().setSurveyParcelDetail(id, null);
+      }
+    })();
+    return () => {
+      abort.abort();
+      // Same reason as useEnsureSurveyParcels: a flag nothing clears looks
+      // exactly like a parcel that is still loading, forever.
+      useDataStore.setState((st2) => (
+        st2.pendingSurveyParcelDetail === id
+          ? { pendingSurveyParcelDetail: null }
+          : {}
+      ));
+    };
+  }, [id, slug]);
+
+  return { doc: entry && entry.id === id ? entry.doc : null, pending };
 }
 
 export function useEnsureSite(id: string | null): SiteSpec | null {

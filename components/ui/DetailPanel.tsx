@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings, useEnsureLulc, useLulcPending, useEnsureSite } from '@/lib/store';
+import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings, useEnsureLulc, useLulcPending, useEnsureSite, useEnsureSurveyParcelDetail } from '@/lib/store';
 import { componentForRef } from '@/components/layers/InfraSiteLayer';
 import { LULC_SOURCE_SHORT, lulcClassLabel } from '@/lib/bhuvan';
 import { RISK_HEX } from '@/lib/cesium/materials';
@@ -14,19 +14,23 @@ import {
   UNDERGROUND_BY_KEY, categoryOfAssetType,
 } from '@/lib/underground/categories';
 import { resolveCategoryDepths } from '@/lib/underground/layout';
-import { levelLabel, parentOf } from '@/lib/ulpin';
+import { codesOf, generate, levelLabel, parentOf } from '@/lib/ulpin';
 import { orientedDims, ringCentroid } from '@/lib/geo';
-import type { Provenance, RoadProps, UtilityProps } from '@/lib/types';
+import type {
+  Provenance, RoadProps, SurveyParcelDetail, SurveyParcelProps, UtilityProps,
+} from '@/lib/types';
 import UlpinCard from './UlpinCard';
 import CountUp from './CountUp';
 import { DERIVED_PARCEL_NOTE, MOCK_BUILDING_NOTE, ProvenanceRow } from './Provenance';
 
 /**
- * One panel, four modes: property / floor / unit / utility.
+ * One panel, five modes: parcel / property / floor / unit / utility.
  *
  * Every mode ends in a provenance row. That is a hard rule rather than a
  * nicety: a viewer must never be left unsure whether a number in front of them
- * was surveyed or guessed.
+ * was surveyed or guessed. The parcel mode carries the strongest version of
+ * it, because a numbered polygon on a flat map is the single most convincing
+ * thing this application draws and almost none of it is surveyed.
  */
 
 function Row({
@@ -136,6 +140,166 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /**
+ * One expandable row of the parcel tree.
+ *
+ * The disclosure idiom is Legend.tsx's -- a +/- glyph, aria-expanded, local
+ * state -- because it is the only one this application has and inventing a
+ * second would leave two things that look like the same control and are not.
+ * Indentation is a left border rather than padding so the nesting is visible
+ * at 390 px, where three levels of padding would leave the unit codes with no
+ * room to sit on one line.
+ */
+function TreeRow({
+  code,
+  title,
+  meta,
+  depth,
+  open,
+  onToggle,
+  onSelect,
+  children,
+}: {
+  code: string;
+  title: string;
+  meta?: string;
+  depth: 0 | 1 | 2;
+  /** Undefined for a leaf: no glyph, no button, nothing to open. */
+  open?: boolean;
+  onToggle?: () => void;
+  onSelect?: () => void;
+  children?: React.ReactNode;
+}) {
+  const expandable = open !== undefined && onToggle !== undefined;
+  return (
+    <div className={depth === 0 ? '' : 'ml-2 border-l border-[rgb(var(--edge))]/50 pl-2'}>
+      <div className="flex items-baseline gap-1.5 py-[3px]">
+        {expandable ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
+            className="w-3 shrink-0 text-left text-[10px] text-[rgb(var(--muted))] tint-hover"
+          >
+            {open ? '−' : '+'}
+          </button>
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        <div className="min-w-0 flex-1">
+          {onSelect ? (
+            <button
+              type="button"
+              onClick={onSelect}
+              className="block w-full truncate text-left text-[11px] text-[rgb(var(--ink))] tint-hover"
+            >
+              {title}
+            </button>
+          ) : (
+            <div className="truncate text-[11px] text-[rgb(var(--ink))]">{title}</div>
+          )}
+          <div className="truncate font-mono text-[9px] text-[rgb(var(--muted))]">
+            {code}
+            {meta ? ` · ${meta}` : ''}
+          </div>
+        </div>
+      </div>
+      {expandable && open ? children : null}
+    </div>
+  );
+}
+
+/**
+ * The ULPIN tree under a survey parcel: building -> floors -> units.
+ *
+ * ITS OWN COMPONENT because it holds hooks. DetailPanel calls every hook it
+ * has before its first conditional return -- the Rules of Hooks comment at the
+ * top of it says so -- so per-row open/closed state cannot live there.
+ *
+ * Everything starts CLOSED. A parcel with four towers on it has some hundreds
+ * of flats beneath it, and a tree that opens itself is a panel that scrolls
+ * the thing you clicked off the screen.
+ */
+function ParcelTree({
+  buildings,
+  onSelectBuilding,
+}: {
+  buildings: SurveyParcelDetail['buildings'];
+  onSelectBuilding: (id: number) => void;
+}) {
+  const [openB, setOpenB] = useState<ReadonlySet<number>>(new Set());
+  const [openF, setOpenF] = useState<ReadonlySet<number>>(new Set());
+  const flip = (
+    set: ReadonlySet<number>,
+    id: number,
+  ): ReadonlySet<number> => {
+    const next = new Set(set);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  };
+
+  if (buildings.length === 0) {
+    return (
+      <p className="py-1 text-[11px] text-[rgb(var(--muted))]">
+        No buildings recorded on this parcel.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-0.5">
+      {buildings.map(({ building: b, floors }) => (
+        <TreeRow
+          key={b.id}
+          depth={0}
+          code={b.ulpin}
+          title={b.name ?? `Building ${b.id}`}
+          meta={`${b.floors} floor${b.floors === 1 ? '' : 's'}`}
+          open={openB.has(b.id)}
+          onToggle={() => setOpenB((s) => flip(s, b.id))}
+          // Selecting here does NOT leave the 2D view. It sets the building so
+          // that turning 2D GIS off lands on it -- which is why the camera
+          // director compares the selection it saved on the way in.
+          onSelect={() => onSelectBuilding(b.id)}
+        >
+          {floors.map((f) => (
+            <TreeRow
+              key={f.id}
+              depth={1}
+              code={f.ulpin}
+              title={`Level ${levelLabel(f.level_no)}`}
+              meta={`z ${f.z_min.toFixed(2)}–${f.z_max.toFixed(2)} m`}
+              open={openF.has(f.id)}
+              onToggle={() => setOpenF((s) => flip(s, f.id))}
+            >
+              {f.units.length === 0 ? (
+                <p className="ml-2 border-l border-[rgb(var(--edge))]/50 py-[3px] pl-2 text-[10px] text-[rgb(var(--muted))]">
+                  No units recorded.
+                </p>
+              ) : (
+                f.units.map((u) => (
+                  // A citizen is served their neighbours' flats with the
+                  // geometry and nothing else -- no ULPIN, no unit number
+                  // (see UnitInfo.restricted in lib/types.ts). The row stays,
+                  // because the flat is really there and the count must add
+                  // up, and it says what it is instead of showing a blank.
+                  <TreeRow
+                    key={u.id}
+                    depth={2}
+                    code={u.ulpin ?? '—'}
+                    title={u.unit_no ?? 'Not your flat'}
+                  />
+                ))
+              )}
+            </TreeRow>
+          ))}
+        </TreeRow>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Placeholder for a value that is still in flight.
  *
  * Sized in a way that cannot move the row: the label beside it is 11px text
@@ -210,6 +374,12 @@ export default function DetailPanel() {
   const session = useViewStore((s) => s.session);
   const selectBuilding = useViewStore((s) => s.selectBuilding);
   const selectUtility = useViewStore((s) => s.selectUtility);
+  const gis2d = useViewStore((s) => s.gis2d);
+  const activeSurveyParcelId = useViewStore((s) => s.activeSurveyParcelId);
+  const surveyParcels = useDataStore((s) => s.surveyParcels);
+  const parcelDoc = useEnsureSurveyParcelDetail(
+    gis2d ? activeSurveyParcelId : null,
+  );
 
   const editingId = useEditStore((s) => s.editingId);
   const beginEdit = useEditStore((s) => s.beginEdit);
@@ -240,6 +410,22 @@ export default function DetailPanel() {
   // second fetch.
   const siteSpec = useEnsureSite(activeSiteId);
 
+  /**
+   * The revenue codes to mint the parcel identifier under.
+   *
+   * Read off an identifier the SERVER already minted rather than from the
+   * project record or from ulpin.ts's defaults, which are AP/VSP: a Hyderabad
+   * parcel would otherwise be labelled AP-VSP-3D26-0042 on a card that also
+   * carries the disclaimer, which is a specific and expensive kind of wrong.
+   * Null before the buildings land, and generate() then falls back to its own
+   * defaults -- but the panel cannot be reached before then, because the
+   * parcel layer is built from a collection that arrives after this one.
+   */
+  const parcelCodes = useMemo(
+    () => codesOf(buildings?.features[0]?.properties.ulpin ?? ''),
+    [buildings],
+  );
+
   const categoryAdjust = useMemo(
     () => resolveCategoryDepths(utilities?.features ?? []),
     [utilities],
@@ -259,10 +445,98 @@ export default function DetailPanel() {
   const buildingConflicts = useBuildingConflicts(activeBuildingId);
   const neighbours = useBuildingNeighbours(activeBuildingId, 50);
 
+  // ---- survey parcel -----------------------------------------------------
+  // First in the cascade, ahead of the street. In the 2D GIS view the Picker
+  // resolves nothing else, so nothing else can be the most recent selection --
+  // and the building the tree may have set must NOT take the panel over, or
+  // clicking a row would replace the tree you clicked it in.
+  if (gis2d && activeSurveyParcelId !== null) {
+    const feature = surveyParcels?.features.find(
+      (f) => (f.properties as SurveyParcelProps).id === activeSurveyParcelId,
+    );
+    const sp = feature?.properties as SurveyParcelProps | undefined;
+    if (sp) {
+      const surveyed = sp.provenance === 'survey_dept';
+      return (
+        <Panel title={`Parcel ${sp.label}`} kicker="Parcel">
+          {/* The provenance line comes FIRST here, not last as it does in
+              every other mode. Elsewhere the reader is looking at a building
+              they can see and the question is how good the numbers are; here
+              the question is what the polygon IS, and answering it after the
+              identifier card would be answering it too late. */}
+          <p className="row-label leading-snug">
+            {surveyed
+              ? `Survey parcel · ${sp.source ?? 'source not recorded'}`
+              : 'Derived parcel (unofficial) · Voronoi clipped to OSM roads'}
+          </p>
+
+          <div className="mt-2">
+            {/* The parcel-level identifier, on the card that carries the
+                disclaimer. Built with generate() rather than concatenated, so
+                it round-trips through parse() by construction -- which is what
+                scripts/check_gis2d.mjs asserts. */}
+            <UlpinCard ulpin={generate(Number(sp.label), undefined, undefined,
+              undefined, parcelCodes ?? undefined)} />
+          </div>
+
+          <div className="mt-2">
+            <Row
+              label="Extent"
+              value={`${Math.round(sp.extent_sqm).toLocaleString()} m²`}
+              source={surveyed ? undefined : 'derived'}
+            />
+            <Row label="Buildings" value={sp.building_count} />
+            {surveyed && sp.ts_no ? <Row label="TS number" value={sp.ts_no} /> : null}
+            {surveyed && sp.lpm_no ? <Row label="LPM number" value={sp.lpm_no} /> : null}
+            {surveyed && sp.ulpin_14 ? (
+              <Row label="Bhu-Aadhaar" value={sp.ulpin_14} />
+            ) : null}
+            {surveyed && sp.classification ? (
+              <Row label="Classification" value={sp.classification} />
+            ) : null}
+            {surveyed && sp.source_date ? (
+              <Row label="Register dated" value={sp.source_date} />
+            ) : null}
+          </div>
+
+          <Section title="On this parcel">
+            {parcelDoc.pending && !parcelDoc.doc ? (
+              <div className="space-y-1 py-1">
+                <SkeletonBar w="w-40" />
+                <SkeletonBar w="w-28" />
+              </div>
+            ) : parcelDoc.doc ? (
+              <ParcelTree
+                buildings={parcelDoc.doc.buildings}
+                onSelectBuilding={selectBuilding}
+              />
+            ) : (
+              <p className="py-1 text-[11px] text-[rgb(var(--muted))]">
+                The register for this parcel could not be read.
+              </p>
+            )}
+          </Section>
+
+          <p className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {surveyed
+              ? 'Boundary and register numbers as supplied by the issuing '
+                + 'department. Everything below the building level -- floors '
+                + 'and units -- is still generated by this application.'
+              : `${DERIVED_PARCEL_NOTE} The number shown on the map is a `
+                + 'per-project ordinal assigned by this application. It is '
+                + 'NOT a survey number, a TS number, an LPM number or a '
+                + '14-digit Bhu-Aadhaar, and no such number is held for this '
+                + 'area of interest.'}
+          </p>
+        </Panel>
+      );
+    }
+  }
+
   // ---- street ------------------------------------------------------------
-  // First in the cascade because the store guarantees that a non-null
-  // selectedRoadId is always the most recent selection: every other select*
-  // action clears it.
+  // Ahead of everything but the parcel, because the store guarantees that a
+  // non-null selectedRoadId is always the most recent selection: every other
+  // select* action clears it.
   if (selectedRoadId !== null) {
     const feat = roads?.features.find((f) => f.properties.id === selectedRoadId);
     const r = feat?.properties as RoadProps | undefined;

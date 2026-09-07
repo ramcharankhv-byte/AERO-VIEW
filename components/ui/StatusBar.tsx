@@ -29,6 +29,21 @@ export default function StatusBar({
   const ao = useViewStore((s) => s.ambientOcclusion);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
+  const gis2d = useViewStore((s) => s.gis2d);
+  /**
+   * Whether THESE parcels are surveyed or derived, read from the data rather
+   * than assumed.
+   *
+   * Every row this repository ships is 'derived' and the bar says so. It is
+   * still read off the first feature rather than hardcoded, because
+   * scripts/import_survey_parcels.py exists precisely so that one day it will
+   * not be -- and a status bar that had to be edited to stop calling a real
+   * register "derived parcels" is a status bar that would not be edited.
+   */
+  const surveyProvenance = useDataStore((s) => (
+    (s.surveyParcels?.features[0]?.properties as { provenance?: string } | undefined)
+      ?.provenance ?? null
+  ));
   /**
    * The one field this bar needs out of the detail cache, selected as a
    * PRIMITIVE.
@@ -145,8 +160,14 @@ export default function StatusBar({
           </>
         ) : null}
         <Sep />
+        {/* The 2D view names what it is drawing, in the position the mode
+            indicator occupies, because on a flat map of numbered polygons the
+            provenance is the thing a reader is most likely to assume. */}
         <span className="uppercase tracking-wide text-[rgb(var(--ink))]">
-          {underground ? 'underground' : mode}
+          {gis2d
+            ? `2D GIS · ${surveyProvenance === 'survey_dept'
+              ? 'survey parcels' : 'derived parcels'}`
+            : underground ? 'underground' : mode}
         </span>
       </span>
     </div>
