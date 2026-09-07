@@ -83,14 +83,17 @@ re-seeded. The migrations are additive and idempotent; none drops a table or
 deletes a row.
 
 ```bash
-for m in 001_multi_project 002_cartodem_bhuvan 003_hazard_exposure 004_utility_categories; do
+for m in 001_multi_project 002_cartodem_bhuvan 003_hazard_exposure          004_utility_categories 005_survey_parcel; do
   docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 \
     -f - < db/migrations/$m.sql
 done
 ```
 
 Migration 002 adds the ground-elevation provenance columns and the Bhuvan
-overlay block, and is required before re-seeding.
+overlay block, and is required before re-seeding. Migration 005 adds the
+`survey_parcel` table the 2D GIS view draws and the nullable
+`building.survey_parcel_id`; without it that view is empty and the API serves
+the committed snapshot, which is a working state rather than an error.
 
 ### Environment
 
@@ -147,9 +150,11 @@ npm run seed -- --slug=hyderabad-banjara --name="Banjara Hills Ward" \
 ```
 
 The command creates or updates the project row, caches the raw Overpass response
-to `data/projects/<slug>/osm.json`, runs clip DEM → estimate → seed → utilities
-→ streets → export scoped to that project, writes `data/api/<slug>/`, and
-populates `projects.stats`. Placing an NRSC CartoDEM tile at
+to `data/projects/<slug>/osm.json`, runs clip DEM → estimate → hazard → seed →
+utilities → streets → survey parcels → export scoped to that project, writes
+`data/api/<slug>/`, and populates `projects.stats`. The survey-parcel stage
+sits after the streets because it cuts them out of the parcels it builds, and
+before the export because the export writes `survey_parcels.json`. Placing an NRSC CartoDEM tile at
 `data/projects/<slug>/dem_raw.tif` and running `npm run seed:geo` produces real
 ground elevation; otherwise the project records a placeholder.
 
@@ -223,7 +228,9 @@ model, not only in documentation.
 | Land use class (overlay and panel row) | NRSC SISDP 1:10,000 (2016–19), Bhuvan WMS | **Real**, external, context only |
 | Flood / cyclone hazard zones | NRSC national-scale, Bhuvan WMS | **Real**, external, one class over the whole AOI |
 | Flood / cyclone exposure grading | `scripts/hazard.py` over the CartoDEM surface and coastline | **Derived**, relative within the AOI, not an NRSC rating |
-| Parcel boundaries | Voronoi plots around clustered footprints | **Derived, not surveyed** |
+| Parcel boundaries (`parcel`, 3D layer) | Voronoi plots around clustered footprints | **Derived, not surveyed** |
+| Cadastral parcels (`survey_parcel`, 2D GIS layer) | the same Voronoi cells, clipped to road corridors and to OSM landuse | **Derived, not surveyed** (`provenance: derived`) |
+| Survey / TS / LPM numbers, 14-digit Bhu-Aadhaar | none held for any area of interest | **Absent.** The columns exist and are null |
 | Owners, tenure, encumbrances | generated placeholders | **Synthetic** |
 | Utility alignments | offsets from road centrelines | **Representative, not as-built** |
 | Street geometry and class | OpenStreetMap (ODbL) | **Real** |
@@ -426,6 +433,72 @@ the isolated floor does, and the architectural model steps aside because its
 opaque walls would conceal the cut. Slice and Explode are mutually exclusive,
 enforced in the store rather than in the two controls.
 
+### 2D GIS
+
+Pressing `2D GIS` in the dock — or `G` — replaces the 3D scene with a top-down
+cadastral map: a light vector basemap, parcel boundaries in dark ink, and a
+number inside each plot. Clicking a plot opens it in the panel with the whole
+identifier tree beneath it, parcel → buildings → floors → units. Pressing it
+again returns the viewer to exactly the pose, basemap and mode it was in.
+
+**None of these boundaries is a survey.** They are the same Voronoi cells the
+3D parcels layer draws, clipped to the road corridors and to any OSM landuse,
+amenity or leisure area that contains the plot, with fragments under 25 m²
+dissolved into their largest neighbour. Every row carries `provenance:
+'derived'`, and the panel, the status bar and the legend each say so in words.
+The number in the plot is a per-project ordinal — the same `<parcel4>` segment
+the ULPIN carries, so `AP-VSP-3D26-0042` names one plot whether you ask the 3D
+layer or this one. **It is not a survey number, a TS number, an LPM number or a
+14-digit Bhu-Aadhaar**, and no such number is held for any area of interest
+here.
+
+| | `parcel` | `survey_parcel` |
+|---|---|---|
+| Shape | the Voronoi cell trimmed to 7 m of the built form | the whole cell, minus the streets |
+| Reads as | which building stands on which plot | how the block is subdivided |
+| Drawn by | `ParcelsLayer`, `ParcelInset` | `SurveyParcelsLayer` |
+| Identifier | `parcel.ulpin` | `label`, the same 4-digit ordinal |
+| Can hold a register | no | yes — `ts_no`, `lpm_no`, `ulpin_14`, `source`, `source_date` |
+
+`survey_parcel` has those five columns and they are null in everything this
+repository ships. A database `CHECK` makes a `derived` row unable to carry any
+of them and a `survey_dept` row unable to omit its source, so the distinction
+is in the data model rather than only in this paragraph.
+
+**Loading a real register.** When an official file arrives:
+
+```bash
+python scripts/import_survey_parcels.py \
+  --path=data/incoming/siripuram_ts_parcels.geojson \
+  --slug=siripuram \
+  --source="Andhra Pradesh Survey Settlements and Land Records" \
+  --source-date=2026-03-14
+```
+
+It replaces the derived layer for that project with `provenance='survey_dept'`,
+re-runs the building join (`scripts/survey_parcel_join.sql`, the same file the
+derived build uses) and re-exports the snapshot. The panel then reads *Survey
+parcel · Andhra Pradesh Survey Settlements and Land Records* instead of
+*Derived parcel (unofficial)*, the legend and status bar follow, and no
+component changes — all three read the column. `--source` is required; a
+shapefile is converted with `ogr2ogr` from the seed toolchain, or pass GeoJSON.
+It will not invent a survey number for a feature that does not carry one.
+
+**In the scene**, everything drawn above the ground stands down and everything
+draped on it stays under the user's control: the buildings, floor stack, units,
+utilities, conflicts, streets and infrastructure site hide, the Bhuvan land-use
+and hazard overlays do not, and `ParcelsLayer` hides because this layer
+replaces it. Nothing unmounts — each layer flips one flag — so the toggle is
+instant in both directions and the entity count is unchanged across it. Slice
+and Explode render disabled, and the exclusion is enforced in the store rather
+than in the three controls.
+
+The basemap is **CARTO Voyager**, swapped through the same imagery path the
+picker uses, attributed to CARTO and © OpenStreetMap contributors. Voyager
+rather than Positron because `check:rwd` requires the scene to carry measurable
+chroma and Positron is near-greyscale by design. CARTO watermarks anonymous
+tiles; `NEXT_PUBLIC_CARTO_API_KEY` removes the watermark and is optional.
+
 ### Underground
 
 Underground mode makes the globe translucent, reduces buildings to 10% alpha and
@@ -591,9 +664,10 @@ app/                     layout; / gallery; /p/[slug] viewer; /login
 components/gallery/      ProjectCard, BboxSketch
 components/globe/        CesiumRoot (viewer, imagery, terrain, lighting),
                          CameraDirector, Picker, Scene, BuildingTooltip
-components/layers/       BhuvanOverlay, HazardRisk, Parcels, Roads,
-                         Buildings, BuildingsFar, BuildingEdge, BuildingModel,
-                         FloorStack, Units, Utilities, InfraSite, Conflict
+components/layers/       BhuvanOverlay, HazardRisk, Parcels, SurveyParcels,
+                         Roads, Buildings, BuildingsFar, BuildingEdge,
+                         BuildingModel, FloorStack, Units, Utilities,
+                         InfraSite, Conflict
 components/ui/           TopBar, LayerPanel, ActionBar, FloorLadder,
                          ElevationRuler, DetailPanel, ParcelInset, NavDock,
                          StatusBar, Legend, ConflictBanner, UlpinCard,
@@ -602,11 +676,14 @@ components/auth/         LoginForm
 components/citizen/      CitizenAutoFrame
 lib/                     projects.ts, ulpin.ts, store.ts, db.ts, types.ts,
                          bhuvan.ts, hazard.ts, sun.ts, geo.ts
-                         api/, auth/, data/, mock/, infra/, underground/, cesium/
+                         api/, auth/, data/, mock/, infra/, underground/,
+                         cesium/, roads/ (metric corridor widths)
 db/                      01_schema.sql, 02_functions.sql   (run by initdb)
-                         migrations/001..004                (for an existing volume)
+                         migrations/001..005                (for an existing volume)
 scripts/                 seed.py orchestrator, 01–05 pipeline, dem.py, hazard.py,
                          project.py, build_geometry.sql, utilities.sql,
+                         survey_parcels.{py,sql}, survey_parcel_join.sql,
+                         import_survey_parcels.py,
                          build_roads.mjs, build_vizag_infra.mjs,
                          _chrome.mjs, verify_ui.mjs, check_*.mjs, shoot.mjs
 data/api/<slug>/         per-project snapshots, served when the database is down
@@ -631,7 +708,11 @@ Four rules the code observes and `grep` can confirm.
    transition — and takes the bounding box as an argument, so no area-of-interest
    constant remains in the camera path.
 3. **Colours and visual constants are defined once**, in
-   `lib/cesium/materials.ts`.
+   `lib/cesium/materials.ts`. The one number that cannot live there is the
+   metric road-corridor width, because PostGIS has to buffer by it and a
+   `node --test` file has to check it; it is in `lib/roads/corridors.ts`, and
+   `lib/survey-parcel.test.ts` asserts that file against the `VALUES` list in
+   `scripts/survey_parcels.sql`.
 4. **Every DetailPanel entity displays a provenance line.**
 
 ### Implementation notes
@@ -688,6 +769,8 @@ their responses are identical by construction rather than by review.
 | `GET /api/p/:slug/utilities` | `/api/utilities` | utility centrelines with depth, radius and authority |
 | `GET /api/p/:slug/conflicts` | `/api/conflicts` | flagged `ST_3DIntersects` violations |
 | `GET /api/p/:slug/parcels` | `/api/parcels` | surface parcels |
+| `GET /api/p/:slug/survey-parcels` | `/api/survey-parcels` | the 2D cadastral layer, with `provenance`, `extent_sqm`, `building_count` and `building_ids` on every feature |
+| `GET /api/p/:slug/survey-parcel/:id` | `/api/survey-parcel/:id` | one parcel and the tree beneath it: `{ parcel, buildings: [{ building, floors: [{ …floor, units }] }] }` |
 | `GET /api/p/:slug/roads` | `/api/roads` | merged street centrelines with names, classes and lengths |
 | `GET /api/p/:slug/sites` | — | infrastructure sites offered by this project |
 | `GET /api/p/:slug/infra/:site` | — | one site's full component specification |
@@ -736,7 +819,8 @@ npm run check:roads   # street picking, tolerance, deselect, building precedence
 npm run check:edit    # read-only guarantees, validation, save, persistence
 npm run check:photoreal  # tileset lifecycle, picking through the mesh, URL round-trip
 npm run check:ug      # utility depths against the per-vertex ground field
-npm run check:rwd     # four viewports x two pages: layout, collisions, colour audit
+npm run check:rwd     # four viewports x three pages: layout, collisions, colour audit
+npm run check:gis2d   # the 2D cadastral view: layers, labels, the tree, the camera
 npm run check:basemap # provider swaps and the fallback path
 npm run auth:test     # role checks and session handling
 ```
@@ -777,8 +861,14 @@ and fails below 3%, which detects an imagery treatment or texture pass that has
 drained it. The check also verifies that no two panels overlap, that none runs
 off-screen, and that Cesium's attribution container is never covered.
 
-`check:rwd` runs twice, once over a project's viewer and once over the gallery
-(`--gallery`). Two of its checks cannot apply to a page with no canvas — the
+`check:rwd` runs three times: once over a project's viewer, once over the
+gallery (`--gallery`), and once over the viewer with the 2D GIS view switched
+on (`--gis2d`). The third pass skips nothing — the scene-colour half is the
+reason it exists, because a light basemap chosen for a cadastral view is
+exactly what a drained one would look like — and it drives the toggle through
+its button rather than through the store, so it audits what a user gets.
+
+The gallery pass, and only it, Two of its checks cannot apply to a page with no canvas — the
 chroma test exists to detect a drained basemap and a gallery frame is monochrome
 by design, and the attribution hit-test requires Cesium's credit container. Both
 are skipped there with an explicit `n/a` line rather than left permanently red.
@@ -841,6 +931,14 @@ disagree.
 **Streets are snapshot-only.** `db/01_schema.sql` has no road table, so unlike
 buildings and parcels there is no PostGIS path for `lib/db.ts` to prefer;
 `GET /api/roads` sends `x-ulpin-roads: derived` to state this on the wire.
+
+**No official survey register is loaded, for any area of interest.** The
+`survey_parcel` layer is derived — Voronoi cells clipped to OSM road corridors
+— and every row says so, in the panel, the status bar, the legend and the
+`provenance` column. `ts_no`, `lpm_no`, `ulpin_14`, `source` and `source_date`
+exist and are null, and a database `CHECK` stops a derived row from ever
+carrying one. `scripts/import_survey_parcels.py` is the path a real file takes;
+see [2D GIS](#2d-gis).
 
 **Session revocation is per-process.** Sessions are stateless signed cookies, so
 invalidating one before expiry requires a shared store that does not yet exist.
