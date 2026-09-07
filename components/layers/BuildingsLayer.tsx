@@ -105,6 +105,7 @@ export default function BuildingsLayer() {
   const transparency = useViewStore((s) => s.transparency);
   const underground = useViewStore((s) => s.underground);
   const showBuildings = useViewStore((s) => s.layers.buildings);
+  const gis2d = useViewStore((s) => s.gis2d);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   // Shadows are scoped to the buildings: they are what reads as massing under a
   // low sun, and every extra casting layer is another depth pass per frame.
@@ -465,7 +466,9 @@ export default function BuildingsLayer() {
     const s = stateRef.current;
     s.activeId = activeBuildingId;
     s.hoveredId = hoveredBuildingId;
-    s.visible = showBuildings;
+  // In the 2D GIS view the whole 3D scene stands down: see components/
+  // globe/Scene.tsx for the rule about what is hidden and what is not.
+    s.visible = showBuildings && !gis2d;
     s.hideActive = mode !== 'city';
     s.style = buildingStyle;
     // 15% in underground mode, otherwise the transparency slider (default 12%).

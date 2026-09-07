@@ -49,6 +49,7 @@ export default function ConflictLayer() {
   const buildings = useDataStore((s) => s.buildings);
   const conflicts = useDataStore((s) => s.conflicts);
   const underground = useViewStore((s) => s.underground);
+  const gis2d = useViewStore((s) => s.gis2d);
   const showUtilities = useViewStore((s) => s.layers.utilities);
   const strata = useViewStore((s) => s.undergroundLayers);
 
@@ -192,7 +193,7 @@ export default function ConflictLayer() {
     for (let i = 0; i < viewer.dataSources.length; i++) {
       const ds = viewer.dataSources.get(i);
       if (ds.name !== 'conflicts') continue;
-      ds.show = underground && showUtilities;
+      ds.show = underground && showUtilities && !gis2d;
       for (const e of ds.entities.values) {
         const id = (e as { tag?: { id: number } }).tag?.id;
         const type = id === undefined ? undefined : typeById.get(id);
@@ -201,7 +202,7 @@ export default function ConflictLayer() {
       }
     }
     viewer.scene.requestRender();
-  }, [viewer, underground, showUtilities, strata, utilities, conflicts]);
+  }, [viewer, underground, showUtilities, gis2d, strata, utilities, conflicts]);
 
   return null;
 }

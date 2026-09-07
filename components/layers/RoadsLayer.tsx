@@ -62,6 +62,7 @@ export default function RoadsLayer() {
   const { viewer, ready } = useViewer();
   const roads = useDataStore((s) => s.roads);
   const showRoads = useViewStore((s) => s.layers.roads);
+  const gis2d = useViewStore((s) => s.gis2d);
   const hoveredRoadId = useViewStore((s) => s.hoveredRoadId);
   const selectedRoadId = useViewStore((s) => s.selectedRoadId);
 
@@ -231,10 +232,12 @@ export default function RoadsLayer() {
     if (!viewer || viewer.isDestroyed()) return;
     for (let i = 0; i < viewer.dataSources.length; i++) {
       const ds = viewer.dataSources.get(i);
-      if (ds.name === 'roads' || ds.name === 'road-selection') ds.show = showRoads;
+      if (ds.name === 'roads' || ds.name === 'road-selection') {
+        ds.show = showRoads && !gis2d;
+      }
     }
     viewer.scene.requestRender();
-  }, [viewer, showRoads, roads, selectedRoadId]);
+  }, [viewer, showRoads, gis2d, roads, selectedRoadId]);
 
   return null;
 }

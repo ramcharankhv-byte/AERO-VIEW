@@ -43,6 +43,7 @@ export default function ParcelsLayer() {
   const parcels = useDataStore((s) => s.parcels);
   const buildings = useDataStore((s) => s.buildings);
   const showParcels = useViewStore((s) => s.layers.parcels);
+  const gis2d = useViewStore((s) => s.gis2d);
   /**
    * The live value of showParcels, readable from inside the build.
    *
@@ -220,10 +221,14 @@ export default function ParcelsLayer() {
       // startsWith, not equality: the base layer is a grid of buckets named
       // parcels#0 .. parcels#15 (lib/cesium/spatial-buckets.ts).
       if (ds.name.startsWith('parcels') || ds.name === 'parcel-active') {
-        ds.show = showParcels;
+        // SurveyParcelsLayer replaces this one in the 2D GIS view. Two
+        // parcel layers drawn together would be two different derivations
+        // of the same plots, in the same ink, on the same ground -- and
+        // the reader would have no way to tell which boundary was which.
+        ds.show = showParcels && !gis2d;
       }
     }
-  }, [viewer, showParcels, parcels, activeParcelId]);
+  }, [viewer, showParcels, gis2d, parcels, activeParcelId]);
 
   return null;
 }

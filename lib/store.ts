@@ -113,6 +113,15 @@ export interface ViewState {
    * tooltip and the units layer read different ones.
    */
   hoveredUnitId: number | null;
+  /**
+   * The survey parcel under the cursor, in the 2D GIS view.
+   *
+   * Its own field rather than a reuse of hoveredBuildingId, for the reason
+   * EntityTag gives for the separate pick kind: they are different polygons
+   * from different tables and sharing the field would put a building id into a
+   * parcel highlight the moment both layers were ever live at once.
+   */
+  hoveredSurveyParcelId: number | null;
   layers: Record<LayerKey, boolean>;
   explodeT: number;                  // 0-100
   /** Section cut through the active building. Mutually exclusive with explode. */
@@ -270,6 +279,7 @@ export interface ViewState {
     buildingId: number | null,
     unitId: number | null,
     roadId: number | null,
+    surveyParcelId: number | null,
   ) => void;
   selectRoad: (id: number | null) => void;
   /**
@@ -418,6 +428,7 @@ export const useViewStore = create<ViewState>((set) => ({
   hoveredBuildingId: null,
   hoveredRoadId: null,
   hoveredUnitId: null,
+  hoveredSurveyParcelId: null,
   layers: { ...DEFAULT_LAYERS },
   explodeT: 0,
   slice: { enabled: false, axis: 'ew', offset: 0 },
@@ -512,9 +523,9 @@ export const useViewStore = create<ViewState>((set) => ({
   clearAmbient: () =>
     set({ selectedRoadId: null, selectedUtilityId: null, selectedComponent: null }),
   setHovered: (id) => set({ hoveredBuildingId: id }),
-  setHover: (buildingId, unitId, roadId) =>
+  setHover: (buildingId, unitId, roadId, surveyParcelId) =>
     set({ hoveredBuildingId: buildingId, hoveredUnitId: unitId,
-          hoveredRoadId: roadId }),
+          hoveredRoadId: roadId, hoveredSurveyParcelId: surveyParcelId }),
 
   toggleLayer: (key) =>
     set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
@@ -658,7 +669,8 @@ export const useViewStore = create<ViewState>((set) => ({
       mode: 'city', activeBuildingId: null, isolatedFloor: null,
       selectedUnitId: null, selectedUtilityId: null, selectedRoadId: null,
       hoveredBuildingId: null, hoveredRoadId: null,
-      hoveredUnitId: null, explodeT: 0, underground: false, autoSpin: false,
+      hoveredUnitId: null, hoveredSurveyParcelId: null,
+      explodeT: 0, underground: false, autoSpin: false,
       activeSiteId: null, selectedComponent: null,
       undergroundLayers: { ...UNDERGROUND_DEFAULTS },
       slice: { ...s.slice, enabled: false },

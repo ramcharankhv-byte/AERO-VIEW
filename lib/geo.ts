@@ -19,6 +19,107 @@ export function ringCentroid(ring: number[][]): { lon: number; lat: number } {
 }
 
 /**
+ * Where to put a label INSIDE a ring: the pole of inaccessibility, or as near
+ * to it as a grid search gets.
+ *
+ * `ringCentroid` is the wrong answer for a parcel number. A survey parcel
+ * clipped to the road corridors is routinely an L or a crescent around a
+ * junction, and the average of its vertices then lands outside the polygon --
+ * so the number would be drawn on the neighbour's land, which for a cadastral
+ * map is not a cosmetic problem.
+ *
+ * A coarse grid over the bounding box, keeping the interior sample furthest
+ * from any edge, then one refinement pass around the winner. Deliberately not
+ * the full quadtree polylabel algorithm and deliberately not a dependency: a
+ * label needs to be inside the plot and roughly central, not optimal to eight
+ * decimal places, and this is thirty lines against a package.
+ *
+ * Falls back to the centroid when the ring is degenerate or the grid finds no
+ * interior point at all -- a sliver thinner than the grid step. The caller
+ * gets a point either way; there is no failure mode in which a parcel loses
+ * its number.
+ */
+export function ringPoleOfInaccessibility(
+  ring: number[][],
+): { lon: number; lat: number } {
+  if (ring.length < 4) return ringCentroid(ring);
+
+  let minX = Infinity; let minY = Infinity;
+  let maxX = -Infinity; let maxY = -Infinity;
+  for (const [x, y] of ring) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (!(maxX > minX) || !(maxY > minY)) return ringCentroid(ring);
+
+  const search = (
+    x0: number, y0: number, x1: number, y1: number, steps: number,
+  ): { lon: number; lat: number; d: number } | null => {
+    let best: { lon: number; lat: number; d: number } | null = null;
+    const dx = (x1 - x0) / steps;
+    const dy = (y1 - y0) / steps;
+    for (let i = 0; i <= steps; i++) {
+      for (let j = 0; j <= steps; j++) {
+        const lon = x0 + dx * i;
+        const lat = y0 + dy * j;
+        if (!pointInRing(ring, lon, lat)) continue;
+        const d = distanceToRing(ring, lon, lat);
+        if (!best || d > best.d) best = { lon, lat, d };
+      }
+    }
+    return best;
+  };
+
+  const coarse = search(minX, minY, maxX, maxY, 12);
+  if (!coarse) return ringCentroid(ring);
+  // One refinement inside the winning cell. A second pass buys about a metre
+  // on a plot this size, which no reader can see.
+  const rx = (maxX - minX) / 12;
+  const ry = (maxY - minY) / 12;
+  const fine = search(
+    coarse.lon - rx, coarse.lat - ry, coarse.lon + rx, coarse.lat + ry, 8,
+  );
+  const win = fine && fine.d > coarse.d ? fine : coarse;
+  return { lon: win.lon, lat: win.lat };
+}
+
+/** Even-odd ray cast. Degrees in, no projection: the ring is small. */
+function pointInRing(ring: number[][], lon: number, lat: number): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if ((yi > lat) !== (yj > lat)
+      && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Shortest distance from a point to the ring, in DEGREES. Ranking only. */
+function distanceToRing(ring: number[][], lon: number, lat: number): number {
+  let best = Infinity;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[i + 1];
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((lon - x1) * dx + (lat - y1) * dy) / len2));
+    const px = x1 + t * dx;
+    const py = y1 + t * dy;
+    const d = Math.hypot(lon - px, lat - py);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
  * Centroid plus the ring's greatest radius in metres, used by the camera to
  * choose a standoff. Equirectangular at the ring's latitude is accurate to
  * well under a metre for the AOI.

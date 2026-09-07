@@ -10,7 +10,18 @@ import type * as Cesium from 'cesium';
  * allocation per read.
  */
 export interface EntityTag {
-  kind: 'parcel' | 'building' | 'road' | 'floor' | 'unit' | 'utility' | 'infra';
+  kind:
+    | 'parcel' | 'building' | 'road' | 'floor' | 'unit' | 'utility' | 'infra'
+    /**
+     * A survey parcel in the 2D GIS view.
+     *
+     * A SEPARATE KIND from 'parcel', not a reuse of it. The two layers draw
+     * different polygons from different tables with different ids, and they
+     * are on screen at different times; one kind would mean the Picker
+     * resolving a click to whichever id happened to be tagged, and selecting
+     * the wrong plot in the wrong table is a silent error that looks correct.
+     */
+    | 'surveyParcel';
   id: number;
   /**
    * The component's own identifier, for 'infra' only.

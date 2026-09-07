@@ -124,6 +124,36 @@ export const AMBIENT_OCCLUSION = {
  * to agree about where the plate top is or the flats float; putting the numbers
  * anywhere but here is what lets them drift apart.
  */
+/**
+ * Every dimension the 2D GIS cadastral layer draws with, in one block, for the
+ * same reason FLOOR_VIEW exists: no layer invents its own.
+ */
+export const SURVEY_PARCEL_VIEW = {
+  /** Boundary width, screen pixels, at rest. */
+  OUTLINE_PX: 2,
+  /** Boundary width for the hovered or selected plot. */
+  OUTLINE_ACTIVE_PX: 4,
+  /**
+   * Camera distance beyond which parcel numbers stop being drawn, metres.
+   *
+   * Above the opening pose, not below it. The 2D view frames the project's
+   * bounding box -- 1,200 m for an area the size of Siripuram -- so a
+   * threshold under that would open the map with no numbers on it, which is
+   * the one thing a cadastral sheet cannot be. 2,500 m leaves room to zoom out
+   * a little before the labels go, and takes them away when the ward has
+   * become a thumbnail and they would be unreadable anyway.
+   */
+  LABEL_MAX_DISTANCE_M: 2500,
+  /** Label type size, px. Small: there is one per plot and they are dense. */
+  LABEL_FONT: '600 11px ui-monospace, SFMono-Regular, Menlo, monospace',
+  /** Halo width around the label ink, px. */
+  LABEL_OUTLINE_PX: 3,
+  /** Labels shrink with distance rather than all vanishing at once. */
+  LABEL_SCALE_NEAR_M: 400,
+  LABEL_SCALE_FAR_M: 2500,
+  LABEL_SCALE_FAR: 0.6,
+} as const;
+
 export const FLOOR_VIEW = {
   /** Thickness of the isolated level's base plate, metres. */
   PLATE_THICKNESS_M: 0.3,
@@ -517,6 +547,31 @@ export const MATERIALS = {
   parcelFill: grey(190, 0.1),
   parcelOutline: grey(215, 0.85),
   parcelActive: grey(240, 0.28),
+
+  /**
+   * The 2D GIS cadastral layer, over a LIGHT basemap.
+   *
+   * DARK WHERE THE THREE ABOVE ARE LIGHT, and that is the whole reason they
+   * are separate entries rather than a reuse. `parcelOutline` is a 215-grey
+   * chosen to read over satellite imagery and the dark vector basemap; drawn
+   * on CARTO Voyager's off-white ground it is very nearly invisible. A
+   * cadastral sheet is dark ink on pale paper, so these invert.
+   *
+   * MONOCHROME, INCLUDING THE SELECTION. The scene is allowed hue -- that is
+   * what the "meaning" family at the top of this file is for -- but a parcel
+   * boundary carries no meaning a colour could encode, and a selected plot on
+   * a survey sheet is a heavier line, not a coloured one. Keeping the whole
+   * layer in ink also means the basemap remains the only thing supplying the
+   * chroma that scripts/shoot.mjs measures, so the colour audit is testing the
+   * basemap rather than our own highlight.
+   */
+  surveyParcelFill: grey(70, 0.06),
+  surveyParcelOutline: grey(45, 0.8),
+  surveyParcelHover: grey(20, 0.95),
+  surveyParcelActive: grey(10, 1),
+  /** Label ink and its halo. White halo so the number survives a dark roof. */
+  surveyParcelLabelFill: grey(25, 1),
+  surveyParcelLabelOutline: grey(255, 0.9),
 
   /** Architectural model on the active building. */
   buildingModelWall: grey(OFF_WHITE),

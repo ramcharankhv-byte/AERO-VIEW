@@ -89,7 +89,31 @@ function pickTag(
    * (docs/perf/findings.md).
    */
   unitsPossible = true,
+  /**
+   * The 2D GIS view is on.
+   *
+   * When it is, the answer is a survey parcel or it is nothing. Every other
+   * layer is hidden, so nothing else could legitimately be hit -- but hidden
+   * is not the same as absent: a data source with show=false still holds its
+   * entities, and drillPick will happily return one. Resolving to a building
+   * the user cannot see would select it, move the panel to it and leave the
+   * map looking unresponsive.
+   *
+   * One drillPick rather than a single scene.pick, because the parcel fill is
+   * ground-classified and so sits behind anything else the ray touches.
+   */
+  gis2d = false,
 ): EntityTag | null {
+  if (gis2d) {
+    const direct = tagOf(scene.pick(position));
+    if (direct?.kind === 'surveyParcel') return direct;
+    for (const candidate of scene.drillPick(position, DRILL_LIMIT)) {
+      const tag = tagOf(candidate);
+      if (tag?.kind === 'surveyParcel') return tag;
+    }
+    return null;
+  }
+
   const picked = scene.pick(position);
   const first = tagOf(picked);
   if (first?.kind === 'unit') return first;
@@ -161,7 +185,9 @@ export default function Picker() {
   const selectRoad = useViewStore((s) => s.selectRoad);
   const clearAmbient = useViewStore((s) => s.clearAmbient);
   const setHover = useViewStore((s) => s.setHover);
+  const setActiveSurveyParcel = useViewStore((s) => s.setActiveSurveyParcel);
   const roadsVisible = useViewStore((s) => s.layers.roads);
+  const gis2d = useViewStore((s) => s.gis2d);
   const activeSiteId = useViewStore((s) => s.activeSiteId);
 
   // Read through a ref inside the handlers rather than closed over: making it
@@ -183,6 +209,10 @@ export default function Picker() {
   const mode = useViewStore((s) => s.mode);
   const modeRef = useRef(mode);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  /** Same ref treatment, same reason: a mode toggle must not rebuild this. */
+  const gis2dRef = useRef(gis2d);
+  useEffect(() => { gis2dRef.current = gis2d; }, [gis2d]);
 
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
@@ -233,7 +263,7 @@ export default function Picker() {
         // from it reads as the tooltip being stuck.
         if (!hoverCleared) {
           hoverCleared = true;
-          setHover(null, null, null);
+          setHover(null, null, null, null);
           viewer.scene.canvas.style.cursor = 'default';
         }
         return;
@@ -247,6 +277,7 @@ export default function Picker() {
         roadsVisibleRef.current,
         false,
         modeRef.current !== 'city',
+        gis2dRef.current,
       );
       hoverCleared = tag === null;
       // Every hover target in one write: they are live at the same time and
@@ -255,13 +286,27 @@ export default function Picker() {
         tag?.kind === 'building' ? tag.id : null,
         tag?.kind === 'unit' ? tag.id : null,
         tag?.kind === 'road' ? tag.id : null,
+        tag?.kind === 'surveyParcel' ? tag.id : null,
       );
       viewer.scene.canvas.style.cursor = tag ? 'pointer' : 'default';
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
     handler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
-      const tag = pickTag(viewer.scene, click.position, roadsVisibleRef.current, true);
+      // unitsPossible stays TRUE here, as it has always been for clicks -- the
+      // fifth argument is spelled out only because the sixth has to be
+      // reached. A dropped click is a bug; the drill's cost is the hover
+      // path's problem, not this one's.
+      const tag = pickTag(
+        viewer.scene, click.position, roadsVisibleRef.current, true,
+        true, gis2dRef.current,
+      );
       if (!tag) {
+        // In the 2D view a click on nothing DESELECTS, which is the opposite
+        // of the rule below and is right for the same reason: there is no
+        // navigation stack to lose. A parcel is a flat selection on a flat
+        // map, the map is all parcels, and a click that hits none of them is
+        // unambiguously a click on the space between plots.
+        if (gis2dRef.current) { setActiveSurveyParcel(null); return; }
         // Clicking bare ground drops the ambient selections -- street and
         // utility -- but NOT the building/floor/unit stack. See clearAmbient
         // in lib/store.ts for why the distinction matters.
@@ -297,6 +342,12 @@ export default function Picker() {
         case 'building':
           selectBuilding(tag.id);
           break;
+        case 'surveyParcel':
+          // No camera move, following the street and utility precedent: the
+          // user clicked a plot to read what stands on it, and the 2D view is
+          // already framed on the whole area of interest.
+          setActiveSurveyParcel(tag.id);
+          break;
         case 'road':
           // No camera move, deliberately. A street spans the AOI, so "frame
           // the road" means zooming out to the whole neighbourhood -- and the
@@ -311,11 +362,11 @@ export default function Picker() {
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     return () => {
-      setHover(null, null, null);
+      setHover(null, null, null, null);
       if (!handler.isDestroyed()) handler.destroy();
     };
   }, [viewer, ready, selectBuilding, isolateFloor, selectUnit, openUnit,
-      selectUtility, selectComponent, setHover]);
+      selectUtility, selectComponent, setHover, setActiveSurveyParcel]);
 
   return null;
 }

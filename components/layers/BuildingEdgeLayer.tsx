@@ -63,6 +63,7 @@ export default function BuildingEdgeLayer() {
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
   const hoveredBuildingId = useViewStore((s) => s.hoveredBuildingId);
   const showBuildings = useViewStore((s) => s.layers.buildings);
+  const gis2d = useViewStore((s) => s.gis2d);
   const underground = useViewStore((s) => s.underground);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   const explodeT = useViewStore((s) => s.explodeT);
@@ -194,7 +195,10 @@ export default function BuildingEdgeLayer() {
     // Photoreal hides our geometry under Google's mesh; an edge tracing a
     // footprint that no longer matches the visible roofline would be a lie
     // about where the building is.
-    s.visible = showBuildings && !underground && buildingStyle !== 'photoreal';
+  // In the 2D GIS view the whole 3D scene stands down: see components/
+  // globe/Scene.tsx for the rule about what is hidden and what is not.
+    s.visible = showBuildings && !gis2d && !underground
+      && buildingStyle !== 'photoreal';
     /**
      * WHEN AN ENVELOPE IS HONEST.
      *

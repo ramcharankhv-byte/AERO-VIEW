@@ -179,7 +179,10 @@ function CategoryRuns({
   const utilities = useDataStore((s) => s.utilities);
   const showUtilities = useViewStore((s) => s.layers.utilities);
   const on = useViewStore((s) => s.undergroundLayers[category]);
-  const visible = showUtilities && on;
+  const gis2d = useViewStore((s) => s.gis2d);
+  // In the 2D GIS view the whole 3D scene stands down: see components/
+  // globe/Scene.tsx for the rule about what is hidden and what is not.
+  const visible = showUtilities && on && !gis2d;
 
   const gridRef = useRef<BucketGrid | null>(null);
   /**
