@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { callerTagFromCtx } from '@/lib/http/caller-tag';
 import {
   backend, getBuildingDetail, getBuildings, getParcels,
-  getRoads, getUtilities,
+  getRoads, getSurveyParcelDetail, getSurveyParcels, getUtilities,
 } from '@/lib/db';
 import { applyEdit, editsRev } from '@/lib/data/edits';
 import { coerceEdit, validateEdit, warningsFor } from '@/lib/data/building-schema';
@@ -19,7 +19,7 @@ import {
 import type { GeoFC } from '@/lib/types';
 
 /**
- * The seven cadastre endpoints, written once.
+ * The cadastre endpoints, written once.
  *
  * Each exists at two URLs -- `/api/p/<slug>/x`, and the unscoped `/api/x`,
  * which is a thin alias resolving to the demo project -- and the two must be
@@ -216,6 +216,82 @@ async function filterParcelsForCitizen(
       return id === parcelId;
     }),
   };
+}
+
+/** GET .../survey-parcels -> the 2D cadastral layer, as GeoJSON. */
+export function surveyParcelsRoute(slug: string, req: Request) {
+  return serve(slug, 'survey-parcels', getSurveyParcels, req, {},
+    filterSurveyParcelsForCitizen);
+}
+
+/**
+ * Citizen view: only the survey parcel their building stands on.
+ *
+ * Matched through `building_ids`, which the parcel carries, rather than
+ * through a column on the building -- see SurveyParcelProps in lib/types.ts
+ * for why the relation lives on this side. That makes this filter a scan of
+ * the collection already in hand, with no second read; `filterParcelsForCitizen`
+ * has to fetch the buildings to learn the citizen's `parcel_id`.
+ */
+function filterSurveyParcelsForCitizen(
+  value: GeoFC,
+  ctx: { kind: 'citizen'; buildingId: number; slug: string },
+): GeoFC {
+  const features = Array.isArray(value.features) ? value.features : [];
+  return {
+    ...value,
+    features: features.filter((f) => {
+      const ids = (f.properties as { building_ids?: number[] } | null)?.building_ids;
+      return Array.isArray(ids) && ids.includes(ctx.buildingId);
+    }),
+  };
+}
+
+/**
+ * GET .../survey-parcel/:id -> one parcel and the ULPIN tree beneath it.
+ *
+ * `enforceBuildingAccess` is not the right gate here -- the resource is a
+ * parcel, not a building -- so the citizen case is handled by
+ * `filterDetailForCaller` running over each building the document carries,
+ * which is the same function `/building/:id` uses. A citizen asking for a
+ * parcel that is not theirs gets the parcel and an EMPTY building list: the
+ * plot boundary is public cadastral geometry, the register beneath it is not.
+ */
+export async function surveyParcelDetailRoute(
+  slug: string,
+  rawId: string,
+  req: Request,
+): Promise<NextResponse> {
+  const id = parseEntityId(rawId);
+  if (id === null) {
+    return NextResponse.json({ error: 'id must be an integer' }, { status: 400 });
+  }
+  const gate = await gateProject(slug);
+  if (gate) return gate;
+  const ctx = await callerContext(req);
+  const projectGuard = enforceProjectAccess(ctx, slug);
+  if (projectGuard) return projectGuard;
+  try {
+    const doc = await getSurveyParcelDetail(slug, id);
+    if (!doc) {
+      return NextResponse.json(
+        { error: 'survey parcel not found' },
+        { status: 404, headers: await baseHeaders(slug) },
+      );
+    }
+    const body = ctx.kind === 'citizen'
+      ? { ...doc, buildings: doc.buildings.filter(
+        (b) => b.building.id === ctx.buildingId) }
+      : doc;
+    return await jsonPayload(req, body, {
+      resource: `${slug}:survey-parcel:${id}`,
+      rev: String(editsRev(slug)),
+      headers: await baseHeaders(slug),
+      callerTag: callerTagFromCtx(ctx),
+    });
+  } catch (err) {
+    return errorResponse('failed to load survey parcel', err);
+  }
 }
 
 /** GET .../utilities -> utility centrelines with depth/radius/authority. */

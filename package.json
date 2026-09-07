@@ -12,7 +12,7 @@
     "db:down": "docker compose down",
     "seed": "python scripts/seed.py",
     "seed:geo": "node -e \"require('child_process').spawnSync(require('path').join('.gdal-env', process.platform === 'win32' ? 'python.exe' : 'bin/python'), ['scripts/seed.py', ...process.argv.slice(1)], { stdio: 'inherit' })\" --",
-    "test": "node --test lib/ulpin.test.ts lib/geo.test.ts lib/bhuvan.test.ts lib/underground.test.ts",
+    "test": "node --test lib/ulpin.test.ts lib/geo.test.ts lib/bhuvan.test.ts lib/underground.test.ts lib/survey-parcel.test.ts",
     "verify:ui": "node scripts/verify_ui.mjs",
     "check:basemap": "node scripts/check_basemap.mjs",
     "db:schema": "docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/01_schema.sql && docker exec -i ulpin-postgis psql -U ulpin -d ulpin -v ON_ERROR_STOP=1 -f - < db/02_functions.sql",
@@ -23,7 +23,7 @@
     "check:roads": "node scripts/check_roads.mjs",
     "check:ug": "node --experimental-strip-types scripts/check_underground.mjs",
     "check:edit": "node scripts/check_edit.mjs",
-    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844",
+    "check:rwd": "node scripts/shoot.mjs 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gallery 1680x950 1280x800 834x1112 390x844 && node scripts/shoot.mjs --gis2d 1680x950 1280x800 834x1112 390x844",
     "smoke": "node scripts/smoke.mjs",
     "perf": "node scripts/perf_probe.mjs --label after --out docs/perf",
     "perf:frame": "node scripts/perf_frame_js.mjs",
@@ -31,7 +31,8 @@
     "cache:test": "node --import ./scripts/_register_shim.mjs scripts/test_cache.mjs",
     "cache:measure": "node --import ./scripts/_register_shim.mjs scripts/measure_cache.mjs",
     "auth:test": "node --experimental-strip-types scripts/test_auth.mjs",
-    "demo:seed": "node scripts/seed_demo_building.mjs"
+    "demo:seed": "node scripts/seed_demo_building.mjs",
+    "check:gis2d": "node --experimental-strip-types scripts/check_gis2d.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -4,6 +4,7 @@
  * blows up.
  */
 import puppeteer from 'puppeteer-core';
+import { chromeArgs, reportBackend } from './_chrome.mjs';
 
 const URL = 'http://localhost:3000/p/siripuram';
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -14,14 +15,7 @@ const consoleMsgs = [];
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--window-size=1680,950',
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--hide-scrollbars',
-    '--no-sandbox',
-  ],
+  args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
 

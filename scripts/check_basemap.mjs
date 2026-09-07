@@ -12,6 +12,9 @@
  * Usage: node scripts/check_basemap.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -86,9 +89,11 @@ async function groundLuma(page) {
 }
 
 /**
- * Poll until `fn()` is truthy. Fixed sleeps are not good enough here: under
- * swiftshader the main thread stalls for seconds at a time, so a swap that
- * normally lands in one second can take fifteen.
+ * Poll until `fn()` is truthy. Fixed sleeps are not good enough here: on the
+ * software fallback backend (see scripts/_chrome.mjs) the main thread stalls
+ * for seconds at a time, so a swap that normally lands in one second can take
+ * fifteen. Polling costs nothing on the GPU path and saves the run on the
+ * other one.
  */
 async function waitFor(fn, timeoutMs = 45000, everyMs = 500) {
   const deadline = Date.now() + timeoutMs;
@@ -125,19 +130,19 @@ async function pickProvider(page, value) {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  // Cesium under swiftshader blocks the main thread for long stretches while
-  // terrain and the first tiles come in, which outlives the 180 s default and
-  // fails CDP calls that are actually fine.
-  protocolTimeout: 900000,
-  args: [
-    '--window-size=1680,950', '--use-gl=angle', '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader', '--hide-scrollbars', '--no-sandbox',
-  ],
+  // Kept generous for the software fallback backend: Cesium blocks the main
+  // thread for long stretches there while terrain and the first tiles come in,
+  // which outlives the 180 s default and fails CDP calls that are actually
+  // fine. On the GPU path it is simply never reached.
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
+  args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
 
 try {
   const page = await browser.newPage();
+  await reportBackend(page);
+  await applySession(page, URL);
   const hosts = new Map();
   const warnings = [];
   page.on('request', (r) => {

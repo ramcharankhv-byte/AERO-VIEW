@@ -10,7 +10,8 @@
  */
 
 export type ProviderId =
-  | 'esri' | 'esriWayback' | 'droneOrtho' | 'mapbox' | 'carto' | 'none';
+  | 'esri' | 'esriWayback' | 'droneOrtho' | 'mapbox'
+  | 'carto' | 'cartoVoyager' | 'none';
 export type TreatmentId = 'gisDark' | 'natural';
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -19,6 +20,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   droneOrtho: 'Drone orthophoto (local)',
   mapbox: 'Mapbox Satellite',
   carto: 'Dark vector (no imagery)',
+  cartoVoyager: 'Light vector (CARTO Voyager)',
   none: 'None',
 };
 
@@ -45,6 +47,24 @@ export const DRONE_ORTHO_URL = process.env.NEXT_PUBLIC_DRONE_ORTHO_URL?.trim() ?
 export const DRONE_ORTHO_CREDIT =
   process.env.NEXT_PUBLIC_DRONE_ORTHO_CREDIT?.trim() || 'Drone orthophoto (local survey)';
 
+/**
+ * An optional CARTO API key.
+ *
+ * OPTIONAL, and the basemaps work without it -- this is not a provider that
+ * needs a token. CARTO has begun stamping "API KEY REQUIRED" across every
+ * anonymous basemap tile, INCLUDING the dark_all style this application has
+ * shipped since before the 2D view existed, so the watermark is a property of
+ * the service now rather than of any one provider here. Setting
+ * NEXT_PUBLIC_CARTO_API_KEY removes it; leaving it unset leaves a usable,
+ * correctly attributed, watermarked map, which is what the repository has been
+ * serving all along.
+ *
+ * Read as a full literal for the reason MAPBOX_TOKEN documents above: a
+ * computed process.env lookup is not inlined by Next and silently yields
+ * undefined.
+ */
+export const CARTO_API_KEY = process.env.NEXT_PUBLIC_CARTO_API_KEY?.trim() ?? '';
+
 export function hasMapboxToken(): boolean {
   return MAPBOX_TOKEN.length > 0;
 }
@@ -60,11 +80,17 @@ export function hasDroneOrtho(): boolean {
  * The ortho sits directly under Esri: when a local flight exists it is the
  * better ground truth, so it belongs beside the global mosaic, not below the
  * fallbacks.
+ *
+ * cartoVoyager is LISTED even though the 2D GIS view selects it on its own.
+ * Hiding it would leave the dropdown with no option matching its own value
+ * whenever that view is on, and a <select> whose value is not among its
+ * options renders blank -- the control would look broken at exactly the moment
+ * it is telling the truth. It is also a perfectly good basemap to pick by hand.
  */
 export function availableProviders(): { id: ProviderId; label: string }[] {
   const ids: ProviderId[] = ['esri', 'esriWayback'];
   if (hasDroneOrtho()) ids.push('droneOrtho');
   if (hasMapboxToken()) ids.push('mapbox');
-  ids.push('carto', 'none');
+  ids.push('carto', 'cartoVoyager', 'none');
   return ids.map((id) => ({ id, label: PROVIDER_LABELS[id] }));
 }

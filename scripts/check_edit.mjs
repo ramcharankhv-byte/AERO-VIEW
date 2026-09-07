@@ -14,6 +14,9 @@
  * Usage: node scripts/check_edit.mjs
  */
 import puppeteer from 'puppeteer-core';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -88,15 +91,15 @@ const clickText = (page, text) =>
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--window-size=1680,950', '--use-gl=angle', '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader', '--hide-scrollbars', '--no-sandbox',
-  ],
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
+  args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
 
 try {
   const page = await browser.newPage();
+  await reportBackend(page);
+  await applySession(page, URL);
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));

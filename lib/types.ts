@@ -105,6 +105,74 @@ export interface ParcelInfo {
   geometry?: Ring;
 }
 
+/**
+ * One row of the survey_parcel layer, as the survey-parcels endpoint serves it.
+ *
+ * PROVENANCE IS NOT DECORATION HERE. `provenance` decides, in the panel, the
+ * status bar and the legend, whether the reader is told they are looking at a
+ * derived approximation or at a register -- so every consumer reads this field
+ * rather than assuming, and `ts_no` / `lpm_no` / `ulpin_14` / `source` are
+ * null for every row this repository currently ships. A database CHECK
+ * constraint makes a `derived` row unable to carry any of them.
+ */
+export interface SurveyParcelProps {
+  id: number;
+  /** 4-digit per-project ordinal, e.g. "0042". The label drawn on the map. */
+  label: string;
+  /** Town Survey number. Null unless an official register was imported. */
+  ts_no: string | null;
+  /** Land Parcel Map number. Null unless an official register was imported. */
+  lpm_no: string | null;
+  /** The real 14-digit Bhu-Aadhaar, when one exists. Never generated here. */
+  ulpin_14: string | null;
+  extent_sqm: number;
+  classification: string | null;
+  provenance: Provenance2D;
+  /** The issuing authority, for a survey_dept row. Null for a derived one. */
+  source: string | null;
+  /** ISO date, for a survey_dept row. */
+  source_date: string | null;
+  building_count: number;
+  /**
+   * The buildings standing on this parcel.
+   *
+   * Carried in the FeatureCollection because `buildings.json` deliberately
+   * does NOT carry `survey_parcel_id`: that file is a committed snapshot whose
+   * bytes are an invariant of this repository, and a scoping column is not a
+   * fact about a building. The relation has to be readable from one side or
+   * the other, and this is the side that can change.
+   */
+  building_ids: number[];
+}
+
+/** Where a survey parcel came from. Mirrors the CHECK on survey_parcel. */
+export type Provenance2D = 'derived' | 'survey_dept';
+
+/**
+ * One survey parcel and everything beneath it: parcel -> buildings -> floors
+ * -> units.
+ *
+ * Units are nested INSIDE their floor here, unlike `BuildingDetail`, which
+ * carries them as a flat sibling array. Nothing re-queries for them: the
+ * document is assembled from the same `cachedDetail` entries
+ * `/building/:id` serves, and the units are regrouped by `floor_id`.
+ *
+ * EACH ENTRY IS `{ building, floors }`, NOT A SPREAD BUILDING. The task that
+ * introduced this endpoint asks for `[{ ...building, floors: [...] }]`, and
+ * that shape cannot be written: `EnrichedBuilding.floors` is already a field
+ * -- the storey COUNT -- so spreading the building and then assigning an array
+ * to `floors` overwrites a number with a list, silently, in a document whose
+ * whole job is to be read carefully. The wrapper is also the shape
+ * `BuildingDetail` already uses, so a consumer that knows one knows this one.
+ */
+export interface SurveyParcelDetail {
+  parcel: SurveyParcelProps & { geometry?: Ring };
+  buildings: {
+    building: EnrichedBuilding;
+    floors: (FloorInfo & { units: UnitInfo[] })[];
+  }[];
+}
+
 export interface FloorInfo {
   id: number;
   ulpin: string;
@@ -378,6 +446,12 @@ export type ProjectStatus = 'draft' | 'generating' | 'ready' | 'failed';
 export interface ProjectStats {
   buildings: number;
   parcels: number;
+  /**
+   * Rows in `survey_parcel`. OPTIONAL because every registry snapshot written
+   * before that table existed omits it, and a project is not wrong for
+   * predating a layer.
+   */
+  survey_parcels?: number;
   streets: number;
   floors: number;
   units: number;

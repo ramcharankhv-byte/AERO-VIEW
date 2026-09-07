@@ -85,6 +85,7 @@ export default function BuildingsFarLayer() {
   const buildingsEpoch = useDataStore((s) => s.buildingsEpoch);
   const buildingsLoaded = useDataStore((s) => s.buildings !== null);
   const showBuildings = useViewStore((s) => s.layers.buildings);
+  const gis2d = useViewStore((s) => s.gis2d);
   // Photoreal hides the schematic and shows Google's 3D Tiles mesh. The far
   // tier at FAR_ALPHA would be opaque over that mesh, which is the wrong
   // product behaviour -- the city is supposed to read as the captured mesh,
@@ -211,7 +212,7 @@ export default function BuildingsFarLayer() {
           releaseGeometryInstances: true,
           shadows: Cesium.ShadowMode.DISABLED,
         });
-        primitive.show = showBuildings && buildingStyle !== 'photoreal';
+        primitive.show = showBuildings && !gis2d && buildingStyle !== 'photoreal';
         viewer.scene.primitives.add(primitive);
         primitiveRef.current = primitive;
         mark('buildings-far-built');
@@ -241,8 +242,10 @@ export default function BuildingsFarLayer() {
   // as well -- the user is looking at Google's mesh, not the schematic.
   useEffect(() => {
     const p = primitiveRef.current;
-    if (p) p.show = showBuildings && buildingStyle !== 'photoreal';
-  }, [showBuildings, buildingStyle]);
+  // In the 2D GIS view the whole 3D scene stands down: see components/
+  // globe/Scene.tsx for the rule about what is hidden and what is not.
+    if (p) p.show = showBuildings && !gis2d && buildingStyle !== 'photoreal';
+  }, [showBuildings, gis2d, buildingStyle]);
 
   return null;
 }

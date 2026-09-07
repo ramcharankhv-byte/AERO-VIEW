@@ -63,6 +63,7 @@ export default function InfraSiteLayer() {
   const { viewer, ground, ready, project } = useViewer();
   const activeSiteId = useViewStore((s) => s.activeSiteId);
   const selectedComponent = useViewStore((s) => s.selectedComponent);
+  const gis2d = useViewStore((s) => s.gis2d);
   const utilities = useDataStore((s) => s.utilities);
   const buildings = useDataStore((s) => s.buildings);
 
@@ -104,9 +105,22 @@ export default function InfraSiteLayer() {
     return { datum: structuralDatum(spec, heightAt), heightAt };
   }, [spec, field]);
 
+  /**
+   * The placed structure, or null.
+   *
+   * NULL IN THE 2D GIS VIEW, which drops the whole layer to nothing rather
+   * than hiding it: a station's platforms and a flyover's pillars are
+   * modelled solids, and there is no sensible way to draw one on a top-down
+   * cadastral sheet. This is a memo rather than a `show` flag because the
+   * cost of rebuilding the site is a few hundred entities on the rare
+   * occasion someone has a site open AND opens the 2D view, whereas hiding
+   * it would leave several hundred entities in the scene graph for a mode
+   * that has nothing to do with them. See components/globe/Scene.tsx for the
+   * rule this follows.
+   */
   const site: PlacedSite | null = useMemo(
-    () => (spec && siteGround ? placeSite(spec, siteGround) : null),
-    [spec, siteGround],
+    () => (spec && siteGround && !gis2d ? placeSite(spec, siteGround) : null),
+    [spec, siteGround, gis2d],
   );
 
   /**

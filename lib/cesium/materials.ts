@@ -66,6 +66,55 @@ const OFF_WHITE = 245;
  */
 export const BUILDING_ALPHA = 0.45;
 
+/**
+ * Opacity of a city-scale building mass, as actually rendered.
+ *
+ * Distinct from BUILDING_ALPHA above, which is still the correct resting alpha
+ * for the OTHER translucent surfaces -- the parcel overlay, the section shell,
+ * the floor slab in the architectural model -- and is left at 0.45 for them.
+ * Only the city-scale masses are solid, and this is their number.
+ *
+ * 0.95, not 1.0. A fully opaque edge reads as a die-cut sticker against a
+ * satellite photograph; a little softness keeps the boundary of a building
+ * from looking painted on at a raking angle.
+ *
+ * Previously a local constant inside BuildingsLayer.tsx, which was a real
+ * breach of the rule at the top of this file -- a component was deciding the
+ * resting look of the primary object in the scene, and the two alphas could
+ * not be compared without opening two files.
+ */
+export const CITY_BUILDING_ALPHA = 0.95;
+
+/**
+ * How far a building fades in underground mode.
+ *
+ * Low enough that the buildings stop competing with the utilities -- which are
+ * the whole point of the mode -- and not zero, because the corridors have to be
+ * read in relation to the plots they run under. This is the floor the
+ * transparency slider is driven to when underground is on; it is not a slider
+ * position the user can reach.
+ */
+export const UNDERGROUND_BUILDING_ALPHA = 0.1;
+
+/**
+ * Horizon-based ambient occlusion, applied by lib/cesium/lighting.ts.
+ *
+ * Not a colour, but it belongs to the same family of decisions and to the same
+ * "stated once" rule: these two numbers are how dark the contact between a wall
+ * and the ground gets, which is a look, not a setting.
+ *
+ * INTENSITY 2.5 against Cesium's default of 3.0: the default crushes a narrow
+ * lane between two blocks to near-black under a low sun, which is the exact
+ * hour this scene boots at. LENGTH_CAP_M 0.5 against a default of 0.26 --
+ * sampling stops half a metre out, roughly the width of the wall-to-ground
+ * contact this is meant to draw, and stopping sooner leaves it invisible at
+ * city altitude.
+ */
+export const AMBIENT_OCCLUSION = {
+  INTENSITY: 2.5,
+  LENGTH_CAP_M: 0.5,
+} as const;
+
 // -------------------------------------------------------------- floor view
 /**
  * Every dimension and threshold the floor/unit view is tuned by, in one block.
@@ -75,6 +124,36 @@ export const BUILDING_ALPHA = 0.45;
  * to agree about where the plate top is or the flats float; putting the numbers
  * anywhere but here is what lets them drift apart.
  */
+/**
+ * Every dimension the 2D GIS cadastral layer draws with, in one block, for the
+ * same reason FLOOR_VIEW exists: no layer invents its own.
+ */
+export const SURVEY_PARCEL_VIEW = {
+  /** Boundary width, screen pixels, at rest. */
+  OUTLINE_PX: 2,
+  /** Boundary width for the hovered or selected plot. */
+  OUTLINE_ACTIVE_PX: 4,
+  /**
+   * Camera distance beyond which parcel numbers stop being drawn, metres.
+   *
+   * Above the opening pose, not below it. The 2D view frames the project's
+   * bounding box -- 1,200 m for an area the size of Siripuram -- so a
+   * threshold under that would open the map with no numbers on it, which is
+   * the one thing a cadastral sheet cannot be. 2,500 m leaves room to zoom out
+   * a little before the labels go, and takes them away when the ward has
+   * become a thumbnail and they would be unreadable anyway.
+   */
+  LABEL_MAX_DISTANCE_M: 2500,
+  /** Label type size, px. Small: there is one per plot and they are dense. */
+  LABEL_FONT: '600 11px ui-monospace, SFMono-Regular, Menlo, monospace',
+  /** Halo width around the label ink, px. */
+  LABEL_OUTLINE_PX: 3,
+  /** Labels shrink with distance rather than all vanishing at once. */
+  LABEL_SCALE_NEAR_M: 400,
+  LABEL_SCALE_FAR_M: 2500,
+  LABEL_SCALE_FAR: 0.6,
+} as const;
+
 export const FLOOR_VIEW = {
   /** Thickness of the isolated level's base plate, metres. */
   PLATE_THICKNESS_M: 0.3,
@@ -101,6 +180,29 @@ export const FLOOR_VIEW = {
   UNIT_ALPHA: 0.82,
   /** Opacity of the units NOT selected. Dimmed, never hidden. */
   UNIT_DIM_ALPHA: 0.45,
+
+  /**
+   * Alpha of the levels that are NOT isolated, drawn as context around the one
+   * that is.
+   *
+   * Isolating a level used to HIDE every other level, so the chosen floor
+   * floated in space with nothing to say which floor it was. BELOW puts the
+   * stack underneath it back: the levels beneath occlude nothing (the camera
+   * is above them) and they are what makes the isolated plate read as sitting
+   * at a HEIGHT rather than on the ground.
+   *
+   * ABOVE is currently unreachable, and the number is kept here with its
+   * reasoning rather than deleted, because the decision is worth being able to
+   * find. The levels over the user's head sit between the camera and the floor
+   * they opened the view to inspect, and -- decisively -- each one adds a
+   * translucent surface to Picker's SIX-deep drill (DRILL_LIMIT), which is
+   * already spending slots on the height shell and the base plate. On a
+   * 28-storey tower, isolating level 2 would put 26 surfaces in front of every
+   * flat and nothing on the floor could be clicked. See FloorStackLayer's
+   * context-plate block.
+   */
+  CONTEXT_ABOVE_ALPHA: 0.12,
+  CONTEXT_BELOW_ALPHA: 0.6,
 
   /** Unit code labels are decluttered beyond this camera distance, metres. */
   LABEL_MAX_DISTANCE_M: 250,
@@ -138,6 +240,55 @@ const USE_COLOR: Record<UseType, Cesium.Color> = {
   commercial: grey(USE_VALUE.commercial),
   institutional: grey(USE_VALUE.institutional),
   industrial: grey(USE_VALUE.industrial),
+};
+
+/**
+ * The wall tone of each use type's FAÇADE TEXTURE.
+ *
+ * Distinct from USE_VALUE above, which is the flat fill the far tier still
+ * uses. These are the colours actually on screen at city scale: warm plaster,
+ * curtain-wall glass, sandstone, coated metal.
+ *
+ * They were hex literals inside the drawers in lib/cesium/textures.ts, which
+ * meant the one thing in the app that decides what a building LOOKS like was
+ * the one thing not stated here. That mattered the moment a legend had to name
+ * them: a key drawn from a second copy of the numbers is a key that can drift
+ * from the façade it claims to describe. textures.ts imports these now, so
+ * there is one set of four and the legend cannot lie.
+ *
+ * Note these are not in the neutral off-white band the rest of the built form
+ * lives in. That is the point and it predates this file knowing about them:
+ * the texture's warm plaster against its dark window pane is what reads as
+ * "this is wall, that is glass" at a glance, and draining it to greys is
+ * exactly the mistake DL-K.1 rolled back.
+ */
+export const USE_WALL_HEX: Record<UseType, string> = {
+  residential: '#d3c9b6',
+  commercial: '#33445a',
+  institutional: '#d7cbae',
+  industrial: '#a3aab3',
+};
+
+/**
+ * The commercial curtain wall is a gradient, not a flat tone: three stops
+ * across the bay, which is what stops a glass façade reading as flat paint.
+ * USE_WALL_HEX.commercial is the middle stop, and it is the one the legend
+ * swatch shows.
+ */
+export const COMMERCIAL_GLASS_HEX = ['#41556a', USE_WALL_HEX.commercial, '#2a3849'] as const;
+
+/**
+ * How the use types are NAMED, for the legend key.
+ *
+ * `institutional` is the fourth value, not "public" -- the data has schools,
+ * hospitals and government offices under one code, and calling that "public"
+ * would quietly widen it to include things it does not contain.
+ */
+export const USE_TYPE_LABEL: Record<UseType, string> = {
+  residential: 'Residential',
+  commercial: 'Commercial',
+  institutional: 'Institutional',
+  industrial: 'Industrial',
 };
 
 /**
@@ -179,15 +330,106 @@ export const MATERIALS = {
    *  for an unusually pale neighbour. */
   buildingHover: grey(255),
 
-  /** An above-ground floor slab in the exploded stack. */
-  floorSlab: grey(210, 0.34),
+  /**
+   * Tint multiplied over a city-scale wall's window-grid texture.
+   *
+   * WHITE, not the use-type colour: the texture already carries the hue, and a
+   * coloured tint multiplies it away -- a warm tint over warm plaster pushes it
+   * to grey and the windows vanish. That is DL-K.2's finding and it stands.
+   *
+   * What DOES vary per building is VALUE. `jitter` is a deterministic ±8%
+   * seeded from the building id (see BuildingsLayer), so two identical blocks
+   * side by side are not the same block twice. Eight percent is small on
+   * purpose: it has to read as "these were rendered at different times" and
+   * never as "these are different categories", which is a distinction the
+   * legend key beside it is making with hue.
+   *
+   * Clamped at 1.0 -- above it the tint stops multiplying and starts clipping
+   * the texture's highlights to flat white.
+   */
+  cityFacadeTint: (jitter = 1, alpha = CITY_BUILDING_ALPHA) =>
+    grey(Math.round(255 * Math.min(1, jitter)), alpha),
+
+  /**
+   * The edge of the building the user has selected.
+   *
+   * Drawn as a polyline round the roof and down the corners, NOT as
+   * `outline: true` on the extrusion. Two reasons, and the second is the one
+   * that matters: an outlined polygon leaves Cesium's batched static path, and
+   * turning it on for 2,213 extrusions to highlight ONE of them is the whole
+   * layer paying for a single building. The polyline set is drawn once and
+   * repositioned, so the cost is constant.
+   *
+   * White, which is what --accent is throughout the chrome. Amber is not
+   * available here: it already means "the signed-in citizen's own flat"
+   * (unitOwn below), and a second meaning would make the first ambiguous.
+   */
+  buildingSelectedEdge: grey(255, 0.95),
+
+  /**
+   * A dark casing drawn one step wider beneath the selection ring.
+   *
+   * The same device ROAD_CASING uses, for the same reason and it is needed
+   * more here: the roof cap the ring traces is grey(203-221) and under a low
+   * sun it renders close to white, so a white ring on it is invisible exactly
+   * where the user is looking. The casing gives the ring an edge to be seen
+   * against on a pale roof, and costs nothing on a dark one.
+   *
+   * Keeping the accent white and adding a casing -- rather than making the
+   * accent itself a colour -- is what keeps the scene's one accent the same
+   * white as --accent in the chrome, and leaves amber meaning "the citizen's
+   * own flat" and red meaning "conflict", which are the only two hues in this
+   * palette that carry a fact.
+   */
+  buildingSelectedEdgeCasing: grey(8, 0.7),
+
+  /**
+   * The edge of the building under the cursor.
+   *
+   * Deliberately much quieter than the selection. Hover is a question and
+   * selection is an answer; if they read at the same strength then sweeping
+   * the mouse across a block looks like repeatedly selecting things.
+   */
+  buildingHoverEdge: grey(255, 0.4),
+
+  /**
+   * The floor-view surfaces are GLASS, not white ledges.
+   *
+   * A deliberate, narrow exception to the neutral-off-white rule at the top of
+   * this file, and the only one in the built form. Every surface in the floor
+   * view is translucent and they are stacked, so a viewer is nearly always
+   * looking through two or three of them at once; in neutral grey those
+   * overlaps compound into a white haze and the stack loses its depth. A few
+   * points of cool cast give each layer of the stack a hue to be told apart by
+   * as well as a value, which is the same value-AND-chroma argument the ground
+   * treatment rests on, applied one level down.
+   *
+   * The cast is small on purpose -- a dozen values off neutral. It has to read
+   * as "this is glass" and never as "this is a category", because a category
+   * is what the unit tints below are for.
+   */
+  floorSlab: rgba(198, 212, 224, 0.34),
+
+  /** The levels around the isolated one. See FLOOR_VIEW.CONTEXT_*_ALPHA. */
+  floorContext: (above: boolean) =>
+    rgba(198, 212, 224, above
+      ? FLOOR_VIEW.CONTEXT_ABOVE_ALPHA
+      : FLOOR_VIEW.CONTEXT_BELOW_ALPHA),
 
   /**
    * The isolated level's base plate. Solid enough to read as a floor the flats
    * stand on, and it is the surface a click resolves to as "the floor" when no
    * unit is under the cursor -- corridors, lobbies, the level's own space.
    */
-  floorPlate: grey(198, 0.82),
+  /**
+   * The isolated level's base plate: the floor the flats stand on.
+   *
+   * The one surface in the floor view kept close to neutral and well up the
+   * value scale. It is the plane the whole view is ABOUT, it is what a click
+   * resolves to as "the floor", and every unit tint has to read against it --
+   * so it is the reference the glass around it is cool relative to.
+   */
+  floorPlate: grey(206, 0.86),
 
   /**
    * The isolated level's height envelope, drawn as a full-Z-extent shell so the
@@ -198,8 +440,8 @@ export const MATERIALS = {
    * inside are plainly visible, and Picker's drill-to-unit rule keeps the shell
    * from swallowing the pick ray as well.
    */
-  floorShell: grey(230, FLOOR_VIEW.SHELL_ALPHA),
-  floorShellOutline: grey(235, 0.55),
+  floorShell: rgba(214, 228, 240, FLOOR_VIEW.SHELL_ALPHA),
+  floorShellOutline: rgba(220, 232, 242, 0.55),
 
   /** Edge of the isolated floor: pure white, so the highlight has a crisp rim. */
   floorActiveOutline: grey(255),
@@ -228,10 +470,18 @@ export const MATERIALS = {
    * visual answer. The geometry now separates them; this separates them at a
    * glance, before the labels are legible.
    *
+   * SIX, not four. The bank cycles by slot, so a plate with more flats than
+   * tints gives two of them the same colour -- and with four, the pair that
+   * collided were slots 0 and 4, which on a typical plate are not adjacent but
+   * are frequently in the same line of sight. Six pushes the first repeat past
+   * the flat count of nearly every plate in both projects. It is not a fix: a
+   * cycle always repeats eventually. It moves the repeat to where it stops
+   * mattering.
+   *
    * Deliberately desaturated to roughly a tenth. The palette elsewhere spends
    * saturation on MEANING -- use type on a facade, asset type on a utility,
    * red on a conflict -- and a flat's slot means nothing beyond "not the one
-   * next to it". These have to be four things you can tell apart while still
+   * next to it". These have to be six things you can tell apart while still
    * reading as the same kind of thing, so they differ mostly in hue at a
    * near-constant value, and none of them competes with the white a selected
    * flat turns.
@@ -242,6 +492,8 @@ export const MATERIALS = {
       Cesium.Color.fromBytes(186, 200, 205),  // cool slate
       Cesium.Color.fromBytes(196, 205, 188),  // pale sage
       Cesium.Color.fromBytes(203, 190, 202),  // dusty mauve
+      Cesium.Color.fromBytes(188, 196, 210),  // pale blue
+      Cesium.Color.fromBytes(208, 194, 184),  // warm clay
     ];
     return tints[((slot % tints.length) + tints.length) % tints.length].withAlpha(alpha);
   },
@@ -295,6 +547,31 @@ export const MATERIALS = {
   parcelFill: grey(190, 0.1),
   parcelOutline: grey(215, 0.85),
   parcelActive: grey(240, 0.28),
+
+  /**
+   * The 2D GIS cadastral layer, over a LIGHT basemap.
+   *
+   * DARK WHERE THE THREE ABOVE ARE LIGHT, and that is the whole reason they
+   * are separate entries rather than a reuse. `parcelOutline` is a 215-grey
+   * chosen to read over satellite imagery and the dark vector basemap; drawn
+   * on CARTO Voyager's off-white ground it is very nearly invisible. A
+   * cadastral sheet is dark ink on pale paper, so these invert.
+   *
+   * MONOCHROME, INCLUDING THE SELECTION. The scene is allowed hue -- that is
+   * what the "meaning" family at the top of this file is for -- but a parcel
+   * boundary carries no meaning a colour could encode, and a selected plot on
+   * a survey sheet is a heavier line, not a coloured one. Keeping the whole
+   * layer in ink also means the basemap remains the only thing supplying the
+   * chroma that scripts/shoot.mjs measures, so the colour audit is testing the
+   * basemap rather than our own highlight.
+   */
+  surveyParcelFill: grey(70, 0.06),
+  surveyParcelOutline: grey(45, 0.8),
+  surveyParcelHover: grey(20, 0.95),
+  surveyParcelActive: grey(10, 1),
+  /** Label ink and its halo. White halo so the number survives a dark roof. */
+  surveyParcelLabelFill: grey(25, 1),
+  surveyParcelLabelOutline: grey(255, 0.9),
 
   /** Architectural model on the active building. */
   buildingModelWall: grey(OFF_WHITE),
@@ -435,6 +712,40 @@ export const ROAD_PICK_PX = 13;
 export const UTILITY_COLOR: Record<UtilityCategory, Cesium.Color> =
   Object.fromEntries(
     UNDERGROUND_LAYERS.map((l) => [l.key, Cesium.Color.fromCssColorString(l.colour)]),
+  ) as Record<UtilityCategory, Cesium.Color>;
+
+/**
+ * The colour a buried tube is actually DRAWN in.
+ *
+ * A lifted version of UTILITY_COLOR, and the lift is standing in for an
+ * emissive term this renderer does not offer. A Cesium entity's
+ * `polylineVolume` / `cylinder` takes a MaterialProperty, and none of the
+ * built-in materials has an emissive channel -- there is no "this surface
+ * gives off light" to set. PolylineGlowMaterialProperty exists but applies to
+ * `polyline`, not to a swept volume, and adding a glow polyline alongside each
+ * tube would double an entity count that reaches 1,214 runs in Banjara Hills
+ * for a highlight.
+ *
+ * So the tube is lit by being brighter. Underground is the one view with no
+ * sun in it -- the globe is translucent, the buildings are at a tenth, and the
+ * ground is nearly black -- and against that a tube at its legend value reads
+ * as a dark line in a dark room. Mixing 22% toward white keeps the hue exactly
+ * (the hue is the encoding, and the legend swatch beside it is the untouched
+ * UTILITY_COLOR) while lifting the value to where the network reads as the
+ * thing emitting in the scene rather than the thing hiding in it.
+ *
+ * 0.9 alpha, unchanged: several networks cross in one view and the one behind
+ * has to stay legible through the one in front.
+ */
+const TUBE_LIFT = 0.22;
+
+export const UTILITY_TUBE_COLOR: Record<UtilityCategory, Cesium.Color> =
+  Object.fromEntries(
+    (Object.keys(UTILITY_COLOR) as UtilityCategory[]).map((k) => {
+      const c = UTILITY_COLOR[k];
+      const lift = (v: number) => v + (1 - v) * TUBE_LIFT;
+      return [k, new Cesium.Color(lift(c.red), lift(c.green), lift(c.blue), 0.9)];
+    }),
   ) as Record<UtilityCategory, Cesium.Color>;
 
 /** The network's name, for the layer panel and the legend. */

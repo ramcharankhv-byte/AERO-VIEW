@@ -4,7 +4,8 @@ import { Pool } from 'pg';
 import type { SiteIndex, SiteSpec } from './infra/types';
 import type {
   BuildingDetail, BuildingProps, ConflictRow, EnrichedBuilding, FlatRegisterEntry,
-  GeoFC, ParcelInfo, Project, ProjectStats, RoadProps, StackHit, UtilityProps,
+  GeoFC, ParcelInfo, Project, ProjectStats, Ring, RoadProps, StackHit,
+  SurveyParcelDetail, SurveyParcelProps, UnitInfo, UtilityProps,
 } from './types';
 import { enrichBuilding, enrichCollection, type UnitFacts } from './mock/building';
 import { allEdits, editsFor, editsRev } from './data/edits';
@@ -408,6 +409,41 @@ function parcelsSql(scope: Scope) {
   };
 }
 
+/**
+ * The 2D cadastral layer. Mirrors SURVEY_PARCELS in scripts/05_export_static.py
+ * field for field, so the PostGIS response and the committed snapshot are the
+ * same document -- which is the property `check:gis2d` runs against both
+ * backends to confirm.
+ *
+ * `building_ids` is here rather than a `survey_parcel_id` on buildings.json:
+ * see the comment on SurveyParcelProps in lib/types.ts.
+ */
+function surveyParcelsSql(scope: Scope) {
+  const f = filter(scope, 'WHERE sp.project_id = $P');
+  return {
+    sql: `
+  SELECT json_build_object(
+    'type','FeatureCollection',
+    'features', COALESCE(json_agg(json_build_object(
+      'type','Feature','id',sp.id,
+      'geometry', ST_AsGeoJSON(sp.geom, 7)::json,
+      'properties', json_build_object(
+        'id',sp.id,'label',sp.label,
+        'ts_no',sp.ts_no,'lpm_no',sp.lpm_no,'ulpin_14',sp.ulpin_14,
+        'extent_sqm',sp.extent_sqm,'classification',sp.classification,
+        'provenance',sp.provenance,'source',sp.source,
+        'source_date', to_char(sp.source_date, 'YYYY-MM-DD'),
+        'building_count', (SELECT count(*) FROM building b
+                            WHERE b.survey_parcel_id = sp.id),
+        'building_ids', COALESCE((SELECT json_agg(b.id ORDER BY b.id)
+                                    FROM building b
+                                   WHERE b.survey_parcel_id = sp.id), '[]'::json)))
+      ORDER BY sp.label),'[]'::json)) AS fc
+  FROM survey_parcel sp ${f.clause}`,
+    params: f.params,
+  };
+}
+
 function utilitiesSql(scope: Scope) {
   const f = filter(scope, 'WHERE u.project_id = $P');
   return {
@@ -776,6 +812,78 @@ export async function getParcels(slug: string): Promise<GeoFC<ParcelInfo>> {
   });
   if (r.ok) return r.value;
   return snapshot<GeoFC<ParcelInfo>>(slug, 'parcels.json');
+}
+
+/**
+ * The survey parcels, from PostGIS or from the committed snapshot.
+ *
+ * The snapshot fallback is the one that matters here in practice: an existing
+ * volume that has not run db/migrations/005 has no `survey_parcel` table, the
+ * query throws, and `viaDb` reports `{ok:false}` -- which lands on exactly the
+ * same file the snapshot backend serves. A project whose seed predates this
+ * layer has neither, and gets an empty FeatureCollection rather than a 500:
+ * the 2D view then draws nothing and says so, which is the truthful state.
+ * `getRoads` takes the same shape for the same reason.
+ */
+export async function getSurveyParcels(
+  slug: string,
+): Promise<GeoFC<SurveyParcelProps>> {
+  const r = await viaDb(slug, async (scope) => {
+    const { sql, params } = surveyParcelsSql(scope);
+    return (await q<{ fc: GeoFC<SurveyParcelProps> }>(sql, params))[0].fc;
+  });
+  if (r.ok) return r.value;
+  try {
+    return await snapshot<GeoFC<SurveyParcelProps>>(slug, 'survey_parcels.json');
+  } catch {
+    return { type: 'FeatureCollection', features: [] } as GeoFC<SurveyParcelProps>;
+  }
+}
+
+/**
+ * One survey parcel with the whole ULPIN tree beneath it.
+ *
+ * NOT A SECOND NESTING IMPLEMENTATION. Every building is read through the same
+ * `getBuildingDetail` that `/building/:id` serves, so floors, units, edits and
+ * the mock register all arrive by the one path that already exists. The only
+ * thing done here is regrouping that document's flat `units` array under the
+ * floor each one names in `floor_id` -- which is a reshape of one response,
+ * not a second way of asking the question.
+ */
+export async function getSurveyParcelDetail(
+  slug: string,
+  id: number,
+): Promise<SurveyParcelDetail | null> {
+  const fc = await getSurveyParcels(slug);
+  const feature = fc.features.find(
+    (f) => (f.properties as SurveyParcelProps | null)?.id === id,
+  );
+  if (!feature) return null;
+  const props = feature.properties as SurveyParcelProps;
+
+  const details = await Promise.all(
+    (props.building_ids ?? []).map((bid) => getBuildingDetail(slug, bid)),
+  );
+
+  const buildings: SurveyParcelDetail['buildings'] = [];
+  for (const d of details) {
+    if (!d) continue;
+    const byFloor = new Map<number, UnitInfo[]>();
+    for (const u of d.units) {
+      const list = byFloor.get(u.floor_id);
+      if (list) list.push(u);
+      else byFloor.set(u.floor_id, [u]);
+    }
+    buildings.push({
+      building: d.building,
+      floors: d.floors.map((f) => ({ ...f, units: byFloor.get(f.id) ?? [] })),
+    });
+  }
+
+  return {
+    parcel: { ...props, geometry: feature.geometry as unknown as Ring },
+    buildings,
+  };
 }
 
 export async function getUtilities(slug: string): Promise<GeoFC<UtilityProps>> {

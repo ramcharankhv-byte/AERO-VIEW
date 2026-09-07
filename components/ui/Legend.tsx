@@ -2,7 +2,10 @@
 
 import { useState } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { RISK_HEX, ROAD_COLOR, ROAD_STYLE } from '@/lib/cesium/materials';
+import {
+  MATERIALS, RISK_HEX, ROAD_COLOR, ROAD_STYLE, SURVEY_PARCEL_VIEW,
+  USE_TYPE_LABEL, USE_WALL_HEX,
+} from '@/lib/cesium/materials';
 import {
   UNDERGROUND_LAYERS, categoryOfAssetType, type UtilityCategory,
 } from '@/lib/underground/categories';
@@ -12,7 +15,7 @@ import {
   HAZARD_CAVEAT, HAZARD_DRIVERS, HAZARD_LABEL, RISK_MEANING,
 } from '@/lib/hazard';
 import { RISK_ORDER } from '@/lib/types';
-import type { RiskClass, RoadClass } from '@/lib/types';
+import type { RiskClass, RoadClass, UseType } from '@/lib/types';
 import { ProvenanceBadge } from './Provenance';
 
 /**
@@ -21,6 +24,13 @@ import { ProvenanceBadge } from './Provenance';
  * Not all nine classes: the key exists to explain that line weight encodes
  * hierarchy, which three examples do better than an exhaustive list.
  */
+/**
+ * The order the use-type key is read in: commonest first for this AOI, so the
+ * colour a viewer is looking at is the one at the top. Not alphabetical --
+ * `commercial` would lead a key for a ward that is 99% residential.
+ */
+const USE_ORDER: UseType[] = ['residential', 'commercial', 'institutional', 'industrial'];
+
 const ROAD_KEY: { cls: RoadClass; label: string }[] = [
   { cls: 'primary', label: 'Arterial' },
   { cls: 'tertiary', label: 'Collector' },
@@ -42,6 +52,8 @@ export default function Legend() {
   const roads = useDataStore((s) => s.roads);
   const showRoads = useViewStore((s) => s.layers.roads);
   const buildings = useDataStore((s) => s.buildings);
+  const showBuildings = useViewStore((s) => s.layers.buildings);
+  const buildingStyle = useViewStore((s) => s.buildingStyle);
   const showLulc = useViewStore((s) => s.layers.bhuvanLulc);
   const showFlood = useViewStore((s) => s.layers.bhuvanFlood);
   const showCyclone = useViewStore((s) => s.layers.bhuvanCyclone);
@@ -61,6 +73,15 @@ export default function Legend() {
   const [override, setOverride] = useState<boolean | null>(null);
   const provenanceOpen = override ?? mode === 'city';
 
+  const gis2d = useViewStore((s) => s.gis2d);
+  const surveyParcels = useDataStore((s) => s.surveyParcels);
+  // Read from the data, not assumed. Every row this repository ships is
+  // derived; the day scripts/import_survey_parcels.py loads a real register,
+  // this key has to stop calling it derived without anyone remembering to
+  // come back and edit it.
+  const surveyProvenance = (surveyParcels?.features[0]?.properties as
+    { provenance?: string } | undefined)?.provenance ?? 'derived';
+
   // Counted per DISPLAY category, not per stored asset_type, so the section
   // below and the underground panel agree about what "Electrical" contains.
   const counts = new Map<UtilityCategory, number>();
@@ -70,6 +91,12 @@ export default function Legend() {
   }
 
   // Counted, not written down: the mix is a property of the loaded data.
+  const useCounts = new Map<UseType, number>();
+  for (const f of buildings?.features ?? []) {
+    const u = f.properties.use_type;
+    useCounts.set(u, (useCounts.get(u) ?? 0) + 1);
+  }
+
   const provCounts = new Map<string, number>();
   let synthetic = 0;
   for (const f of buildings?.features ?? []) {
@@ -114,6 +141,83 @@ export default function Legend() {
           <p className="pt-1 text-[9px] leading-snug text-[rgb(var(--muted))]">
             Counts are buildings by height source. Only OSM tag and Surveyed plan
             are authoritative.
+          </p>
+        </div>
+      ) : null}
+
+      {/* The 2D cadastral layer's one line weight, and what it is NOT.
+          Present only while that view is on, like every other section here.
+          The swatch is inline-styled, which is the data-swatch exemption
+          scripts/shoot.mjs's chrome audit relies on -- though this one is grey
+          either way, because the parcel layer carries no hue to key. */}
+      {gis2d ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Cadastral parcels</div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="flex h-2 w-4 shrink-0 items-center">
+              <span
+                className="w-full rounded-full"
+                style={{
+                  height: `${SURVEY_PARCEL_VIEW.OUTLINE_PX}px`,
+                  background: MATERIALS.surveyParcelOutline.toCssColorString(),
+                }}
+              />
+            </span>
+            <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">
+              {surveyProvenance === 'survey_dept'
+                ? 'Survey parcel boundary'
+                : 'Derived parcel boundary'}
+            </span>
+            <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
+              {surveyParcels?.features.length ?? 0}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            {surveyProvenance === 'survey_dept'
+              ? 'Boundaries as supplied by the issuing survey department; the '
+                + 'panel names the source and its date.'
+              : 'Unofficial. Voronoi plots around clustered OpenStreetMap '
+                + 'footprints, clipped to road corridors. The number in each '
+                + 'plot is a per-project ordinal, NOT a survey number, a TS '
+                + 'number or a Bhu-Aadhaar.'}
+          </p>
+        </div>
+      ) : null}
+
+      {/* What the four façade colours mean.
+          Keyed whenever the masses are on screen: at city scale the surface of
+          a building IS its use type, and a four-colour code with no key is a
+          code with no meaning. Suppressed underground (the masses are dimmed
+          to a tenth there and the strata key needs the space) and in Photoreal
+          (Google's mesh is photography, and none of these colours is on it).
+
+          Counted from the loaded data rather than written down, like the
+          provenance key above: a use type that does not occur in this project
+          is not offered as if it did. Every swatch sets its colour INLINE --
+          scripts/shoot.mjs's chrome audit fails a coloured element inside a
+          panel unless it does, which is exactly the data-swatch exemption. */}
+      {showBuildings && !underground && buildingStyle !== 'photoreal' && useCounts.size > 0 ? (
+        <div className="mt-2 border-t border-[rgb(var(--edge))]/50 pt-2">
+          <div className="panel-title">Building use</div>
+          <div className="mt-1.5 space-y-1">
+            {USE_ORDER.filter((u) => useCounts.has(u)).map((u) => (
+              <div key={u} className="flex items-center gap-2">
+                <span
+                  className="h-2 w-4 shrink-0 rounded-sm ring-1 ring-[rgb(var(--edge-strong))]"
+                  style={{ background: USE_WALL_HEX[u] }}
+                />
+                <span className="flex-1 text-[11px] text-[rgb(var(--ink))]">
+                  {USE_TYPE_LABEL[u]}
+                </span>
+                <span className="font-mono text-[10px] text-[rgb(var(--muted))]">
+                  {useCounts.get(u)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
+            Façade colour and window pattern are drawn from the use type; they
+            are illustrative, not a photograph of the building.
           </p>
         </div>
       ) : null}

@@ -2,7 +2,7 @@
 
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useViewer } from './CesiumRoot';
 import { useActiveDetail, useDataStore, useViewStore } from '@/lib/store';
 import { toSceneZ } from '@/lib/cesium/terrain';
@@ -98,6 +98,28 @@ export default function CameraDirector() {
   const isolatedFloor = useViewStore((s) => s.isolatedFloor);
   const selectedUnitId = useViewStore((s) => s.selectedUnitId);
   const underground = useViewStore((s) => s.underground);
+  const gis2d = useViewStore((s) => s.gis2d);
+  /**
+   * The camera as it stood the moment the 2D view was entered, so leaving it
+   * puts the user back where they were rather than at the canonical city pose.
+   *
+   * A REF, AND STILL INSIDE CameraDirector. The architecture rule is that all
+   * camera motion lives in this file, and remembering a pose is part of moving
+   * one -- putting this on the store would have made the previous camera
+   * position view state that four other components could read and one could
+   * write. The store remembers what the USER chose (mode, basemap, tone); this
+   * remembers where the camera happened to be, which nobody chose.
+   *
+   * activeBuildingId travels with it because the exit is conditional: if the
+   * panel's tree picked a different building while the 2D view was open, the
+   * user is asking to go THERE, and restoring the old pose would fly them back
+   * to the plot they just navigated away from.
+   */
+  const gis2dReturnRef = useRef<{
+    pose: { destination: Cesium.Cartesian3;
+            orientation: Cesium.HeadingPitchRollValues };
+    activeBuildingId: number | null;
+  } | null>(null);
   const activeSiteId = useViewStore((s) => s.activeSiteId);
   const sites = useDataStore((s) => s.sites);
   const buildings = useDataStore((s) => s.buildings);
@@ -126,6 +148,47 @@ export default function CameraDirector() {
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
     const camera = viewer.camera;
+
+    // ---- 2D GIS ----------------------------------------------------------
+    // Straight down, north up, framing the project's bounding box: a plan, not
+    // a perspective. Highest priority in this chain because it is not a level
+    // of the cadastral hierarchy -- it is a different projection of whatever
+    // level you are on, so it has to win over every branch below.
+    //
+    // The height is the same frameHeightFor(bbox) the scene opens on, so the
+    // 2D view covers exactly the area the 3D view does and the two are
+    // comparable at a glance.
+    if (gis2d) {
+      // Only on the way IN. The effect re-runs while the mode is on -- the
+      // panel's tree changes activeBuildingId -- and re-flying to the pose the
+      // camera is already at would jolt the map every time a row was clicked.
+      if (!gis2dReturnRef.current) {
+        gis2dReturnRef.current = {
+          pose: {
+            destination: camera.positionWC.clone(),
+            orientation: {
+              heading: camera.heading, pitch: camera.pitch, roll: camera.roll,
+            },
+          },
+          activeBuildingId,
+        };
+        flyToPose(camera, poseFor(
+          aoiCentre.lon, aoiCentre.lat, 0, cityHeight, -90, 0,
+        ));
+      }
+      return;
+    }
+
+    if (gis2dReturnRef.current) {
+      const back = gis2dReturnRef.current;
+      gis2dReturnRef.current = null;
+      // Unless the tree picked somewhere else, in which case fall through and
+      // let the branches below frame what the user actually selected.
+      if (back.activeBuildingId === activeBuildingId) {
+        flyToPose(camera, back.pose);
+        return;
+      }
+    }
 
     // ---- UNDERGROUND -----------------------------------------------------
     // Shallow pitch so the eye travels along the corridors rather than looking
@@ -255,7 +318,8 @@ export default function CameraDirector() {
     });
   }, [
     viewer, ready, ground, mode, activeBuildingId, isolatedFloor,
-    selectedUnitId, underground, buildings, detail, site, siteSpanM,
+    selectedUnitId, underground, gis2d, buildings, detail, site, siteSpanM,
+    aoiCentre.lon, aoiCentre.lat, cityHeight,
   ]);
 
   // Auto-spin is camera motion, so it is owned here too rather than by the

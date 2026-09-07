@@ -39,13 +39,31 @@
  * a floating panel, the viewport-overflow and collision checks, and console
  * errors.
  *
+ * GIS2D MODE (--gis2d) audits the same viewer with the 2D GIS parcel view
+ * switched on. Everything applies unchanged and nothing is skipped: the parcel
+ * panel and the toggle are chrome and must be monochrome, the parcel labels
+ * and the panel must stay inside the viewport and off each other, the
+ * attribution -- CARTO's and OpenStreetMap's, which is a licence obligation on
+ * that basemap specifically -- must not be covered, and the light vector
+ * basemap must still clear the scene-colour floor. That last one is the reason
+ * this pass exists: a basemap chosen for a cadastral view is exactly the kind
+ * of basemap that could be mistaken for a drained one.
+ *
+ * It is a THIRD pass rather than a flag on the first, so the viewer and
+ * gallery sections of `npm run check:rwd` are unchanged, line for line, from
+ * what they printed before this view existed.
+ *
  * Usage:
  *   node scripts/shoot.mjs                       # default desktop viewport
  *   node scripts/shoot.mjs 390x844 834x1112      # named sizes
  *   node scripts/shoot.mjs --out docs/shots/rwd  # output directory
  *   node scripts/shoot.mjs --gallery             # audit / instead of a viewer
+ *   node scripts/shoot.mjs --gis2d               # audit the 2D GIS view
  */
 import puppeteer from 'puppeteer-core';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -63,36 +81,21 @@ const CHROME =
  */
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 
-/**
- * A session for the run. The viewer and the gallery redirect an anonymous
- * browser to /login, and this harness has no login step, so an acceptance run
- * hands it a signed `ulpin_session` cookie instead:
- *
- *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
- *
- * Unset, the page is loaded anonymously exactly as before.
- */
-async function applySession(page, url) {
-  const value = process.env.ULPIN_SESSION_COOKIE;
-  if (!value) return;
-  const u = new globalThis.URL(url);
-  await page.setCookie({
-    name: 'ulpin_session', value, domain: u.hostname, path: '/',
-    httpOnly: true, sameSite: 'Lax',
-  });
-}
 
 const argv = process.argv.slice(2);
 let OUT = path.join(process.cwd(), 'docs', 'shots', 'rwd');
 let GALLERY = false;
+let GIS2D = false;
 const sizes = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--out') { OUT = path.resolve(argv[++i]); continue; }
   if (argv[i] === '--gallery') { GALLERY = true; continue; }
+  if (argv[i] === '--gis2d') { GIS2D = true; continue; }
   const m = /^(\d+)x(\d+)$/.exec(argv[i]);
   if (m) sizes.push({ width: +m[1], height: +m[2] });
 }
 if (GALLERY && OUT.endsWith('rwd')) OUT = path.join(path.dirname(OUT), 'rwd-gallery');
+if (GIS2D && OUT.endsWith('rwd')) OUT = path.join(path.dirname(OUT), 'rwd-gis2d');
 if (sizes.length === 0) sizes.push({ width: 1680, height: 950 });
 
 mkdirSync(OUT, { recursive: true });
@@ -121,16 +124,14 @@ function isDangerRed(r, g, b) {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--hide-scrollbars',
-    '--no-sandbox',
-  ],
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
+  args: chromeArgs(),
 });
 
 let failures = 0;
+// Reported once, from the first page: the backend is a property of the browser,
+// not of the viewport being shot.
+let backendReported = false;
 try {
   for (const size of sizes) {
     const label = `${size.width}x${size.height}`;
@@ -138,6 +139,7 @@ try {
     const page = await browser.newPage();
     await applySession(page, URL);
     await page.setViewport({ ...size, deviceScaleFactor: 1 });
+    if (!backendReported) { await reportBackend(page); backendReported = true; }
 
     const errors = [];
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -170,6 +172,27 @@ try {
       // when the network is slow: a frame captured mid-load shows the globe's
       // base colour, which reads as a scene that lost its imagery.
       await sleep(SETTLE);
+
+      if (GIS2D) {
+        // Through the button, not through the store: the point of this pass is
+        // to audit what a user gets, and a store poke would skip whatever the
+        // control does on the way. A missing button is reported rather than
+        // silently auditing the 3D view and calling it green.
+        const clicked = await page.evaluate(() => {
+          const b = [...document.querySelectorAll('button')]
+            .find((x) => x.textContent.trim() === '2D GIS');
+          if (!b) return false;
+          b.click();
+          return true;
+        });
+        if (!clicked) {
+          console.log('  FAIL: no 2D GIS control to audit');
+          failures++;
+        }
+        // The basemap swap is a fresh tile pyramid over the whole viewport,
+        // and the parcels are a fetch this view triggers on first open.
+        await sleep(SETTLE);
+      }
     }
 
     // The Cesium ion logo is the one thing on screen we are not allowed to

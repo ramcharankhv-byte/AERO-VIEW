@@ -823,3 +823,298 @@ The brief allowed `data/api/siripuram/` to differ from today's `data/api/` by
 100% renames, zero bytes changed. The export queries do not emit `project_id`
 into feature properties — it is a scoping column, not a fact about a building —
 so the files never needed to move.
+
+---
+
+# 2D GIS parcel mode — decisions log
+
+Append-only, same rules as above. Branch: `feat/gis2d-parcels`, cut from `main`
+at `9446cc0`.
+
+---
+
+## G0 — Facts in the brief that do not match the repository
+
+The same table D1 keeps, for the same reason: every one of these is a place the
+task was written against a repository state that is not this one, and each was
+resolved by following the repository rather than the sentence.
+
+| Brief says | Repository | What I did |
+|---|---|---|
+| Write `db/migrations/002_survey_parcel.sql` | `002_cartodem_bhuvan.sql`, `003_hazard_exposure.sql` and `004_utility_categories.sql` all exist | `005_survey_parcel.sql`. Migrations apply in filename order and reusing 002 would place this table before columns it has nothing to do with |
+| Clip to "OSM `landuse` / `amenity` / `leisure` polygons **present in** the raw Overpass extract" | There are none. `scripts/01_fetch_osm.py` asks Overpass for `way["building"]`, `relation["building"]` and `way["highway"]` and nothing else, so `raw_buildings.geojson` and `raw_highways.geojson` are the whole extract for every project | Added a third Overpass query and a committed `raw_landuse.geojson`. See G2 |
+| Use "the class widths already implied in `scripts/utilities.sql`" | That file carries per-asset DEPTHS and lateral OFFSETS — where a pipe sits beside a centreline — not how wide a street is. The only widths anywhere are `ROAD_STYLE` in `materials.ts`, which are SCREEN PIXELS | Stated once in `lib/roads/corridors.ts`, once as a `VALUES` list in the SQL, and asserted equal by a test. See G3 |
+| "sharing the handler body like the other seven" | There are twelve scoped routes and ten unscoped aliases | Followed the pattern, which is what the sentence is about |
+| Response shape `buildings: [{ ...building, floors: [...] }]` | `EnrichedBuilding.floors` is already a field — the storey COUNT | `[{ building, floors }]`. See G5 |
+| "One new field on the Zustand view store" | Three were needed, four counting hover | See G6 |
+
+## G1 — Two parcel tables, and why the existing one was not changed
+
+`parcel` is a Voronoi cell **trimmed to a 7 m buffer of the built form** —
+`build_geometry.sql` calls it a curtilage, and it is the right shape for
+showing which building stands on which plot in 3D. It is the wrong shape for a
+cadastral sheet: it hugs the buildings, so the land between them belongs to
+nobody and the layer reads as a scatter of blobs rather than as a subdivision.
+
+The 2D view needs the block share — the whole cell, bounded by the streets.
+That is a different derivation of the same plots, so it is a different table,
+and `parcel`, `building.parcel_id`, the parcels layer and the inset are all
+untouched.
+
+**The ordinal is shared.** Both are built from the same DBSCAN clusters, so
+`survey_parcel.label` is read straight off `parcel.ulpin` — `right(ulpin, 4)` —
+rather than renumbered. `AP-VSP-3D26-0042` therefore names one plot whichever
+table you ask, which is the property that makes having two of them safe. The
+alternative was an independent 0001..N sequence, and it was rejected: the same
+parcel4 segment denoting two different polygons depending on which layer you
+happened to be looking at is exactly the kind of quiet identifier collision
+this application exists to avoid.
+
+**Dissolving a sliver retires its ordinal.** The sequence has gaps. That is
+deliberate — renumbering would move every identifier after the gap on the next
+re-seed, and an identifier that moves is not an identifier.
+
+## G2 — The landuse fetch is the one non-fatal stage in the pipeline
+
+Nothing in this repository had ever asked Overpass for a landuse polygon. The
+clip the brief describes therefore had two honest readings: implement it
+against a set that is empty and say so, or go and fetch one.
+
+Fetched. `01_fetch_osm.py` gains a third query over `landuse`, `amenity` and
+`leisure`, ways and relations both, normalised by the same function the
+buildings go through and written to a committed `raw_landuse.geojson`.
+
+**It cannot fail the seed.** Buildings and highways are the cadastre; without
+them there is no project and the run must stop. Landuse is a refinement — it
+keeps a school's grounds as one parcel instead of letting the Voronoi diagram
+of the buildings inside it carve them up — and a project without it gets a
+coarser parcel layer, not a wrong one. Failing an entire seed over that,
+against a free shared service that rate-limits, is the wrong trade. The stage
+gets one round instead of two, prints what happened, and `survey_parcels.sql`
+branches on the row count rather than on the file existing.
+
+Two filters on what counts as a bounding area, both to stop a small polygon
+swallowing a plot: anything also tagged `building` is excluded (an `amenity`
+tag on a building way describes the building), and anything under 400 m² is
+excluded (a restaurant is not a block boundary). Where the clip would leave a
+plot that no longer contains its own buildings, the unclipped cell is kept: the
+refinement is worth having when it is right and never worth a wrong parcel.
+
+## G3 — The corridor widths are stated twice, and asserted once
+
+PostGIS cannot import a TypeScript module, and the unit test that proves no
+parcel crosses a road runs in Node over the exported GeoJSON and cannot ask
+PostGIS. So the numbers exist in `lib/roads/corridors.ts` and in a `VALUES`
+list in `scripts/survey_parcels.sql`, and `lib/survey-parcel.test.ts` reads
+**both files** and fails if they disagree. That is the discipline
+`lib/ulpin.test.ts` already applies to `ulpin.ts` against `ulpin_fmt()`.
+
+Not in `materials.ts`, despite the brief's "materials.ts-adjacent", because
+that module imports Cesium — which touches `window` at load — and this one is
+imported by a `node --test` file with no DOM.
+
+Footways, paths and steps are absent from the table on purpose. A pavement runs
+THROUGH plots rather than between them, and cutting parcels along footways
+would shred them for no cadastral end.
+
+## G4 — Two proofs, because one is not enough
+
+The clipping test asserts that no parcel VERTEX lies inside a corridor **and**
+that no parcel EDGE crosses a centreline. Only the first is the obvious test,
+and only the first is insufficient: a parcel straddling a road with its
+vertices comfortably on either side passes it, and is precisely the failure the
+layer exists to prevent.
+
+Tolerance is 30 cm. `ST_Buffer` approximates a circle with 8 segments per
+quadrant, so the buffer polygon is inscribed in the true buffer and cuts back
+up to `r*(1-cos(pi/32))` — 5.8 cm on the widest corridor — less than nominal;
+the 7-decimal export adds a centimetre. 30 cm covers both and is still two
+orders of magnitude tighter than a real violation, which would be metres.
+
+**The join has a fallback and it is stated rather than hidden.** A footprint
+OpenStreetMap has drawn across a street lies wholly inside a corridor and
+shares area with no parcel at all. It is placed in the nearest one, and the
+stage prints how many took that path. The alternative — unioning the footprint
+back into the parcel — would have broken the no-parcel-crosses-a-road guarantee
+in order to satisfy the join, which is the wrong way round.
+
+## G5 — The response shape the brief asks for cannot be written
+
+`GET /api/p/:slug/survey-parcel/:id` is specified as
+`{ parcel, buildings: [{ ...building, floors: [...] }] }`. Spreading the
+building and then assigning an array to `floors` overwrites a field that
+already exists and means something else: `EnrichedBuilding.floors` is the
+storey COUNT. It would compile, it would look right, and a document whose whole
+job is to be read carefully would be quietly wrong.
+
+Served as `[{ building, floors }]`, which is also the shape `BuildingDetail`
+already uses, so a consumer that knows one knows this one.
+
+**No second nesting implementation.** Every building is read through the same
+`getBuildingDetail` that `/building/:id` serves — floors, units, manual edits
+and the mock register all arrive by the one path that already exists — and the
+only new work is regrouping that document's flat `units` array under the floor
+each unit already names in `floor_id`. That is a reshape of one response, not a
+second way of asking the question.
+
+**The relation is carried on the parcel, not on the building.**
+`survey_parcels.json` has `building_ids`; `buildings.json` gains nothing. Those
+six files are a stated invariant of this repository (HANDOFF.md, "Snapshot
+diff"), and a scoping column is not a fact about a building. The relation has
+to be readable from one side, and this is the side that can change.
+
+## G6 — Three store fields, not one
+
+The brief allows one. Three were needed and each has a single writer:
+
+* `gis2d` — the mode. Written by `setGis2d` alone.
+* `activeSurveyParcelId` — written by `Picker` and cleared by `setGis2d`,
+  following the same rule as every other selection field.
+* `preGis2d` — what to put back on the way out. Entering overwrites three
+  fields the user chose (mode, basemap, tone) and leaving has to undo exactly
+  that and nothing else; holding the previous values means the restore cannot
+  drift from what was overwritten.
+
+A hover field, `hoveredSurveyParcelId`, makes four. It is not folded into
+`hoveredBuildingId` for the reason `EntityTag` gains a separate `surveyParcel`
+kind: they are different polygons from different tables with different ids, and
+sharing either would put a building id into a parcel highlight.
+
+**`viewMode: '3D' | '2D' | 'Split'` already exists on this store and was left
+alone.** It is wired to a segmented control in `LayerPanel` and to nothing else
+— `grep` finds no globe component reading it — so adopting it would have given
+this mode two writers on its first day, one of them a control that does not
+know the mode exists.
+
+**Four ways out, one `leaveGis2d()`.** The toggle, Slice, Explode and Reset all
+leave the mode, and all four call the same function. Four copies of the restore
+would be four chances to forget the basemap and leave a 3D scene drawn over a
+street map.
+
+`preGis2d` carries `activeBuildingId` not to restore it but to COMPARE it: if
+the panel's tree changed the selection while the view was open, going back to
+the level the user came from would mean going back to a different building's
+floor, so a changed selection wins.
+
+## G7 — Nothing unmounts, and the line between hidden and kept
+
+Unmounting the 3D layers is the obvious implementation and the wrong one: it
+tears down and rebuilds ~770 building entities on a control the user is
+expected to flick back and forth. Each layer gates its own single visibility
+expression instead, which is a flag flip.
+
+The rule, written once in `Scene.tsx`: **anything drawn above the ground stands
+down; anything draped on the ground stays under the user's control.** So the
+buildings, the floor stack, the units, the utilities, the conflicts, the
+streets and the infrastructure site all hide, and the Bhuvan land-use and
+hazard overlays do not — they are ground-draped raster context, they are off
+unless someone asked for them, and land use underneath parcel boundaries is
+what a GIS is FOR. Turning off a layer someone deliberately enabled would be
+this view overruling them.
+
+`ParcelsLayer` is the exception that proves the rule: it is draped, and it
+hides, because `SurveyParcelsLayer` replaces it. Two parcel layers drawn
+together would be two different derivations of the same plots, in the same ink,
+on the same ground, with no way for a reader to tell which boundary was which.
+
+The floor stack and the units need no gate: entering drops `mode` to `city` and
+forces `slice.enabled` false, and both are already inert in that state.
+
+## G8 — The camera remembers where it was, not where it should be
+
+`CameraDirector` gains one branch at the top of its chain and one ref. The ref
+holds the camera as it actually stood when the view was entered, so leaving
+puts the user back where they were rather than at the canonical city pose,
+which is what "restore the previous pose" means when the user has orbited.
+
+**The ref is in `CameraDirector`, not on the store.** Remembering a pose is
+part of moving one, and the architecture rule is that all camera motion lives
+in that file. The store remembers what the USER chose; this remembers where the
+camera happened to be, which nobody chose. Putting it on the store would have
+made the previous camera position view state that four components could read.
+
+Measured against the running application: `-55.0 / 35.0 / 1199 m` before,
+`-90.0 / 0.0 / 1199 m` during, `-55.0 / 35.0 / 1199 m` after.
+
+**No new camera call site.** The grep in HANDOFF.md still returns nothing.
+
+## G9 — The basemap, and a watermark that was already there
+
+CARTO Voyager, not Positron, and the reason is measurable. `scripts/shoot.mjs`
+requires the SCENE to carry real chroma and fails below 3% of pixels whose max
+channel exceeds its min by more than 8 — a check that exists to catch a basemap
+someone has drained. Positron is very nearly greyscale by design and the check
+could not tell one from the other. Voyager measures **21.59% coloured pixels**
+at 1680x950 on the GPU, so the brief's fallback was not needed.
+
+Not `tile.openstreetmap.org`: OSM's tile usage policy does not permit
+application use, and the fact that the tiles would render is not permission.
+Both CARTO and OpenStreetMap are credited, which is the licence obligation on
+CARTO's rendering of ODbL data.
+
+**CARTO now stamps "API KEY REQUIRED" across every anonymous basemap tile.**
+Verified by fetching one tile over the AOI from `rastertiles/voyager`,
+`light_all` and `dark_all` — all three watermarked, and `dark_all` is the
+basemap this application has served since long before the 2D view existed. So
+it is a change in the service, not a property of the new provider, and it is
+fixed for both entries rather than worked around for one: an optional
+`NEXT_PUBLIC_CARTO_API_KEY` removes it. Optional is the operative word — unset,
+every CARTO style renders exactly as it does today and no provider here
+requires a token, which is what the brief forbids.
+
+## G10 — Outline only, in two entities
+
+`ParcelsLayer` records that **Cesium cannot outline a ground-clamped polygon**:
+it disables the outline and warns every frame. So the boundary is a separate
+`clampToGround` polyline — the supported path, and the one that survives
+Photoreal mode — and the polygon underneath it exists to make the plot pickable
+across its whole area, carrying the 6% fill the brief's "at most 8%" branch
+allows.
+
+The hover and selection callbacks are on the POLYLINE, not the fill. At most
+one plot is hovered and one selected, so a `CallbackProperty` per fill would be
+324 closures a frame computing "no" — which is the precise cost `ParcelsLayer`
+had removed from it and documented, and re-adding it two files later would have
+been a strange way to honour that.
+
+The colours are new entries in `materials.ts` rather than a reuse of
+`parcelOutline`, and that is the point of them: the existing greys are chosen
+to read over satellite imagery and a dark vector basemap, and a 215-grey on
+Voyager's off-white ground is very nearly invisible. A cadastral sheet is dark
+ink on pale paper, so these invert. Monochrome including the selection — a
+selected plot on a survey sheet is a heavier line, not a coloured one — which
+also keeps the basemap the only thing supplying the chroma the colour audit
+measures.
+
+**The label sits at the pole of inaccessibility, not the centroid.** A parcel
+clipped around a junction is routinely an L, and the average of its vertices
+lands on the neighbour's land. Thirty lines of grid search in `lib/geo.ts`, not
+a dependency.
+
+## G11 — The RWD audit is a third pass, not a flag on the first
+
+`check:rwd`'s viewer and gallery sections print what they printed before this
+view existed, line for line. `shoot.mjs --gis2d` is appended as a third pass
+that runs all six audits with the view switched on — through the BUTTON, not
+through the store, because the point of the pass is to audit what a user gets
+and a store poke would skip whatever the control does on the way.
+
+Nothing is skipped in it, including the scene-colour floor, and that is the
+reason the pass exists: a light basemap chosen for a cadastral view is exactly
+the kind of basemap that could be mistaken for a drained one.
+
+## G12 — The first defect the first rendered frame found
+
+`BuildingsLayer` and `BuildingEdgeLayer` each gained `&& !gis2d` on their one
+visibility expression and neither gained `gis2d` in the effect's dependency
+array. The flag was therefore read once, at mount, when it was false, and never
+again. Because the callbacks that consume it run every frame, the symptom read
+as a rendering problem rather than as a stale closure: the entire 3D city
+stayed on screen underneath a top-down 2D map, with the toggle lit, Slice
+correctly disabled, and the status bar reporting `2D GIS - DERIVED PARCELS`.
+
+Worth recording because the audit did not catch it. `shoot.mjs --gis2d` passed
+all six checks on that frame — the chrome was monochrome, the panels did not
+collide, the attribution was visible and the scene was emphatically in colour.
+Every one of those was true of a view that was wrong. It took looking at the
+screenshot.

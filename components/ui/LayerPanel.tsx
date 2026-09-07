@@ -130,7 +130,8 @@ export default function LayerPanel() {
   const slice = useViewStore((s) => s.slice);
   const setSlice = useViewStore((s) => s.setSlice);
   const activeBuildingId = useViewStore((s) => s.activeBuildingId);
-  const canSlice = activeBuildingId !== null;
+  const gis2d = useViewStore((s) => s.gis2d);
+  const canSlice = activeBuildingId !== null && !gis2d;
   // Only the overlays this project defines get a toggle; a project without a
   // bhuvan_layers block gets no group at all.
   const bhuvan = useViewStore((s) => s.project?.bhuvan_layers ?? null);
@@ -354,7 +355,10 @@ export default function LayerPanel() {
           value={explodeT}
           onChange={setExplode}
           suffix="%"
-          disabled={mode === 'city'}
+          // Also disabled in the 2D GIS view, which the store already refuses
+          // to combine with; this is the control saying so before the user
+          // drags a slider that would silently drop them out of 2D.
+          disabled={mode === 'city' || gis2d}
         />
         {/* Both sliders act on schematic geometry only -- they never touch the
             Google tileset. Explode still bites in Photoreal because the floor

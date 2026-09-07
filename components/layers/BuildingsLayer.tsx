@@ -5,11 +5,14 @@ import * as Cesium from 'cesium';
 import { useEffect, useRef } from 'react';
 import { useViewer } from '../globe/CesiumRoot';
 import { useDataStore, useViewStore } from '@/lib/store';
-import { MATERIALS } from '@/lib/cesium/materials';
+import {
+  CITY_BUILDING_ALPHA, MATERIALS, UNDERGROUND_BUILDING_ALPHA,
+} from '@/lib/cesium/materials';
+import { rngFor } from '@/lib/mock/prng';
 import { tagEntity } from '@/lib/cesium/tag';
 import { windowGrid } from '@/lib/cesium/textures';
 import { toSceneZ } from '@/lib/cesium/terrain';
-import { flatLonLat } from '@/lib/geo';
+import { flatLonLat, haversineM } from '@/lib/geo';
 import { mark } from '@/lib/boot-marks';
 import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { createBucketGrid, extentOf } from '@/lib/cesium/spatial-buckets';
@@ -71,20 +74,14 @@ const FAR_M = 1500;
 const NEAR_DDC = new Cesium.DistanceDisplayCondition(0, FAR_M);
 
 /**
- * Resting alpha for a city-scale building wall and cap.
- *
- * The earlier BUILDING_ALPHA = 0.45 design read the buildings as translucent
- * shells drawn OVER the satellite imagery, so the parcel polygons, the lane
- * and the plot underneath stayed readable through the extrusion. The user
- * has since asked for the buildings to look like solid volumes (the
- * commercial block in the reference is a deep navy curtain wall, the
- * residential one is a warm cream with a clear window grid -- both opaque,
- * with the imagery visible AROUND the building, not THROUGH it). 0.95 lets
- * the texture's own use-type colour and window grid be the surface the
- * viewer sees, with just enough softness that a building edge does not read
- * as a painted-on decal at a raking angle.
+ * The resting alpha of a city-scale mass, and the alpha it fades to
+ * underground, both now live in lib/cesium/materials.ts with their reasoning.
+ * They were local constants here, which is the rule at the top of that file
+ * breached exactly: a layer component was deciding the resting look of the
+ * primary object in the scene, and the two could not be compared with
+ * BUILDING_ALPHA -- which they supersede for these entities -- without
+ * opening two files.
  */
-const CITY_ALPHA = 0.95;
 
 export default function BuildingsLayer() {
   const { viewer, ground, ready } = useViewer();
@@ -108,6 +105,7 @@ export default function BuildingsLayer() {
   const transparency = useViewStore((s) => s.transparency);
   const underground = useViewStore((s) => s.underground);
   const showBuildings = useViewStore((s) => s.layers.buildings);
+  const gis2d = useViewStore((s) => s.gis2d);
   const buildingStyle = useViewStore((s) => s.buildingStyle);
   // Shadows are scoped to the buildings: they are what reads as massing under a
   // low sun, and every extra casting layer is another depth pass per frame.
@@ -194,6 +192,25 @@ export default function BuildingsLayer() {
       const base = toSceneZ(props.ground_elev, props.ground_elev, terrainH);
       const use = props.use_type as UseType;
       const id = props.id;
+      /**
+       * Per-building brightness, +/-8%, deterministic from the building id.
+       *
+       * Four canvases are shared across 2,213 walls, so without this a row of
+       * same-use blocks is literally the same image repeated -- the eye reads
+       * that as one long building, or as a texture applied to the city rather
+       * than as buildings. An 8% value spread breaks the repetition at the
+       * scale it is visible (a whole facade) without touching the scale that
+       * carries meaning (the window rhythm within it).
+       *
+       * rngFor is the same seeded generator lib/mock/ uses for the synthetic
+       * register, so a building looks the same on every reload and on every
+       * backend -- a jitter that changed per session would make two
+       * screenshots of the same block impossible to compare.
+       *
+       * Computed ONCE, here, not inside the material callback: the callback
+       * runs per frame per entity, and a random draw in it would strobe.
+       */
+      const jitter = 0.92 + rngFor('facade-value', id)() * 0.16;
       // Both entities for a building go in the same bucket, chosen from its
       // first vertex: a footprint is far smaller than a cell, so which vertex
       // decides is immaterial, and keeping the pair together means a cull can
@@ -223,28 +240,74 @@ export default function BuildingsLayer() {
       // is visible, which is the near tier -- the 1500 m DDC cutoff already
       // hands sub-pixel textures off to BuildingsFarLayer.
       //
-      // The wall is OPAQUE (CITY_ALPHA = 0.95) rather than the historic
+      // The wall is OPAQUE (CITY_BUILDING_ALPHA = 0.95) rather than the historic
       // translucent BUILDING_ALPHA = 0.45 -- the user has asked for solid
       // buildings with the imagery visible AROUND them, not translucent
-      // shells with the imagery showing THROUGH them. See CITY_ALPHA above
-      // and DL-K.3 in docs/perf/decisions-log.md for the rationale and
-      // measurement.
+      // shells with the imagery showing THROUGH them. See materials.ts for
+      // the constant, and DL-K.3 in docs/perf/decisions-log.md for the
+      // rationale and measurement.
       //
       // `fade` is clamped rather than multiplied: it is an absolute alpha for
       // the buildings you are not inspecting, so clamping keeps "faded" below
       // "at rest" without ever multiplying two transparencies into nothing.
+      /**
+       * How many times the tile repeats around the wall and up it.
+       *
+       * WITHOUT THIS the texture was never tiled at all. Cesium maps an image
+       * material across a polygon's UVs once by default, so a single
+       * 3 m x 3.2 m tile -- one bay, one storey -- was being stretched over
+       * the ENTIRE facade of every building: one storey-high window blown up
+       * to the full height of a nine-storey block. That is why the city read
+       * as pale smeared masses rather than as windowed buildings, and it is
+       * what check_photoreal's "facade texture repeats once per storey"
+       * assertion has been reporting since the texture landed.
+       *
+       * X is the perimeter divided by the 3 m bay: the wall UV runs around the
+       * footprint, so this puts one bay every three metres whatever the
+       * building's plan. Y is the storey count, which is the whole point --
+       * the window rows then EQUAL the storeys, and a nine-storey block shows
+       * nine rows rather than a taller version of a one-storey block.
+       *
+       * Rounded to whole tiles so the pattern closes on itself instead of
+       * cutting a window in half at the seam, and floored at 1 so a single-
+       * storey shed still gets one row rather than none.
+       *
+       * A ConstantProperty by construction (a plain Cartesian2): this is
+       * static geometry and must stay on Cesium's static updater path.
+       */
+      let perimeterM = 0;
+      for (let i = 0; i < ring.length - 1; i += 1) {
+        perimeterM += haversineM(
+          { lon: ring[i][0], lat: ring[i][1] },
+          { lon: ring[i + 1][0], lat: ring[i + 1][1] },
+        );
+      }
+      const storeys = Math.max(1, props.floors || Math.round(props.height_m / 3.2));
+      const repeat = new Cesium.Cartesian2(
+        Math.max(1, Math.round(perimeterM / 3)),
+        Math.max(1, storeys),
+      );
+
       const wallMaterial = new Cesium.ImageMaterialProperty({
         image: windowGrid(use, 3, 3.2),
+        repeat,
         color: new Cesium.CallbackProperty(() => {
           const s = stateRef.current;
           // Photoreal: present for picking, invisible on screen. Checked first
           // so neither hover nor fade can bring the ghost back into view.
           if (s.style === 'photoreal') return MATERIALS.buildingGhost;
           if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
-          if (s.activeId === null || s.activeId === id) {
-            return Cesium.Color.WHITE.withAlpha(CITY_ALPHA);
-          }
-          return Cesium.Color.WHITE.withAlpha(Math.min(CITY_ALPHA, s.fade));
+          // Clamped by `fade` on BOTH branches, and that is the fix for a
+          // real defect: this branch used to return the full resting alpha,
+          // so with NO building selected the eased fade had nothing to act on
+          // -- and underground mode drives that fade for every building at
+          // once, selection or not. Entering underground from the city view
+          // therefore left 385 near-solid masses standing over the buried
+          // network the mode exists to show. At rest `fade` is 1 and the
+          // clamp is a no-op, so the resting look is unchanged.
+          return MATERIALS.cityFacadeTint(
+            jitter, Math.min(CITY_BUILDING_ALPHA, s.fade),
+          );
         }, false),
       });
 
@@ -278,7 +341,7 @@ export default function BuildingsLayer() {
       // from the wall. With a raking sun the cap is the face that catches the
       // light while the walls fall into shade, which is most of what makes the
       // height legible from above; the faded callback keeps the whole building
-      // (walls + cap) dissolving together. The cap is opaque at CITY_ALPHA,
+      // (walls + cap) dissolving together. The cap is opaque at CITY_BUILDING_ALPHA,
       // not the historic translucent BUILDING_ALPHA, so the roof reads as
       // solid with the wall (DL-K.3).
       const capTop = base + Math.max(2, props.height_m) + 0.05;
@@ -292,10 +355,10 @@ export default function BuildingsLayer() {
               const s = stateRef.current;
               if (s.style === 'photoreal') return MATERIALS.buildingGhost;
               if (s.hoveredId === id) return MATERIALS.buildingHover.withAlpha(0.85);
-              if (s.activeId === null || s.activeId === id) {
-                return MATERIALS.buildingRoofCap(use, CITY_ALPHA);
-              }
-              return MATERIALS.buildingRoofCap(use, Math.min(CITY_ALPHA, s.fade));
+              // Clamped on both branches, for the reason the wall states.
+              return MATERIALS.buildingRoofCap(
+                use, Math.min(CITY_BUILDING_ALPHA, s.fade),
+              );
             }, false),
           ),
           outline: false,
@@ -403,7 +466,9 @@ export default function BuildingsLayer() {
     const s = stateRef.current;
     s.activeId = activeBuildingId;
     s.hoveredId = hoveredBuildingId;
-    s.visible = showBuildings;
+    // In the 2D GIS view the whole 3D scene stands down: see
+    // components/globe/Scene.tsx for what is hidden and what is not.
+    s.visible = showBuildings && !gis2d;
     s.hideActive = mode !== 'city';
     s.style = buildingStyle;
     // 15% in underground mode, otherwise the transparency slider (default 12%).
@@ -411,9 +476,9 @@ export default function BuildingsLayer() {
     // colour callback returns the ghost before it consults `fade` at all, and
     // nothing here touches the tileset.
     s.fadeTarget =
-      underground ? 0.15 : activeBuildingId === null ? 1 : transparency / 100;
-  }, [activeBuildingId, hoveredBuildingId, showBuildings, mode, transparency,
-      underground, buildingStyle]);
+      underground ? UNDERGROUND_BUILDING_ALPHA : activeBuildingId === null ? 1 : transparency / 100;
+  }, [activeBuildingId, hoveredBuildingId, showBuildings, gis2d, mode,
+      transparency, underground, buildingStyle]);
 
   // Shadows follow the sun slider. Off until it is touched.
   useEffect(() => {
@@ -429,7 +494,7 @@ export default function BuildingsLayer() {
   // that keeps waking every frame to compare two equal numbers is pure cost --
   // it kept a laptop's GPU and main thread out of idle on a static view. It is
   // restarted by the effect above whenever fadeTarget actually moves.
-  const fadeTarget = underground ? 0.15 : activeBuildingId === null ? 1 : transparency / 100;
+  const fadeTarget = underground ? UNDERGROUND_BUILDING_ALPHA : activeBuildingId === null ? 1 : transparency / 100;
   useEffect(() => {
     let raf = 0;
     const step = () => {

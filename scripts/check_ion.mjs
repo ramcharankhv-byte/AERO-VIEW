@@ -6,6 +6,7 @@
  * / terrain hosts the page actually fetched from.
  */
 import puppeteer from 'puppeteer-core';
+import { PROTOCOL_TIMEOUT_MS, chromeArgs, reportBackend } from './_chrome.mjs';
 
 const CHROME =
   process.env.CHROME_PATH ??
@@ -14,13 +15,8 @@ const CHROME =
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--no-sandbox',
-    '--window-size=1680,950',
-  ],
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
+  args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
 

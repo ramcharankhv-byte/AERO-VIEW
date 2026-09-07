@@ -10,6 +10,9 @@
  * Usage: node scripts/verify_ui.mjs [outDir]
  */
 import puppeteer from 'puppeteer-core';
+import {
+  PROTOCOL_TIMEOUT_MS, applySession, chromeArgs, reportBackend,
+} from './_chrome.mjs';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -24,24 +27,6 @@ const OUT = process.argv[2] ?? path.join(process.cwd(), 'docs', 'shots');
  */
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 
-/**
- * A session for the run. The viewer and the gallery redirect an anonymous
- * browser to /login, and this harness has no login step, so an acceptance run
- * hands it a signed `ulpin_session` cookie instead:
- *
- *   ULPIN_SESSION_COOKIE=$(node --experimental-strip-types scripts/mint_session.mjs)
- *
- * Unset, the page is loaded anonymously exactly as before.
- */
-async function applySession(page, url) {
-  const value = process.env.ULPIN_SESSION_COOKIE;
-  if (!value) return;
-  const u = new globalThis.URL(url);
-  await page.setCookie({
-    name: 'ulpin_session', value, domain: u.hostname, path: '/',
-    httpOnly: true, sameSite: 'Lax',
-  });
-}
 const CHROME =
   process.env.CHROME_PATH ??
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
@@ -98,19 +83,14 @@ function check(label, ok, detail = '') {
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: [
-    '--window-size=1680,950',
-    '--use-gl=angle',
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
-    '--hide-scrollbars',
-    '--no-sandbox',
-  ],
+  protocolTimeout: PROTOCOL_TIMEOUT_MS,
+  args: chromeArgs({ window: '1680,950' }),
   defaultViewport: { width: 1680, height: 950 },
 });
 
 try {
   const page = await browser.newPage();
+  await reportBackend(page);
   await applySession(page, URL);
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
@@ -743,8 +723,286 @@ try {
     check(`${label} rendered disabled`, disabled.includes(label), disabled.join(','));
   }
 
+  // ------------------------------------------------- both building styles
+  /**
+   * The same structural walk, in BOTH building styles.
+   *
+   * Sections [1]-[8] above exercise Schematic, which is the default. This
+   * repeats city -> building -> floor -> unit -> underground in each style,
+   * because "hover, pick, edit and the floor/unit overlays behave identically
+   * in Photoreal" is a claim the app makes and nothing was checking end to
+   * end. check_photoreal proves the tileset loads and that ONE pick reaches a
+   * ghosted extrusion through the mesh; it does not walk the hierarchy.
+   *
+   * PHOTOREAL IS ALLOWED TO BE UNAVAILABLE. Google's tiles need a working ion
+   * token and live quota, and the app's documented behaviour when they fail is
+   * to fall back to Schematic and say so. A run without a token therefore
+   * asserts the FALLBACK is clean rather than failing -- an acceptance script
+   * that goes red because a third party is rate-limiting is one that gets
+   * ignored.
+   */
+  console.log('\n[10] BOTH BUILDING STYLES');
+
+  const setStyle = async (label) => {
+    const ok = await page.evaluate((t) => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => x.textContent.trim() === t);
+      if (!b) return false;
+      b.click();
+      return true;
+    }, label);
+    if (!ok) return false;
+    // Either the tileset streams in or the app falls back and says so.
+    await page
+      .waitForFunction(() => {
+        const v = window.__ulpinViewer;
+        if (!v) return false;
+        const prims = v.scene.primitives;
+        for (let i = 0; i < prims.length; i++) {
+          const p = prims.get(i);
+          if (p && p.constructor && p.constructor.name === 'Cesium3DTileset') return true;
+        }
+        return /unavailable|quota|rejected/i.test(document.body.innerText);
+      }, { timeout: 60000 })
+      .catch(() => {});
+    await sleep(label === 'Photoreal' ? 10000 : 4000);
+    return true;
+  };
+
+  /** Total entities across the bucketed building data sources. */
+  const buildingEntityCount = () => page.evaluate(() => {
+    const v = window.__ulpinViewer;
+    let n = 0;
+    for (let i = 0; i < v.dataSources.length; i++) {
+      const ds = v.dataSources.get(i);
+      if (ds.name && ds.name.startsWith('buildings')) n += ds.entities.values.length;
+    }
+    return n;
+  });
+
+  const backToCity = async () => {
+    await page.evaluate(() => {
+      for (const label of ['Back to city', 'Back to building', 'Back to floor']) {
+        const b = [...document.querySelectorAll('button')]
+          .find((x) => x.textContent.trim() === label);
+        if (b) b.click();
+      }
+    });
+    await sleep(2500);
+  };
+
+  const styleErrorsFrom = errors.length;
+
+  for (const style of ['Schematic', 'Photoreal']) {
+    console.log(`\n  --- ${style} ---`);
+    await backToCity();
+    await backToCity();
+
+    const switched = await setStyle(style);
+    check(`${style}: the style toggle is present`, switched);
+    if (!switched) continue;
+
+    const state = await page.evaluate(() => {
+      const v = window.__ulpinViewer;
+      const prims = v.scene.primitives;
+      let tilesets = 0;
+      for (let i = 0; i < prims.length; i++) {
+        const p = prims.get(i);
+        if (p && p.constructor && p.constructor.name === 'Cesium3DTileset') tilesets++;
+      }
+      return { tilesets, text: document.body.innerText.replace(/\s+/g, ' ') };
+    });
+    if (style === 'Photoreal' && state.tilesets === 0) {
+      // The documented degraded path. Assert it is the CLEAN one: the app has
+      // to have said so, not left a broken scene up in silence.
+      check(
+        'Photoreal unavailable, and the app fell back and said so',
+        /unavailable|failed|quota|token|rejected/i.test(state.text),
+        'no tileset and no explanation on screen',
+      );
+    } else if (style === 'Photoreal') {
+      check('Photoreal: Google tileset is live', state.tilesets === 1,
+        `tilesets=${state.tilesets}`);
+    }
+
+    check(`${style}: city view still reports the AOI`,
+      new RegExp(`${BUILDING_COUNT} 3D buildings`).test(state.text)
+      || /Siripuram/.test(state.text));
+
+    // ---- building, by search. A canvas pick would depend on where a
+    // footprint happens to land, and under Photoreal on what streamed in.
+    await page.evaluate(() => {
+      const i = document.querySelector('input[placeholder*="Search"]');
+      if (i) { i.focus(); i.value = ''; }
+    });
+    await page.type('input[placeholder*="Search"]', 'AP-VSP-3D26-0001', { delay: 15 });
+    await sleep(1600);
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => /AP-VSP-3D26-0001/.test(x.innerText));
+      if (b) b.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    await sleep(5000);
+    const bText = await panelText(page);
+    check(`${style}: building opens with its ULPIN`,
+      /AP-VSP-3D26-0001-001/.test(bText));
+    check(`${style}: provenance line survives the style`,
+      /OSM tag|Estimated|Surveyed plan|DSM|DEM/i.test(bText));
+
+    // ---- the entity count is unchanged across an edit SAVE
+    const before = await buildingEntityCount();
+    const opened = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => x.textContent.trim() === 'Edit');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    if (opened) {
+      await sleep(1500);
+      /**
+       * Drive the storeys field the way a user would, through the native
+       * setter a React controlled input listens to.
+       *
+       * The new value is derived from the CURRENT one rather than fixed. A
+       * fixed value silently stops working the second time this runs: the
+       * field already holds it, the form is never dirty, Save is never
+       * offered, and the form stays open -- which then hides the Edit button
+       * from the next style's pass, because DetailPanel renders no Edit
+       * control while a form is open. The failure surfaces one section later
+       * as "no Edit button", nowhere near its cause.
+       */
+      const typed = await page.evaluate(() => {
+        const el = document.querySelector('#edit-floors')
+          || [...document.querySelectorAll('input')]
+            .find((i) => /floor/i.test(`${i.name} ${i.id}`));
+        if (!el) return null;
+        const set = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, 'value',
+        ).set;
+        const next = String(el.value).trim() === '7' ? '8' : '7';
+        set.call(el, next);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return next;
+      });
+      await sleep(900);
+      const saved = await page.evaluate(() => {
+        const b = [...document.querySelectorAll('button')]
+          // "Save changes", not "Save" -- see BuildingEditForm. It is
+          // disabled until the form is dirty, so requiring it to be ENABLED
+          // also asserts the edit above actually took.
+          .find((x) => /^Save changes$/.test(x.textContent.trim()) && !x.disabled);
+        if (!b) return false;
+        b.click();
+        return true;
+      });
+      await page
+        .waitForFunction(() => /Saved/.test(document.body.innerText), { timeout: 30000 })
+        .catch(() => {});
+      await sleep(2500);
+      const after = await buildingEntityCount();
+      check(
+        `${style}: an edit updates one entity, it does not rebuild the layer`,
+        Boolean(typed) && saved && before === after && before > 0,
+        `floors -> ${typed}, ${before} -> ${after}`,
+      );
+      // Leave no form open behind us, whatever happened above: an open form
+      // hides the Edit button for the next pass.
+      await page.evaluate(() => {
+        const b = [...document.querySelectorAll('button')]
+          .find((x) => x.textContent.trim() === 'Cancel');
+        if (b) b.click();
+      });
+      await sleep(1200);
+    } else {
+      check(`${style}: an Edit control is offered`, false, 'no Edit button');
+    }
+
+    // ---- floor
+    const rung = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => x.textContent.trim() === '2');
+      if (!b) return false;
+      b.click();
+      return true;
+    });
+    await sleep(5000);
+    check(`${style}: a floor isolates`,
+      rung && /FLOOR LEVEL|Level number/i.test(await panelText(page)));
+
+    /**
+     * The unit pick, using [6]'s technique rather than a variation on it.
+     *
+     * Two details there are load-bearing and were worth copying exactly. The
+     * entity's OWN `position` is projected, not a centroid recomputed from the
+     * ring -- a flat is not convex in general and its vertex mean can fall
+     * outside it. And every visible candidate is TRIED, rather than the first
+     * one whose projection lands on screen: a centroid can project inside the
+     * viewport while the flat itself is occluded or facing away, which is
+     * exactly what a single-candidate version did here (it kept offering
+     * 964,565, where the drill finds no unit at all).
+     */
+    const unitPts = await page.evaluate(() => {
+      const v = window.__ulpinViewer;
+      const ds = v.dataSources.getByName('units')[0];
+      if (!ds) return [];
+      const now = v.clock.currentTime;
+      const out = [];
+      for (const e of ds.entities.values) {
+        if (e.tag?.kind !== 'unit') continue;
+        const shown = e.polygon?.show?.getValue(now);
+        if (!shown || !e.position) continue;
+        const win = v.scene.cartesianToCanvasCoordinates(e.position.getValue(now));
+        if (win) out.push({ x: Math.round(win.x), y: Math.round(win.y) });
+      }
+      return out;
+    });
+    let unitOk = false;
+    let unitAt = null;
+    for (const q of unitPts) {
+      if (q.x < 260 || q.y < 70 || q.x > 1340 || q.y > 870) continue;
+      await page.mouse.click(q.x, q.y);
+      await sleep(1600);
+      if (/Titled unit|Carpet area/.test(await panelText(page))) {
+        unitOk = true;
+        unitAt = `${q.x},${q.y}`;
+        break;
+      }
+    }
+    check(`${style}: a unit picks as a UNIT`, unitOk,
+      unitOk ? `at ${unitAt}` : `${unitPts.length} candidate(s), none resolved`);
+
+    // ---- underground
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => x.textContent.trim() === 'Underground');
+      if (b) b.click();
+    });
+    await sleep(9000);
+    check(`${style}: underground opens`,
+      /UNDERGROUND|Underground mode/i.test(await panelText(page)));
+    const shot = `14-${style.toLowerCase()}-underground.png`;
+    await page.screenshot({ path: path.join(OUT, shot) });
+    console.log(`  shot -> ${shot}`);
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((x) => x.textContent.trim() === 'Underground');
+      if (b) b.click();
+    });
+    await sleep(3000);
+  }
+
+  // Put the scene back in the default style, so the console section below
+  // judges the configuration every other section ran in.
+  await setStyle('Schematic');
+  check(
+    'no console errors across either style walk',
+    errors.length === styleErrorsFrom,
+    errors.slice(styleErrorsFrom, styleErrorsFrom + 3).join(' | '),
+  );
+
   // ------------------------------------------------------------- console
-  console.log('\n[10] CONSOLE');
+  console.log('\n[11] CONSOLE');
   const real = errors.filter(
     // Third-party tile hosts are excluded: a transient 4xx/timeout from a
     // basemap CDN is a network condition, not an app error, and the imagery

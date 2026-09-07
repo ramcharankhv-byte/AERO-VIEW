@@ -17,6 +17,7 @@ import {
   hasIonToken, sampleGroundUnder,
 } from '@/lib/cesium/setup';
 import { applySun } from '@/lib/cesium/sun';
+import { applyLighting } from '@/lib/cesium/lighting';
 import {
   applyPerformanceProfile, attachAdaptiveResolution, detectWeakGpu,
 } from '@/lib/cesium/perf';
@@ -201,6 +202,24 @@ export default function CesiumRoot(
       // basemap and every subsequent swap.
 
       configureScene(viewer);
+      // The lighting rig, once. Ambient occlusion only -- sun.ts still owns
+      // lighting and shadows, perf.ts still owns FXAA/MSAA. It runs after
+      // configureScene() because applyGisDarkScene() is what sets the scene
+      // tone the AO darkens into, and before the sun effect below, which is
+      // free to be re-applied on every slider move without touching this.
+      //
+      // Publishing the result is the same move CesiumRoot already makes for
+      // imageryActive: the viewer is the only thing that knows what the GPU
+      // agreed to, so it is the one allowed to write it. No layer does.
+      // getState() rather than a subscribed selector, matching setLoading
+      // above: this is a one-shot write from the mount effect, and a
+      // subscription would put a setter in the dependency array of the effect
+      // that CONSTRUCTS the viewer.
+      const lit = applyLighting(viewer, profile.lowEnd);
+      useViewStore.getState().setAmbientOcclusion({
+        on: lit.ambientOcclusion,
+        reason: lit.reason,
+      });
       // The on-demand render loop must know what counts as "changed". 0.5
       // degrees of heading/pitch and ~1% of height cover both orbit gestures
       // and the tail of a camera flight, so every real move requests a frame.
