@@ -67,6 +67,30 @@ SELECT json_build_object(
 FROM parcel p WHERE p.project_id = {SCOPE};
 """
 
+# All columns, plus the count of buildings standing on the parcel -- which the
+# 2D panel shows and which the client would otherwise have to derive by scanning
+# every footprint. `provenance` and `source` are exported verbatim: the panel
+# reads them to decide whether it says "Derived parcel (unofficial)" or names an
+# issuing authority, and that decision must be made from the data rather than
+# from which endpoint answered.
+SURVEY_PARCELS = f"""
+SELECT json_build_object(
+  'type','FeatureCollection',
+  'features', COALESCE(json_agg(json_build_object(
+    'type','Feature', 'id', sp.id,
+    'geometry', ST_AsGeoJSON(sp.geom, 7)::json,
+    'properties', json_build_object(
+      'id', sp.id, 'label', sp.label,
+      'ts_no', sp.ts_no, 'lpm_no', sp.lpm_no, 'ulpin_14', sp.ulpin_14,
+      'extent_sqm', sp.extent_sqm, 'classification', sp.classification,
+      'provenance', sp.provenance, 'source', sp.source,
+      'source_date', to_char(sp.source_date, 'YYYY-MM-DD'),
+      'building_count', (SELECT count(*) FROM building b
+                          WHERE b.survey_parcel_id = sp.id)))
+    ORDER BY sp.label), '[]'::json))
+FROM survey_parcel sp WHERE sp.project_id = {SCOPE};
+"""
+
 UTILITIES = f"""
 SELECT json_build_object(
   'type','FeatureCollection',
@@ -160,6 +184,7 @@ STATS = f"""
 SELECT json_build_object(
   'buildings', (SELECT count(*) FROM building WHERE project_id = {SCOPE}),
   'parcels',   (SELECT count(*) FROM parcel   WHERE project_id = {SCOPE}),
+  'survey_parcels', (SELECT count(*) FROM survey_parcel WHERE project_id = {SCOPE}),
   'floors',    (SELECT count(*) FROM floor f JOIN building b ON b.id = f.building_id
                  WHERE b.project_id = {SCOPE}),
   'units',     (SELECT count(*) FROM unit u JOIN floor f ON f.id = u.floor_id
@@ -208,6 +233,7 @@ def main():
 
     dump(out, "buildings.json", BUILDINGS)
     dump(out, "parcels.json", PARCELS)
+    dump(out, "survey_parcels.json", SURVEY_PARCELS)
     dump(out, "utilities.json", UTILITIES)
     dump(out, "conflicts.json", CONFLICTS)
     dump(out, "detail.json", DETAIL)

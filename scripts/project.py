@@ -163,6 +163,16 @@ class Project:
         return os.path.join(self.work_dir, "raw_highways.geojson")
 
     @property
+    def raw_landuse_path(self):
+        """Landuse / amenity / leisure areas, when Overpass answered for them.
+
+        OPTIONAL, unlike the two above. scripts/01_fetch_osm.py treats a
+        failure here as a warning, so this file may legitimately not exist --
+        scripts/survey_parcels.sql checks and says which branch it took.
+        """
+        return os.path.join(self.work_dir, "raw_landuse.geojson")
+
+    @property
     def attributed_path(self):
         return os.path.join(self.work_dir, "buildings_attributed.geojson")
 

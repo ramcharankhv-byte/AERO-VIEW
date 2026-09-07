@@ -17,13 +17,18 @@ bbox, the same codes, the same input and output paths, and -- because
 touching the network at all.
 
 The chain is: fetch -> clip DEM -> estimate -> hazard -> seed -> utilities -> roads
--> export.
+-> survey parcels -> export.
 The DEM stage (scripts/dem.py) is the one stage with third-party needs
 (gdalwarp, rasterio or gdallocationinfo, pyproj); without them it prints why
 and every building keeps its 12.0 m placeholder, exactly as before.
 scripts/build_roads.mjs is part of it now; it produces data/api/<slug>/
 roads.json, which the export step counts into projects.stats, so leaving it out
 would have given every new project 0 streets and no centrelines to draw.
+
+scripts/survey_parcels.py sits between the streets and the export for the same
+reason in reverse: it CUTS the streets out of the parcels it builds, so it
+cannot run before they exist, and the export writes
+data/api/<slug>/survey_parcels.json, so it cannot run after.
 """
 import os
 import subprocess
@@ -48,6 +53,7 @@ def stages(p, passthrough):
         ("utilities + conflicts", py + [os.path.join(HERE, "04_utilities.py")] + passthrough),
         ("streets", ["node", os.path.join(HERE, "build_roads.mjs"),
                      f"--slug={p.slug}", f"--name={p.name}"]),
+        ("survey parcels", py + [os.path.join(HERE, "survey_parcels.py")] + passthrough),
         ("export snapshots", py + [os.path.join(HERE, "05_export_static.py")] + passthrough),
     ]
 

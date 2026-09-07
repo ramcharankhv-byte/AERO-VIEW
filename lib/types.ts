@@ -378,6 +378,12 @@ export type ProjectStatus = 'draft' | 'generating' | 'ready' | 'failed';
 export interface ProjectStats {
   buildings: number;
   parcels: number;
+  /**
+   * Rows in `survey_parcel`. OPTIONAL because every registry snapshot written
+   * before that table existed omits it, and a project is not wrong for
+   * predating a layer.
+   */
+  survey_parcels?: number;
   streets: number;
   floors: number;
   units: number;

@@ -7,7 +7,18 @@ wheels that may not yet exist for the local Python.
 Outputs, per project:
     <work>/raw_buildings.geojson    normalised footprints
     <work>/raw_highways.geojson     normalised centrelines
+    <work>/raw_landuse.geojson      normalised landuse/amenity/leisure areas
     <work>/osm.json                 the RAW Overpass responses, as returned
+
+THE LANDUSE FETCH IS THE ONE NON-FATAL STAGE HERE. Buildings and highways are
+the cadastre; without them there is no project and the run must stop. Landuse
+areas are a REFINEMENT -- scripts/survey_parcels.sql clips its cells to them
+where they exist, so a school's grounds come out as one parcel rather than
+being carved up by the Voronoi diagram of the buildings inside it. A project
+without them is a slightly coarser parcel layer, not a wrong one, and failing
+the whole seed for that would be the wrong trade against a free shared service.
+So the landuse query gets one round instead of two and returns None on failure;
+the SQL says which branch it took.
 
 `<work>` is `data/` for the demo project -- where its extract has always been
 committed -- and `data/projects/<slug>/` for every other. See scripts/project.py.
@@ -73,6 +84,27 @@ def buildings_query(p):
 (
   way["building"]({p.overpass_bbox});
   relation["building"]({p.overpass_bbox});
+);
+out geom;"""
+
+
+def landuse_query(p):
+    """Areas that bound a plot: land use, campuses, parks, sports grounds.
+
+    `way` and `relation` both, because a school campus or a park is routinely
+    a multipolygon. These are the three tag families that in practice carve an
+    Indian ward into blocks alongside its streets -- landuse for the zoning,
+    amenity for institutional grounds (school, hospital, place_of_worship),
+    leisure for parks and playing fields.
+    """
+    return f"""[out:json][timeout:180];
+(
+  way["landuse"]({p.overpass_bbox});
+  relation["landuse"]({p.overpass_bbox});
+  way["amenity"]({p.overpass_bbox});
+  relation["amenity"]({p.overpass_bbox});
+  way["leisure"]({p.overpass_bbox});
+  relation["leisure"]({p.overpass_bbox});
 );
 out geom;"""
 
@@ -160,6 +192,26 @@ def overpass(query, label):
     )
 
 
+def overpass_optional(query, label):
+    """overpass(), but a failure is a warning and a None rather than an exit.
+
+    One round rather than ROUNDS, because this is the stage the pipeline can do
+    without: asking a free shared service eight times for something optional is
+    not politeness. Everything else about the etiquette is the same call.
+    """
+    global ROUNDS
+    saved, ROUNDS = ROUNDS, 1
+    try:
+        return overpass(query, label)
+    except SystemExit as exc:
+        print(f"  [{label}] NOT FETCHED -- {str(exc).splitlines()[0][:160]}")
+        print(f"  [{label}] continuing without it. Parcels will be clipped to "
+              f"road corridors only, which the build reports and the panel says.")
+        return None
+    finally:
+        ROUNDS = saved
+
+
 def ring_from_geometry(geom):
     """Overpass 'geometry' array -> closed GeoJSON linear ring."""
     ring = [[p["lon"], p["lat"]] for p in geom if p is not None]
@@ -170,7 +222,14 @@ def ring_from_geometry(geom):
     return ring if len(ring) >= 4 else None
 
 
-def buildings_to_geojson(payload):
+def polygons_to_geojson(payload):
+    """Overpass ways + relations -> a FeatureCollection of Polygons.
+
+    Used for buildings and for landuse areas alike: the normalisation is the
+    same one either way (a way becomes its ring, a multipolygon relation
+    becomes its largest closed outer member), and the only thing that differs
+    is which tags came back attached.
+    """
     feats = []
     for el in payload.get("elements", []):
         tags = el.get("tags", {}) or {}
@@ -230,10 +289,24 @@ def main():
     p = proj.parse_args()
     force = "--force" in sys.argv
 
-    if (os.path.exists(p.raw_buildings_path)
-            and os.path.exists(p.raw_highways_path) and not force):
+    have_core = (os.path.exists(p.raw_buildings_path)
+                 and os.path.exists(p.raw_highways_path))
+    if have_core and os.path.exists(p.raw_landuse_path) and not force:
         print(f"raw OSM snapshots already present for {p.slug}; "
               f"pass --force to refetch")
+        return
+
+    # The landuse extract postdates the two core ones, so a project seeded
+    # before it existed has the other two committed and this one missing.
+    # Fetch only what is absent: refetching footprints that are already on disk
+    # would put an unrelated diff into committed data every time Overpass moved.
+    if have_core and not force:
+        print(f"raw buildings and highways already present for {p.slug}; "
+              f"fetching the landuse extract only")
+        p.ensure_dirs()
+        landuse_raw = overpass_optional(landuse_query(p), "landuse")
+        if landuse_raw is not None:
+            write(p.raw_landuse_path, polygons_to_geojson(landuse_raw))
         return
 
     print(f"Fetching OSM for {p.describe()}")
@@ -241,6 +314,7 @@ def main():
 
     buildings_raw = overpass(buildings_query(p), "buildings")
     highways_raw = overpass(highways_query(p), "highways")
+    landuse_raw = overpass_optional(landuse_query(p), "landuse")
 
     # The raw responses, before any normalisation. Written only once BOTH
     # queries have succeeded, so the cache never records half an AOI.
@@ -253,18 +327,21 @@ def main():
             "bbox": list(p.bbox),
             "buildings": buildings_raw,
             "highways": highways_raw,
+            "landuse": landuse_raw,
         }, fh)
     print(f"  cached raw Overpass response -> "
           f"{os.path.basename(p.osm_cache_path)} "
           f"({os.path.getsize(p.osm_cache_path) / 1024:.0f} KB)")
 
-    nb = write(p.raw_buildings_path, buildings_to_geojson(buildings_raw))
+    nb = write(p.raw_buildings_path, polygons_to_geojson(buildings_raw))
     nh = write(p.raw_highways_path, highways_to_geojson(highways_raw))
+    nl = (write(p.raw_landuse_path, polygons_to_geojson(landuse_raw))
+          if landuse_raw is not None else 0)
     if nb == 0:
         raise SystemExit(
             f"seed: Overpass answered but no building footprint survived "
             f"normalisation for {p.slug}. Check the bbox: {p.bbox}")
-    print(f"done: {nb} buildings, {nh} road ways")
+    print(f"done: {nb} buildings, {nh} road ways, {nl} landuse areas")
 
 
 if __name__ == "__main__":
