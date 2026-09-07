@@ -22,7 +22,8 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
-DROP TABLE IF EXISTS conflict, utility, unit, floor, building, parcel, projects CASCADE;
+DROP TABLE IF EXISTS conflict, utility, unit, floor, building, survey_parcel,
+                     parcel, projects CASCADE;
 
 -- ---------------------------------------------------------------- projects
 -- One AOI. Everything below is scoped to one of these.
@@ -101,11 +102,84 @@ CREATE TABLE parcel (
   owner      text NOT NULL
 );
 
+-- ------------------------------------------------------- survey_parcel
+-- The cadastral parcel layer the 2D GIS view draws, and the place a real
+-- survey register lands when one arrives.
+--
+-- TWO PARCEL TABLES, and the difference is what each is FOR:
+--
+--   parcel         the curtilage around a cluster of footprints -- a Voronoi
+--                  cell trimmed to 7 m of the built form. It is what the 3D
+--                  scene's parcels layer and the inset draw, and what
+--                  building.parcel_id and the ULPIN hang off. Untouched.
+--   survey_parcel  the whole block share: the same Voronoi cell, clipped to
+--                  the road corridors and to OSM landuse, so cells tile the
+--                  space between the streets the way a cadastral sheet does.
+--
+-- Both are derived from the same building clusters, so `label` is the SAME
+-- per-project ordinal `parcel.ulpin` carries -- AP-VSP-3D26-0042 names one
+-- plot whichever table you ask. Dissolving a sliver into its neighbour
+-- retires an ordinal rather than renumbering the rest, so the sequence has
+-- gaps and that is deliberate: renumbering would move every identifier after
+-- the gap on the next re-seed.
+--
+-- provenance is the whole point of the table:
+--
+--   'derived'      generated here, from OpenStreetMap. NOT a survey number,
+--                  and every string in the interface that names one of these
+--                  says so in words.
+--   'survey_dept'  loaded from an official file by
+--                  scripts/import_survey_parcels.py. Then, and only then, do
+--                  ts_no / lpm_no / ulpin_14 / source / source_date carry
+--                  anything.
+--
+-- Those five columns are nullable and empty today. They exist so that the
+-- arrival of a real register is an import and a badge flip rather than a
+-- schema change -- and so that nothing here is ever tempted to invent a
+-- survey number to fill a NOT NULL.
+CREATE TABLE survey_parcel (
+  id             integer PRIMARY KEY,
+  project_id     integer NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- The 4-digit per-project ordinal, e.g. '0042'. Unique within a project;
+  -- the state/district prefix is what separates projects, as it does for
+  -- parcel.ulpin.
+  label          text NOT NULL,
+  -- Real survey identifiers. NULL for every derived row, by construction.
+  ts_no          text,
+  lpm_no         text,
+  ulpin_14       text,
+  extent_sqm     double precision NOT NULL,
+  classification text,
+  provenance     text NOT NULL DEFAULT 'derived'
+                 CHECK (provenance IN ('derived','survey_dept')),
+  -- Who issued the register, and as of when. NULL for derived rows: there is
+  -- no issuing authority for a Voronoi cell.
+  source         text,
+  source_date    date,
+  geom           geometry(Polygon, 4326) NOT NULL,
+  UNIQUE (project_id, label),
+  -- A derived row cannot carry a survey number, and a survey row must say
+  -- where it came from. Enforced here rather than in the loader, because the
+  -- loader is not the only thing that will ever write this table.
+  CONSTRAINT survey_parcel_provenance_ck CHECK (
+    (provenance = 'derived'
+       AND ts_no IS NULL AND lpm_no IS NULL AND ulpin_14 IS NULL
+       AND source IS NULL AND source_date IS NULL)
+    OR (provenance = 'survey_dept' AND source IS NOT NULL)
+  )
+);
+
 -- ---------------------------------------------------------------- building
 CREATE TABLE building (
   id            integer PRIMARY KEY,
   project_id    integer NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   parcel_id     integer NOT NULL REFERENCES parcel(id) ON DELETE CASCADE,
+  -- Which survey parcel the footprint sits in, by largest shared area.
+  -- NULLABLE, unlike parcel_id: survey_parcel is built in a later stage than
+  -- building, an official import can replace the whole layer under it, and a
+  -- building the join cannot place must read as unplaced rather than as
+  -- placed somewhere arbitrary. ON DELETE SET NULL for the same reason.
+  survey_parcel_id integer REFERENCES survey_parcel(id) ON DELETE SET NULL,
   ulpin         text UNIQUE NOT NULL,
   footprint     geometry(Polygon, 4326) NOT NULL,
   height_m      double precision NOT NULL,
@@ -213,6 +287,9 @@ CREATE INDEX building_project_ix ON building (project_id);
 CREATE INDEX utility_project_ix ON utility  (project_id);
 CREATE INDEX building_fp_gix    ON building USING gist (footprint);
 CREATE INDEX building_parcel_ix ON building (parcel_id);
+CREATE INDEX survey_parcel_geom_gix   ON survey_parcel USING gist (geom);
+CREATE INDEX survey_parcel_project_ix ON survey_parcel (project_id);
+CREATE INDEX building_survey_parcel_ix ON building (survey_parcel_id);
 CREATE INDEX floor_geom_gix     ON floor    USING gist (geom);
 CREATE INDEX floor_building_ix  ON floor    (building_id);
 CREATE INDEX unit_geom_gix      ON unit     USING gist (geom_3d);
