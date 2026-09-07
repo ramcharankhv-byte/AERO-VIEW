@@ -39,11 +39,26 @@
  * a floating panel, the viewport-overflow and collision checks, and console
  * errors.
  *
+ * GIS2D MODE (--gis2d) audits the same viewer with the 2D GIS parcel view
+ * switched on. Everything applies unchanged and nothing is skipped: the parcel
+ * panel and the toggle are chrome and must be monochrome, the parcel labels
+ * and the panel must stay inside the viewport and off each other, the
+ * attribution -- CARTO's and OpenStreetMap's, which is a licence obligation on
+ * that basemap specifically -- must not be covered, and the light vector
+ * basemap must still clear the scene-colour floor. That last one is the reason
+ * this pass exists: a basemap chosen for a cadastral view is exactly the kind
+ * of basemap that could be mistaken for a drained one.
+ *
+ * It is a THIRD pass rather than a flag on the first, so the viewer and
+ * gallery sections of `npm run check:rwd` are unchanged, line for line, from
+ * what they printed before this view existed.
+ *
  * Usage:
  *   node scripts/shoot.mjs                       # default desktop viewport
  *   node scripts/shoot.mjs 390x844 834x1112      # named sizes
  *   node scripts/shoot.mjs --out docs/shots/rwd  # output directory
  *   node scripts/shoot.mjs --gallery             # audit / instead of a viewer
+ *   node scripts/shoot.mjs --gis2d               # audit the 2D GIS view
  */
 import puppeteer from 'puppeteer-core';
 import {
@@ -70,14 +85,17 @@ const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
 const argv = process.argv.slice(2);
 let OUT = path.join(process.cwd(), 'docs', 'shots', 'rwd');
 let GALLERY = false;
+let GIS2D = false;
 const sizes = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--out') { OUT = path.resolve(argv[++i]); continue; }
   if (argv[i] === '--gallery') { GALLERY = true; continue; }
+  if (argv[i] === '--gis2d') { GIS2D = true; continue; }
   const m = /^(\d+)x(\d+)$/.exec(argv[i]);
   if (m) sizes.push({ width: +m[1], height: +m[2] });
 }
 if (GALLERY && OUT.endsWith('rwd')) OUT = path.join(path.dirname(OUT), 'rwd-gallery');
+if (GIS2D && OUT.endsWith('rwd')) OUT = path.join(path.dirname(OUT), 'rwd-gis2d');
 if (sizes.length === 0) sizes.push({ width: 1680, height: 950 });
 
 mkdirSync(OUT, { recursive: true });
@@ -154,6 +172,27 @@ try {
       // when the network is slow: a frame captured mid-load shows the globe's
       // base colour, which reads as a scene that lost its imagery.
       await sleep(SETTLE);
+
+      if (GIS2D) {
+        // Through the button, not through the store: the point of this pass is
+        // to audit what a user gets, and a store poke would skip whatever the
+        // control does on the way. A missing button is reported rather than
+        // silently auditing the 3D view and calling it green.
+        const clicked = await page.evaluate(() => {
+          const b = [...document.querySelectorAll('button')]
+            .find((x) => x.textContent.trim() === '2D GIS');
+          if (!b) return false;
+          b.click();
+          return true;
+        });
+        if (!clicked) {
+          console.log('  FAIL: no 2D GIS control to audit');
+          failures++;
+        }
+        // The basemap swap is a fresh tile pyramid over the whole viewport,
+        // and the parcels are a fetch this view triggers on first open.
+        await sleep(SETTLE);
+      }
     }
 
     // The Cesium ion logo is the one thing on screen we are not allowed to

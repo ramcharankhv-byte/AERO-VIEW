@@ -46,3 +46,5 @@ data/projects/*/*_DEM_*.tif
 # The seed-only geo toolchain (micromamba env: gdal, rasterio, pyproj). Only
 # the DEM stage needs it; every other stage is stdlib.
 .gdal-env/
+docs/shots/rwd-gis2d/
+docs/shots/gis2d/
