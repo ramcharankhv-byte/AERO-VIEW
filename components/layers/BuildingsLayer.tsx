@@ -58,6 +58,50 @@ interface LayerState {
   style: BuildingStyle;
 }
 
+/**
+ * Ceiling on how many window bays the facade texture is tiled into around a
+ * footprint's perimeter.
+ *
+ * THIS IS AN ANTI-ALIASING LIMIT, not a design choice, and it is why the city
+ * stopped fizzing when you zoom.
+ *
+ * The wall material is an ImageMaterialProperty over a 72 x 77 px canvas
+ * (lib/cesium/textures.ts, 24 px/m). Before the tiling landed the texture had
+ * no `repeat`, so it was stretched across each facade and only ever
+ * MAGNIFIED -- and magnification cannot alias. Tiling it one bay per 3 m puts
+ * ~80 tiles around a city block, and the arithmetic at the pose the scene
+ * opens on is decisive:
+ *
+ *   1,199 m up, 60 deg FOV, 800 px tall  ->  1.73 ground metres per pixel
+ *   a 240 m perimeter therefore spans     ->  139 screen pixels
+ *   repeat.x = 80  ->  80 x 72 texels / 139 px  =  41.5 texels PER PIXEL
+ *
+ * Anything over 1 is minification, and 41 is far past the point where a GPU
+ * with no mip chain can pick a stable texel: it picks a different one for the
+ * same pixel on every frame the camera moves, so the whole city shimmers while
+ * you zoom. At 12 the same sum gives 6.2, a 6.7x reduction, and the facades
+ * settle into the storey banding they are supposed to read as at this range.
+ *
+ * Cesium's entity path gives no way to fix it properly. A mip chain is exactly
+ * what this needs, but `ImageMaterialProperty` exposes no sampler and
+ * `minificationFilter` is a `Material` constructor option the property wrapper
+ * never forwards -- so the tile count is the only lever available, and this
+ * REDUCES the aliasing rather than removing it.
+ *
+ * The vertical axis is left alone: a twenty-storey tower still carries twenty
+ * rows, because that is what `check_photoreal` asserts, and loosening an
+ * acceptance check to make a rendering artefact go away is the wrong repair.
+ * Horizontal was the dominant term anyway -- 80 against 12 -- and capping it is
+ * what takes the fizz out.
+ *
+ * The cap binds above a 36 m perimeter, so it reaches nearly every building
+ * and the bay density is uniform across the city instead of scaling with plan
+ * size. Close-up detail is unaffected: BuildingModelLayer draws the real
+ * architectural model on the active building, and this tier is only ever on
+ * screen inside NEAR_DDC.
+ */
+const MAX_BAYS_AROUND = 12;
+
 const FADE_RATE = 0.12;   // per frame, ~600 ms to settle
 
 /**
@@ -284,7 +328,7 @@ export default function BuildingsLayer() {
       }
       const storeys = Math.max(1, props.floors || Math.round(props.height_m / 3.2));
       const repeat = new Cesium.Cartesian2(
-        Math.max(1, Math.round(perimeterM / 3)),
+        Math.min(MAX_BAYS_AROUND, Math.max(1, Math.round(perimeterM / 3))),
         Math.max(1, storeys),
       );
 

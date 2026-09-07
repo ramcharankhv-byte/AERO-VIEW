@@ -27,7 +27,8 @@ import {
 } from './_chrome.mjs';
 import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { generate, parse } from '../lib/ulpin.ts';
+import { codesOf, generate, parse } from '../lib/ulpin.ts';
+import { ringPoleOfInaccessibility } from '../lib/geo.ts';
 
 const OUT = path.join(process.cwd(), 'docs', 'shots', 'gis2d');
 const URL = process.env.ULPIN_URL ?? 'http://localhost:3000/p/siripuram';
@@ -72,6 +73,35 @@ const countEntities = (page, prefix) => page.evaluate((p) => {
     n += ds.entities.values.length;
   }
   return found ? n : 0;
+}, prefix);
+
+/**
+ * How many entities under this name prefix are actually being DRAWN.
+ *
+ * Entity-level, not `dataSource.show`. BuildingsLayer hides itself through a
+ * CallbackProperty on `polygon.show` and leaves the bucket data sources
+ * visible, so a data-source check reports the 3D city as on screen when every
+ * building in it is invisible -- which is exactly what this check reported the
+ * first time it ran, against a frame that was demonstrably correct.
+ */
+const drawn = (page, prefix) => page.evaluate((p) => {
+  const v = window.__ulpinViewer;
+  if (!v) return -1;
+  const t = v.clock.currentTime;
+  let n = 0;
+  for (let i = 0; i < v.dataSources.length; i++) {
+    const ds = v.dataSources.get(i);
+    if (!ds.name.startsWith(p) || !ds.show) continue;
+    for (const e of ds.entities.values) {
+      const g = e.polygon ?? e.polyline ?? e.label;
+      const show = g?.show;
+      const on = show === undefined
+        ? true
+        : (typeof show.getValue === 'function' ? show.getValue(t) : show);
+      if (on) n++;
+    }
+  }
+  return n;
 }, prefix);
 
 /** Are the data sources with this name prefix being drawn? */
@@ -176,11 +206,11 @@ try {
   console.log('\n[2] THE 3D SCENE, BEFORE');
   const before = {
     buildings: await countEntities(page, 'buildings'),
-    buildingsShown: await anyShown(page, 'buildings'),
+    drawn: await drawn(page, 'buildings'),
     pose: await cameraPose(page),
   };
-  check('buildings are on screen', before.buildingsShown === true,
-    `${before.buildings} entities`);
+  check('buildings are on screen', before.drawn > 0,
+    `${before.drawn} of ${before.buildings} entities drawn`);
   console.log(`        camera  ${before.pose.height.toFixed(0)} m, `
     + `pitch ${before.pose.pitch.toFixed(1)}°, `
     + `heading ${before.pose.heading.toFixed(1)}°`);
@@ -195,12 +225,27 @@ try {
       .find((b) => b.textContent.trim() === '2D GIS');
     return btn?.getAttribute('aria-pressed') === 'true';
   }));
-  check('buildings are hidden', (await anyShown(page, 'buildings')) === false);
+  check('buildings are hidden', (await drawn(page, 'buildings')) === 0,
+    `${await drawn(page, 'buildings')} still drawn`);
   check('the roads layer is hidden', (await anyShown(page, 'roads')) === false);
   check('the 3D parcels layer is hidden', (await anyShown(page, 'parcels')) === false);
   check('entities were not torn down',
     (await countEntities(page, 'buildings')) === before.buildings,
     `${before.buildings} -> ${await countEntities(page, 'buildings')}`);
+
+  // The layer builds incrementally (firstSlice 200), so a fixed sleep can land
+  // mid-build: the first run of this check counted exactly 200 labels for 325
+  // parcels, which is the slice size and not a defect. Wait for it to settle.
+  await page.waitForFunction((want) => {
+    const v = window.__ulpinViewer;
+    let n = 0;
+    for (let i = 0; i < v.dataSources.length; i++) {
+      const ds = v.dataSources.get(i);
+      if (!ds.name.startsWith('survey-parcels')) continue;
+      for (const e of ds.entities.values) if (e.label) n++;
+    }
+    return n >= want;
+  }, { timeout: 120000 }, feats.length).catch(() => {});
 
   const parcelEntities = await countEntities(page, 'survey-parcels');
   check('the survey parcel layer was built', parcelEntities > 0,
@@ -262,29 +307,58 @@ try {
   // Pick a parcel that actually has buildings on it, and click its label
   // position projected to the canvas -- inside the polygon by construction,
   // rather than sweeping the viewport and hoping.
-  const target = feats.find((f) => (f.properties.building_ids?.length ?? 0) > 0);
+  // Nearest the centre of the area of interest, among the parcels that carry
+  // buildings. NOT simply the first: parcel 0001 is a 450 m2 triangle in the
+  // very corner of the bounding box, and its centroid projects to the edge of
+  // the frame where a click lands on nothing.
+  // The SAME point the layer draws the parcel number at, which is also the
+  // point a user would aim at. Not the centroid: a plot clipped around a
+  // junction is routinely an L, and its centroid lies outside it -- the first
+  // run of this check clicked parcel 0176's centroid and selected a
+  // neighbour, which is the very failure ringPoleOfInaccessibility exists to
+  // prevent on the labels.
+  const centroidOf = (f) => {
+    const at = ringPoleOfInaccessibility(f.geometry.coordinates[0]);
+    return [at.lon, at.lat];
+  };
+  const withB = feats.filter((f) => (f.properties.building_ids?.length ?? 0) > 0);
+  const mid = withB.length
+    ? withB.map(centroidOf).reduce((a, c) => [a[0] + c[0] / withB.length,
+      a[1] + c[1] / withB.length], [0, 0])
+    : [0, 0];
+  const target = withB.sort((a, b) => {
+    const ca = centroidOf(a); const cb = centroidOf(b);
+    return Math.hypot(ca[0] - mid[0], ca[1] - mid[1])
+      - Math.hypot(cb[0] - mid[0], cb[1] - mid[1]);
+  })[0];
   check('some parcel has buildings on it', Boolean(target),
     target ? `parcel ${target.properties.label} has `
       + `${target.properties.building_ids.length}` : '');
 
   let treeUlpins = [];
   if (target) {
-    const ring = target.geometry.coordinates[0];
-    const at = await page.evaluate((r) => {
+    const [tLon, tLat] = centroidOf(target);
+    const at = await page.evaluate(([lon, lat]) => {
       const v = window.__ulpinViewer;
-      const C = window.Cesium ?? v.scene.globe.constructor.Cesium;
-      // Centroid of the ring, then project. Cesium is reached through the
-      // viewer's own module in case the global is not published.
-      let x = 0; let y = 0;
-      for (let i = 0; i < r.length - 1; i++) { x += r[i][0]; y += r[i][1]; }
-      const lon = x / (r.length - 1); const lat = y / (r.length - 1);
-      const cart = v.scene.globe.ellipsoid.cartographicToCartesian(
-        { longitude: (lon * Math.PI) / 180, latitude: (lat * Math.PI) / 180,
-          height: 0 },
-      );
+      // Projected through the viewer's own ellipsoid -- no Cesium global
+      // needed, and none is published in a production build.
+      const carto = {
+        longitude: (lon * Math.PI) / 180,
+        latitude: (lat * Math.PI) / 180,
+        height: 0,
+      };
+      // AT THE GROUND, not at the ellipsoid. The parcels are clamped to
+      // terrain and Siripuram's ground runs 20-83 m above the ellipsoid, so
+      // projecting the point at height 0 puts it tens of metres BELOW the
+      // surface -- and away from the exact nadir that displacement shifts the
+      // screen position enough to land in the neighbouring plot. It did: the
+      // click aimed at parcel 0176 and selected 0169.
+      const ground = v.scene.globe.getHeight(carto);
+      carto.height = typeof ground === 'number' ? ground : 0;
+      const cart = v.scene.globe.ellipsoid.cartographicToCartesian(carto);
       const win = v.scene.cartesianToCanvasCoordinates(cart);
       return win ? { x: win.x, y: win.y } : null;
-    }, ring);
+    }, [tLon, tLat]);
 
     if (at) {
       await page.mouse.click(at.x, at.y);
@@ -296,9 +370,10 @@ try {
     // The panel's card splits the identifier into labelled segments, so the
     // text is matched segment by segment rather than as one string.
     const segs = expectedUlpin.split('-');
-    check('the panel is showing a parcel',
-      new RegExp(`Parcel ${target.properties.label}`).test(panel),
-      `Parcel ${target.properties.label}`);
+    const shownLabel = /Parcel (\d{4})/.exec(panel)?.[1] ?? 'none';
+    check('the panel is showing the parcel that was clicked',
+      shownLabel === target.properties.label,
+      `clicked ${target.properties.label}, panel shows ${shownLabel}`);
     check('the parcel ULPIN is on the card',
       segs.every((sgment) => panel.includes(sgment)), expectedUlpin);
     check('the panel says the boundary is derived and unofficial',
@@ -339,8 +414,12 @@ try {
   for (const u of treeUlpins) {
     const parts = parse(u, 'any');
     if (!parts) { bad.push(`${u}: unparseable`); continue; }
+    // UlpinParts carries only the four ordinals; the revenue codes come off
+    // the string separately through codesOf(). Passing parts.state here (which
+    // does not exist) produced "undefined-undefined-undefined-0001-001" and
+    // failed every identifier -- a bug in this check, not in lib/ulpin.ts.
     const back = generate(parts.parcel, parts.building, parts.floor, parts.unit,
-      { state: parts.state, district: parts.district, scheme: parts.scheme });
+      codesOf(u) ?? undefined);
     if (back !== u) bad.push(`${u} -> ${back}`);
   }
   check('every ULPIN in the tree round-trips through lib/ulpin.ts',
@@ -351,7 +430,8 @@ try {
   check('the toggle is still there', await clickToggle(page));
   await sleep(6000);
 
-  check('buildings are back', (await anyShown(page, 'buildings')) === true);
+  check('buildings are back', (await drawn(page, 'buildings')) > 0,
+    `${await drawn(page, 'buildings')} drawn`);
   check('the survey parcels are hidden',
     (await anyShown(page, 'survey-parcels')) === false);
   check('the building entity count is unchanged',

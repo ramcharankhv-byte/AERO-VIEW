@@ -4,7 +4,7 @@ import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
 import { useEffect, useRef } from 'react';
 import { useViewer } from './CesiumRoot';
-import { useViewStore } from '@/lib/store';
+import { useDataStore, useViewStore } from '@/lib/store';
 import { tagOf, type EntityTag } from '@/lib/cesium/tag';
 import { ROAD_PICK_PX } from '@/lib/cesium/materials';
 
@@ -35,6 +35,25 @@ const DRILL_LIMIT = 6;
  * a dropped click is a bug, a dropped hover sample is not.
  */
 const HOVER_THROTTLE_MS = 30;
+
+/**
+ * Even-odd ray cast in degrees. The rings are a few hundred metres across, so
+ * treating lon/lat as a plane is exact enough to decide which side of a
+ * boundary a point is on -- the nearest competing boundary is metres away, not
+ * micro-degrees.
+ */
+function pointInRing(ring: number[][], lon: number, lat: number): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if ((yi > lat) !== (yj > lat)
+      && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
 
 /**
  * The tag under the cursor, seeing past geometry that carries no tag, and
@@ -103,15 +122,56 @@ function pickTag(
    * ground-classified and so sits behind anything else the ray touches.
    */
   gis2d = false,
+  /**
+   * Ring lookup for the survey parcels, when the 2D view is on.
+   *
+   * Needed because DRAW ORDER CANNOT RESOLVE THIS PICK. A ground-clamped
+   * polygon is classified through a volume extruded over the terrain under it,
+   * and adjacent parcels' volumes overlap even where their 2D footprints do
+   * not -- so one ray legitimately returns several plots and Cesium's ordering
+   * between coplanar ground primitives is arbitrary. Measured on the running
+   * app: a click aimed at the middle of parcel 0176 drilled to
+   * [surveyParcel:168, surveyParcel:175] and the first was the NEIGHBOUR.
+   *
+   * `Picker.tsx` already carries the same warning about roads and parcel
+   * fills. Taking the first hit would silently select the plot next door,
+   * which on a cadastral map is the worst kind of wrong: it looks like it
+   * worked.
+   */
+  ringOf?: (id: number) => number[][] | undefined,
 ): EntityTag | null {
   if (gis2d) {
+    const hits: EntityTag[] = [];
     const direct = tagOf(scene.pick(position));
-    if (direct?.kind === 'surveyParcel') return direct;
+    if (direct?.kind === 'surveyParcel') hits.push(direct);
     for (const candidate of scene.drillPick(position, DRILL_LIMIT)) {
       const tag = tagOf(candidate);
-      if (tag?.kind === 'surveyParcel') return tag;
+      if (tag?.kind === 'surveyParcel' && !hits.some((h) => h.id === tag.id)) {
+        hits.push(tag);
+      }
     }
-    return null;
+    if (hits.length <= 1) return hits[0] ?? null;
+
+    // More than one plot under the ray: settle it on the GROUND, where the
+    // question actually has an answer. pickPosition reads the depth buffer,
+    // which with depthTestAgainstTerrain on is the terrain surface the user
+    // is looking at.
+    const world = scene.pickPosition(position);
+    if (world && ringOf) {
+      const carto = Cesium.Cartographic.fromCartesian(world);
+      if (carto) {
+        const lon = Cesium.Math.toDegrees(carto.longitude);
+        const lat = Cesium.Math.toDegrees(carto.latitude);
+        for (const hit of hits) {
+          const ring = ringOf(hit.id);
+          if (ring && pointInRing(ring, lon, lat)) return hit;
+        }
+      }
+    }
+    // No ring contained it -- the cursor is on a road corridor between plots,
+    // or the depth read failed. The topmost hit is then as good an answer as
+    // there is, and it is what the previous behaviour always gave.
+    return hits[0];
   }
 
   const picked = scene.pick(position);
@@ -188,6 +248,7 @@ export default function Picker() {
   const setActiveSurveyParcel = useViewStore((s) => s.setActiveSurveyParcel);
   const roadsVisible = useViewStore((s) => s.layers.roads);
   const gis2d = useViewStore((s) => s.gis2d);
+  const surveyParcels = useDataStore((s) => s.surveyParcels);
   const activeSiteId = useViewStore((s) => s.activeSiteId);
 
   // Read through a ref inside the handlers rather than closed over: making it
@@ -213,6 +274,25 @@ export default function Picker() {
   /** Same ref treatment, same reason: a mode toggle must not rebuild this. */
   const gis2dRef = useRef(gis2d);
   useEffect(() => { gis2dRef.current = gis2d; }, [gis2d]);
+
+  /**
+   * id -> outer ring, for the parcel pick disambiguation above.
+   *
+   * Built once per collection into a Map, not searched per pick: the drill
+   * hands back two or three candidates and this is a hash lookup each. Held
+   * through a ref for the same reason as the flags around it -- the parcels
+   * landing must not rebuild the ScreenSpaceEventHandler.
+   */
+  const ringsRef = useRef<Map<number, number[][]>>(new Map());
+  useEffect(() => {
+    const m = new Map<number, number[][]>();
+    for (const f of surveyParcels?.features ?? []) {
+      const id = (f.properties as { id?: number } | null)?.id;
+      const ring = (f.geometry as { coordinates?: number[][][] })?.coordinates?.[0];
+      if (typeof id === 'number' && Array.isArray(ring)) m.set(id, ring);
+    }
+    ringsRef.current = m;
+  }, [surveyParcels]);
 
   useEffect(() => {
     if (!viewer || !ready || viewer.isDestroyed()) return;
@@ -278,6 +358,7 @@ export default function Picker() {
         false,
         modeRef.current !== 'city',
         gis2dRef.current,
+        (id) => ringsRef.current.get(id),
       );
       hoverCleared = tag === null;
       // Every hover target in one write: they are live at the same time and
@@ -298,7 +379,7 @@ export default function Picker() {
       // path's problem, not this one's.
       const tag = pickTag(
         viewer.scene, click.position, roadsVisibleRef.current, true,
-        true, gis2dRef.current,
+        true, gis2dRef.current, (id) => ringsRef.current.get(id),
       );
       if (!tag) {
         // In the 2D view a click on nothing DESELECTS, which is the opposite

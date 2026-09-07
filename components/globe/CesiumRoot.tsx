@@ -8,7 +8,9 @@ import React, {
 import { useDataStore, useViewStore } from '@/lib/store';
 import type { Project } from '@/lib/types';
 import type { GroundMap } from '@/lib/cesium/terrain';
-import { applyTreatment, createImageryLayer } from '@/lib/cesium/imagery';
+import {
+  applyGisDarkScene, applyTreatment, createImageryLayer,
+} from '@/lib/cesium/imagery';
 import {
   applyPhotorealTranslucency, createPhotorealTileset, photorealFailureMessage,
 } from '@/lib/cesium/photoreal';
@@ -345,6 +347,39 @@ export default function CesiumRoot(
     if (!viewer || viewer.isDestroyed()) return;
     applySun(viewer, sunHour, weakGpuRef.current);
   }, [ctx.viewer, sunHour]);
+
+  // ---- 2D GIS: aerial perspective off -------------------------------------
+  // Scene state, like the three effects around it, so it lives here and not in
+  // a layer.
+  //
+  // configureScene() turns fog on at density 0.0004 and shifts the atmosphere
+  // down 0.2. Both are AERIAL PERSPECTIVE: they put a depth gradient across
+  // the area of interest so the far side of the ward reads as further away
+  // than the near side, which is what makes an oblique 3D view legible.
+  //
+  // Straight down there is no far side. Every point on a plan is very nearly
+  // the same distance from the camera, so the gradient stops encoding depth
+  // and becomes a plain grey veil over the map -- heaviest at the corners,
+  // where the distance is greatest. Measured on the first frame with real
+  // parcels: legible, but noticeably duller than the basemap it is drawn from,
+  // and it is thin dark boundary lines on pale ground that pay for it.
+  //
+  // Restored through applyGisDarkScene(), the same function configureScene()
+  // uses, rather than by writing the two numbers back here -- so if that
+  // treatment ever changes, the restore changes with it.
+  const gis2d = useViewStore((s) => s.gis2d);
+  useEffect(() => {
+    const viewer = ctx.viewer;
+    if (!viewer || viewer.isDestroyed()) return;
+    const scene = viewer.scene;
+    if (gis2d) {
+      scene.fog.enabled = false;
+      scene.skyAtmosphere.brightnessShift = 0;
+    } else {
+      applyGisDarkScene(scene);
+    }
+    scene.requestRender();
+  }, [ctx.viewer, gis2d]);
 
   // ---- navigation mode ----------------------------------------------------
   // Which mouse gestures the camera controller accepts. Scene configuration,
