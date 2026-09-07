@@ -86,7 +86,15 @@ SELECT json_build_object(
       'provenance', sp.provenance, 'source', sp.source,
       'source_date', to_char(sp.source_date, 'YYYY-MM-DD'),
       'building_count', (SELECT count(*) FROM building b
-                          WHERE b.survey_parcel_id = sp.id)))
+                          WHERE b.survey_parcel_id = sp.id),
+      -- The relation, carried on THIS side. buildings.json deliberately does
+      -- not gain a survey_parcel_id column: its bytes are an invariant of the
+      -- repository (see HANDOFF.md, "Snapshot diff") and a scoping column is
+      -- not a fact about a building. It has to be readable from one side or
+      -- the other, and this is the file that can change.
+      'building_ids', COALESCE((SELECT json_agg(b.id ORDER BY b.id)
+                                  FROM building b
+                                 WHERE b.survey_parcel_id = sp.id), '[]'::json)))
     ORDER BY sp.label), '[]'::json))
 FROM survey_parcel sp WHERE sp.project_id = {SCOPE};
 """
