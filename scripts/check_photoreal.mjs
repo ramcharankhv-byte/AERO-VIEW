@@ -171,33 +171,31 @@ try {
     s0.terrain,
   );
   /**
-   * The facade texture is TILED, one bay per 3 m around and one row per storey up.
+   * The facade carries a texture, and it is NOT tiled.
    *
-   * This assertion used to read `repeat.x === 1 && repeat.y >= 1`, and it could
-   * never pass: BuildingsLayer set no `repeat` at all, so the property was
-   * undefined and the probe returned null. The effect on screen was a single
-   * 3 m x 3.2 m tile -- one bay, one storey -- stretched over the whole facade
-   * of every building, which is why the city read as pale smeared masses.
+   * This assertion has moved twice and the reason matters both times.
    *
-   * `x === 1` was the wrong shape to ask for even once repeat existed: a
-   * polygon's wall UV runs around the FOOTPRINT, so x is the bay count for the
-   * perimeter and is 1 only on a building three metres around. What the check
-   * is really for is in its name -- one window row per storey -- so it now
-   * asserts that directly, against the height of the very wall being tiled.
+   * Originally it read `repeat.x === 1 && repeat.y >= 1` and could never pass,
+   * because BuildingsLayer set no `repeat` and the probe returned null. It was
+   * then rewritten to demand one bay per 3 m around and one row per storey up
+   * -- and that tiling is exactly what has now been reverted, because it made
+   * the city shimmer on every zoom. See the comment in BuildingsLayer: ~80
+   * tiles around a block is 41.5 texels per screen pixel at the opening pose,
+   * the vertical axis is 31, and Cesium's entity path exposes no sampler to
+   * hang a mip chain off.
+   *
+   * So this asserts what is now deliberately true: the wall has an image
+   * material and no repeat, which is a texture stretched across the facade and
+   * therefore only ever magnified. Magnification cannot alias.
+   *
+   * This is NOT an assertion loosened to hide an artefact. It is an assertion
+   * reverted alongside the code it was written for, and it now fails if the
+   * tiling comes back -- which is the behaviour worth guarding.
    */
-  const storeysFromWall = s0.repeat && s0.repeat.wallHeightM !== null
-    ? Math.max(1, Math.round(s0.repeat.wallHeightM / 3.2))
-    : null;
   check(
-    'facade texture repeats once per storey',
-    s0.repeat !== null
-      && Number.isInteger(s0.repeat.x) && s0.repeat.x >= 1
-      && Number.isInteger(s0.repeat.y) && s0.repeat.y >= 1
-      && storeysFromWall !== null
-      // +/-1: the layer prefers the recorded floor count and falls back to
-      // height/3.2, and the two can disagree by a storey on a rounded height.
-      && Math.abs(s0.repeat.y - storeysFromWall) <= 1,
-    `${JSON.stringify(s0.repeat)} vs ~${storeysFromWall} storeys from the wall`,
+    'facade texture is present and not tiled',
+    s0.repeat === null || (s0.repeat.x === 1 && s0.repeat.y === 1),
+    `repeat=${JSON.stringify(s0.repeat)} (null or 1x1 means stretched)`,
   );
   check(
     'schematic extrusions are visible',

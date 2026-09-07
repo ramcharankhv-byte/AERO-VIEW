@@ -12,7 +12,7 @@ import { rngFor } from '@/lib/mock/prng';
 import { tagEntity } from '@/lib/cesium/tag';
 import { windowGrid } from '@/lib/cesium/textures';
 import { toSceneZ } from '@/lib/cesium/terrain';
-import { flatLonLat, haversineM } from '@/lib/geo';
+import { flatLonLat } from '@/lib/geo';
 import { mark } from '@/lib/boot-marks';
 import { buildIncrementally } from '@/lib/cesium/build-queue';
 import { createBucketGrid, extentOf } from '@/lib/cesium/spatial-buckets';
@@ -57,50 +57,6 @@ interface LayerState {
   hideActive: boolean;
   style: BuildingStyle;
 }
-
-/**
- * Ceiling on how many window bays the facade texture is tiled into around a
- * footprint's perimeter.
- *
- * THIS IS AN ANTI-ALIASING LIMIT, not a design choice, and it is why the city
- * stopped fizzing when you zoom.
- *
- * The wall material is an ImageMaterialProperty over a 72 x 77 px canvas
- * (lib/cesium/textures.ts, 24 px/m). Before the tiling landed the texture had
- * no `repeat`, so it was stretched across each facade and only ever
- * MAGNIFIED -- and magnification cannot alias. Tiling it one bay per 3 m puts
- * ~80 tiles around a city block, and the arithmetic at the pose the scene
- * opens on is decisive:
- *
- *   1,199 m up, 60 deg FOV, 800 px tall  ->  1.73 ground metres per pixel
- *   a 240 m perimeter therefore spans     ->  139 screen pixels
- *   repeat.x = 80  ->  80 x 72 texels / 139 px  =  41.5 texels PER PIXEL
- *
- * Anything over 1 is minification, and 41 is far past the point where a GPU
- * with no mip chain can pick a stable texel: it picks a different one for the
- * same pixel on every frame the camera moves, so the whole city shimmers while
- * you zoom. At 12 the same sum gives 6.2, a 6.7x reduction, and the facades
- * settle into the storey banding they are supposed to read as at this range.
- *
- * Cesium's entity path gives no way to fix it properly. A mip chain is exactly
- * what this needs, but `ImageMaterialProperty` exposes no sampler and
- * `minificationFilter` is a `Material` constructor option the property wrapper
- * never forwards -- so the tile count is the only lever available, and this
- * REDUCES the aliasing rather than removing it.
- *
- * The vertical axis is left alone: a twenty-storey tower still carries twenty
- * rows, because that is what `check_photoreal` asserts, and loosening an
- * acceptance check to make a rendering artefact go away is the wrong repair.
- * Horizontal was the dominant term anyway -- 80 against 12 -- and capping it is
- * what takes the fizz out.
- *
- * The cap binds above a 36 m perimeter, so it reaches nearly every building
- * and the bay density is uniform across the city instead of scaling with plan
- * size. Close-up detail is unaffected: BuildingModelLayer draws the real
- * architectural model on the active building, and this tier is only ever on
- * screen inside NEAR_DDC.
- */
-const MAX_BAYS_AROUND = 12;
 
 const FADE_RATE = 0.12;   // per frame, ~600 ms to settle
 
@@ -295,46 +251,38 @@ export default function BuildingsLayer() {
       // the buildings you are not inspecting, so clamping keeps "faded" below
       // "at rest" without ever multiplying two transparencies into nothing.
       /**
-       * How many times the tile repeats around the wall and up it.
+       * NO `repeat`, AND THAT IS THE POINT.
        *
-       * WITHOUT THIS the texture was never tiled at all. Cesium maps an image
-       * material across a polygon's UVs once by default, so a single
-       * 3 m x 3.2 m tile -- one bay, one storey -- was being stretched over
-       * the ENTIRE facade of every building: one storey-high window blown up
-       * to the full height of a nine-storey block. That is why the city read
-       * as pale smeared masses rather than as windowed buildings, and it is
-       * what check_photoreal's "facade texture repeats once per storey"
-       * assertion has been reporting since the texture landed.
+       * Cesium maps an image material across a polygon's UVs once by default,
+       * so the 3 m x 3.2 m tile is stretched over the whole facade. That reads
+       * as soft banding rather than as a window grid, and it is what this
+       * layer looked like at b79709a.
        *
-       * X is the perimeter divided by the 3 m bay: the wall UV runs around the
-       * footprint, so this puts one bay every three metres whatever the
-       * building's plan. Y is the storey count, which is the whole point --
-       * the window rows then EQUAL the storeys, and a nine-storey block shows
-       * nine rows rather than a taller version of a one-storey block.
+       * Tiling it one bay per 3 m -- the state this reverts -- put ~80 tiles
+       * around a city block, and the arithmetic at the pose the scene opens on
+       * is decisive: 1,199 m up with a 60 deg FOV over 800 px is 1.73 ground
+       * metres per pixel, so a 240 m perimeter spans 139 screen pixels and
+       * carries 80 x 72 = 5,760 texels. That is 41.5 texels on every pixel,
+       * and the vertical axis was no better -- 12 storeys x 77 px over a wall
+       * ~30 px tall is 31 texels per pixel. Anything above 1 is minification,
+       * and with no mip chain the GPU picks a different texel for the same
+       * pixel on every frame the camera moves. The whole city fizzes while you
+       * zoom.
        *
-       * Rounded to whole tiles so the pattern closes on itself instead of
-       * cutting a window in half at the seam, and floored at 1 so a single-
-       * storey shed still gets one row rather than none.
+       * The proper fix is a mip chain, and Cesium's entity path cannot ask for
+       * one: `ImageMaterialProperty` exposes no sampler, and
+       * `minificationFilter` is a `Material` constructor option the property
+       * wrapper never forwards. Capping the tile count only reduces the
+       * aliasing -- it does not remove it. A stretched texture is only ever
+       * MAGNIFIED, and magnification cannot alias at all, which is why this
+       * goes back rather than part of the way back.
        *
-       * A ConstantProperty by construction (a plain Cartesian2): this is
-       * static geometry and must stay on Cesium's static updater path.
+       * The close-up view is unaffected: BuildingModelLayer draws the real
+       * architectural model, with its own per-storey texture, on the active
+       * building.
        */
-      let perimeterM = 0;
-      for (let i = 0; i < ring.length - 1; i += 1) {
-        perimeterM += haversineM(
-          { lon: ring[i][0], lat: ring[i][1] },
-          { lon: ring[i + 1][0], lat: ring[i + 1][1] },
-        );
-      }
-      const storeys = Math.max(1, props.floors || Math.round(props.height_m / 3.2));
-      const repeat = new Cesium.Cartesian2(
-        Math.min(MAX_BAYS_AROUND, Math.max(1, Math.round(perimeterM / 3))),
-        Math.max(1, storeys),
-      );
-
       const wallMaterial = new Cesium.ImageMaterialProperty({
         image: windowGrid(use, 3, 3.2),
-        repeat,
         color: new Cesium.CallbackProperty(() => {
           const s = stateRef.current;
           // Photoreal: present for picking, invisible on screen. Checked first
