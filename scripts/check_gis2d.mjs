@@ -127,6 +127,41 @@ const cameraPose = (page) => page.evaluate(() => {
   };
 });
 
+/** A pose as a comparable string. */
+const poseKey = (p) => `${p.height.toFixed(1)}|${p.pitch.toFixed(2)}`
+  + `|${p.heading.toFixed(2)}`;
+
+/**
+ * Wait for the camera to LEAVE `from` and then stop moving.
+ *
+ * Both halves matter, and the second one alone is a trap I fell into: entering
+ * or leaving the 2D view is a 1.5 s flyTo that does not begin until the store
+ * write has propagated through CameraDirector's effect, and on a cold dev
+ * server that start lands seconds late. A poll that only asks "has the pose
+ * held still for three samples" is satisfied immediately -- by the camera
+ * standing exactly where it was, not having set off yet -- and the check then
+ * reads the OLD pose and reports the restore as a 35-degree regression.
+ * Measured against the running app: still at -90/360 at +2 s, correctly back
+ * at -55/35 by +4 s.
+ *
+ * So: wait until it differs from where it started, THEN until it settles.
+ */
+async function settled(page, from = null, timeoutMs = 45000) {
+  const t0 = Date.now();
+  let last = null;
+  let stable = 0;
+  let moved = from === null;
+  while (Date.now() - t0 < timeoutMs) {
+    const key = poseKey(await cameraPose(page));
+    if (!moved && key !== from) moved = true;
+    stable = key === last ? stable + 1 : 0;
+    last = key;
+    if (moved && stable >= 3) return;
+    await sleep(700);
+  }
+  console.log(`  ! the camera never ${moved ? 'settled' : 'moved'}`);
+}
+
 const clickToggle = (page) => page.evaluate(() => {
   const btn = [...document.querySelectorAll('button')]
     .find((b) => b.textContent.trim() === '2D GIS');
@@ -217,8 +252,9 @@ try {
 
   // ------------------------------------------------------------- TOGGLE ON
   console.log('\n[3] TOGGLE ON');
+  const poseBefore = poseKey(before.pose);
   check('the 2D GIS control exists', await clickToggle(page));
-  await sleep(6000);
+  await settled(page, poseBefore);
 
   check('the toggle reads as pressed', await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')]
@@ -245,7 +281,8 @@ try {
       for (const e of ds.entities.values) if (e.label) n++;
     }
     return n >= want;
-  }, { timeout: 120000 }, feats.length).catch(() => {});
+  }, { timeout: 180000 }, feats.length)
+    .catch(() => console.log('  ! the parcel layer never finished building'));
 
   const parcelEntities = await countEntities(page, 'survey-parcels');
   check('the survey parcel layer was built', parcelEntities > 0,
@@ -427,8 +464,9 @@ try {
 
   // ------------------------------------------------------------ TOGGLE OFF
   console.log('\n[6] TOGGLE OFF');
+  const pose2d = poseKey(await cameraPose(page));
   check('the toggle is still there', await clickToggle(page));
-  await sleep(6000);
+  await settled(page, pose2d);
 
   check('buildings are back', (await drawn(page, 'buildings')) > 0,
     `${await drawn(page, 'buildings')} drawn`);
