@@ -466,8 +466,8 @@ export default function BuildingsLayer() {
     const s = stateRef.current;
     s.activeId = activeBuildingId;
     s.hoveredId = hoveredBuildingId;
-  // In the 2D GIS view the whole 3D scene stands down: see components/
-  // globe/Scene.tsx for the rule about what is hidden and what is not.
+    // In the 2D GIS view the whole 3D scene stands down: see
+    // components/globe/Scene.tsx for what is hidden and what is not.
     s.visible = showBuildings && !gis2d;
     s.hideActive = mode !== 'city';
     s.style = buildingStyle;
@@ -477,8 +477,8 @@ export default function BuildingsLayer() {
     // nothing here touches the tileset.
     s.fadeTarget =
       underground ? UNDERGROUND_BUILDING_ALPHA : activeBuildingId === null ? 1 : transparency / 100;
-  }, [activeBuildingId, hoveredBuildingId, showBuildings, mode, transparency,
-      underground, buildingStyle]);
+  }, [activeBuildingId, hoveredBuildingId, showBuildings, gis2d, mode,
+      transparency, underground, buildingStyle]);
 
   // Shadows follow the sun slider. Off until it is touched.
   useEffect(() => {

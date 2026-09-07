@@ -20,7 +20,9 @@
  */
 import '@/lib/cesium/base-url';
 import * as Cesium from 'cesium';
-import { DRONE_ORTHO_CREDIT, DRONE_ORTHO_URL, MAPBOX_TOKEN } from './imagery-catalog';
+import {
+  CARTO_API_KEY, DRONE_ORTHO_CREDIT, DRONE_ORTHO_URL, MAPBOX_TOKEN,
+} from './imagery-catalog';
 import type { ProviderId, TreatmentId } from './imagery-catalog';
 import { BHUVAN_CREDIT, BHUVAN_WMS_URL, type BhuvanKind } from '@/lib/bhuvan';
 
@@ -62,6 +64,24 @@ const WAYBACK_TEMPLATE =
 
 interface ProviderEntry {
   create: () => Promise<Cesium.ImageryProvider>;
+}
+
+/**
+ * `?api_key=...` for the CARTO basemaps, or the empty string.
+ *
+ * BOTH CARTO entries below take it, not only the new one. CARTO has begun
+ * stamping "API KEY REQUIRED" diagonally across every anonymous basemap tile,
+ * and that includes the dark_all style this application has served since long
+ * before the 2D view existed -- verified by fetching a tile over the AOI from
+ * dark_all, light_all and rastertiles/voyager, all three watermarked. It is a
+ * change in the service, not a property of one provider, so it is fixed for
+ * both rather than worked around for one.
+ *
+ * Still OPTIONAL: unset, every CARTO style renders exactly as it does today,
+ * correctly attributed and watermarked. No provider here requires a token.
+ */
+function cartoKeyParam(): string {
+  return CARTO_API_KEY ? `?api_key=${encodeURIComponent(CARTO_API_KEY)}` : '';
 }
 
 /**
@@ -134,7 +154,7 @@ const REGISTRY: Record<Exclude<ProviderId, 'none'>, ProviderEntry> = {
   carto: {
     create: async () =>
       new Cesium.UrlTemplateImageryProvider({
-        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        url: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${cartoKeyParam()}`,
         subdomains: ['a', 'b', 'c'],
         // {r} is CARTO's retina slot, a Leaflet convention Cesium does not
         // know. Resolve it here or the literal "{r}" reaches the CDN.
@@ -167,7 +187,7 @@ const REGISTRY: Record<Exclude<ProviderId, 'none'>, ProviderEntry> = {
   cartoVoyager: {
     create: async () =>
       new Cesium.UrlTemplateImageryProvider({
-        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        url: `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png${cartoKeyParam()}`,
         subdomains: ['a', 'b', 'c'],
         customTags: {
           r: () =>
