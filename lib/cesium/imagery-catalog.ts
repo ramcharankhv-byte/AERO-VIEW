@@ -10,7 +10,8 @@
  */
 
 export type ProviderId =
-  | 'esri' | 'esriWayback' | 'droneOrtho' | 'mapbox' | 'carto' | 'none';
+  | 'esri' | 'esriWayback' | 'droneOrtho' | 'mapbox'
+  | 'carto' | 'cartoVoyager' | 'none';
 export type TreatmentId = 'gisDark' | 'natural';
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -19,6 +20,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   droneOrtho: 'Drone orthophoto (local)',
   mapbox: 'Mapbox Satellite',
   carto: 'Dark vector (no imagery)',
+  cartoVoyager: 'Light vector (CARTO Voyager)',
   none: 'None',
 };
 
@@ -60,11 +62,17 @@ export function hasDroneOrtho(): boolean {
  * The ortho sits directly under Esri: when a local flight exists it is the
  * better ground truth, so it belongs beside the global mosaic, not below the
  * fallbacks.
+ *
+ * cartoVoyager is LISTED even though the 2D GIS view selects it on its own.
+ * Hiding it would leave the dropdown with no option matching its own value
+ * whenever that view is on, and a <select> whose value is not among its
+ * options renders blank -- the control would look broken at exactly the moment
+ * it is telling the truth. It is also a perfectly good basemap to pick by hand.
  */
 export function availableProviders(): { id: ProviderId; label: string }[] {
   const ids: ProviderId[] = ['esri', 'esriWayback'];
   if (hasDroneOrtho()) ids.push('droneOrtho');
   if (hasMapboxToken()) ids.push('mapbox');
-  ids.push('carto', 'none');
+  ids.push('carto', 'cartoVoyager', 'none');
   return ids.map((id) => ({ id, label: PROVIDER_LABELS[id] }));
 }

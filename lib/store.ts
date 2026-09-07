@@ -7,7 +7,8 @@ import { SUN_DEFAULT_HOUR, SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type { BuildingEdit, FieldError } from './data/building-schema';
 import type {
   BuildingDetail, BuildingStyle, ConflictRow, EnrichedBuilding, GeoFC, LayerKey,
-  Mode, ParcelInfo, Project, RoadProps, SliceState, UtilityProps,
+  Mode, ParcelInfo, Project, RoadProps, SliceState, SurveyParcelProps,
+  UtilityProps,
 } from './types';
 import { fetchLulcAt, type LulcResult } from './bhuvan';
 import type { SiteIndexEntry, SiteSpec } from './infra/types';
@@ -133,6 +134,54 @@ export interface ViewState {
    * lazy-loading gate: see components/layers/UtilitiesLayer.tsx.
    */
   undergroundLayers: Record<UtilityCategory, boolean>;
+  /**
+   * The 2D GIS view: a top-down cadastral map over a light vector basemap,
+   * with the 3D stack hidden and `SurveyParcelsLayer` in its place.
+   *
+   * A BOOLEAN BESIDE `mode`, NOT A NEW `Mode`. `Mode` is the cadastral
+   * hierarchy -- city, building, floor, unit -- and every layer, the camera
+   * and the panel branch on where in that hierarchy you are. 2D GIS is not a
+   * level of it; it is a different way of drawing whatever level you are on,
+   * which is why it can remember and restore the mode it interrupted.
+   *
+   * MUTUALLY EXCLUSIVE WITH SLICE AND EXPLODE, enforced in `setGis2d`,
+   * `setSlice` and `setExplode` rather than in the three controls -- the same
+   * rule, and the same reason, as the pre-existing slice/explode exclusion
+   * below it: whichever one the user reaches for wins, and no component has to
+   * remember to switch the others off.
+   *
+   * NOT `viewMode`, which already exists on this store with the value '2D'.
+   * That field is wired to a segmented control in the LayerPanel and to
+   * nothing else -- no globe component reads it -- and adopting it would have
+   * given this mode two writers on day one. It is left exactly as it is.
+   */
+  gis2d: boolean;
+  /**
+   * The survey parcel the panel is describing.
+   *
+   * Written by `Picker` and by `setGis2d` (which clears it) and by nothing
+   * else, following the same single-writer rule as the rest of the selection.
+   */
+  activeSurveyParcelId: number | null;
+  /**
+   * What to put back when 2D GIS turns off.
+   *
+   * Entering the mode overwrites three fields the user chose -- the cadastral
+   * mode, the basemap and its tone -- and leaving it has to undo exactly that
+   * and nothing else. Holding the previous values here rather than
+   * recomputing them means the restore cannot drift from what was overwritten.
+   * `activeBuildingId` is carried too, not to be restored but to be COMPARED:
+   * if the tree in the panel changed it, the viewer should land on that
+   * building in 3D rather than on the level the user came from.
+   *
+   * Null whenever `gis2d` is false. Written by `setGis2d` only.
+   */
+  preGis2d: {
+    mode: Mode;
+    imageryProvider: ProviderId;
+    imageryTreatment: TreatmentId;
+    activeBuildingId: number | null;
+  } | null;
   viewMode: '3D' | '2D' | 'Split';
   autoSpin: boolean;
   navMode: 'orbit' | 'pan' | 'zoom';
@@ -243,6 +292,10 @@ export interface ViewState {
   toggleUndergroundLayer: (key: UtilityCategory) => void;
   /** Bulk-set, for the URL hydrate and the panel's all-on/all-off. */
   setUndergroundLayers: (next: Partial<Record<UtilityCategory, boolean>>) => void;
+  /** Enter or leave the 2D GIS view. The only writer of `gis2d`. */
+  setGis2d: (on: boolean) => void;
+  /** Select a survey parcel. Called by Picker and by the panel's own close. */
+  setActiveSurveyParcel: (id: number | null) => void;
   setViewMode: (m: '3D' | '2D' | 'Split') => void;
   setAutoSpin: (on: boolean) => void;
   setNavMode: (m: 'orbit' | 'pan' | 'zoom') => void;
@@ -297,6 +350,59 @@ function utilityCategoryOf(id: number): UtilityCategory | null {
   return f ? categoryOfAssetType((f.properties as UtilityProps).asset_type) : null;
 }
 
+/**
+ * The basemap and tone the 2D GIS view swaps to.
+ *
+ * Voyager rather than Positron, and `natural` rather than `gisDark`, because
+ * the acceptance harness requires the SCENE to carry real chroma -- it fails
+ * below 3% of coloured pixels (scripts/shoot.mjs) to catch a treatment that
+ * has drained the basemap. Positron is very nearly greyscale and its land
+ * colour sits within a couple of units of the noise floor that test uses;
+ * Voyager carries green parks, blue water and tan carriageways over an
+ * off-white ground, which is a light vector basemap that is still in colour.
+ *
+ * Named here rather than inside `setGis2d` so the StatusBar can print the
+ * basemap without duplicating the choice.
+ */
+export const GIS2D_PROVIDER: ProviderId = 'cartoVoyager';
+export const GIS2D_TREATMENT: TreatmentId = 'natural';
+
+/**
+ * Leave the 2D GIS view, putting back exactly what entering it overwrote.
+ *
+ * Shared by `setGis2d(false)`, `setExplode`, `setSlice` and `resetView`, so
+ * every way out of the mode unwinds it identically -- four copies of a restore
+ * is four chances to forget the basemap and leave the user in a 3D scene drawn
+ * over a street map.
+ *
+ * The mode it restores is the one it interrupted, EXCEPT when the panel's tree
+ * changed the selected building while the mode was on: landing back on the
+ * level the user came from would then mean landing on a different building's
+ * floor, so a changed selection wins and the viewer opens on that building.
+ */
+function leaveGis2d(s: ViewState): Partial<ViewState> {
+  if (!s.gis2d) return {};
+  const prev = s.preGis2d;
+  const picked = prev !== null && s.activeBuildingId !== prev.activeBuildingId;
+  const mode: Mode = s.activeBuildingId === null
+    ? 'city'
+    : picked
+      ? 'building'
+      : prev?.mode ?? 'building';
+  return {
+    gis2d: false,
+    preGis2d: null,
+    activeSurveyParcelId: null,
+    mode,
+    ...(prev
+      ? {
+        imageryProvider: prev.imageryProvider,
+        imageryTreatment: prev.imageryTreatment,
+      }
+      : {}),
+  };
+}
+
 export const useViewStore = create<ViewState>((set) => ({
   projectSlug: null,
   project: null,
@@ -319,6 +425,9 @@ export const useViewStore = create<ViewState>((set) => ({
   theme: 'dark',
   underground: false,
   undergroundLayers: { ...UNDERGROUND_DEFAULTS },
+  gis2d: false,
+  activeSurveyParcelId: null,
+  preGis2d: null,
   viewMode: '3D',
   autoSpin: false,
   navMode: 'orbit',
@@ -343,7 +452,12 @@ export const useViewStore = create<ViewState>((set) => ({
             // The cut plane is positioned across THIS building's footprint, so
             // it means nothing once there is no active building.
             slice: { ...s.slice, enabled: false } }
-        : { mode: 'building', activeBuildingId: id, isolatedFloor: null,
+        // In 2D GIS the mode stays where setGis2d put it. The panel's tree is
+        // a legitimate caller of this setter, and letting it flip the mode to
+        // 'building' would ask the 3D stack to build under a top-down map --
+        // and would then be overwritten again on exit. leaveGis2d() notices
+        // that the selection changed and lands on this building instead.
+        : { mode: s.gis2d ? s.mode : 'building', activeBuildingId: id, isolatedFloor: null,
             selectedUnitId: null, selectedUtilityId: null, selectedRoadId: null,
             slice: { ...s.slice, enabled: false, offset: 0 },
             // Auto-enable the parcels layer on selection so the user can see
@@ -405,23 +519,58 @@ export const useViewStore = create<ViewState>((set) => ({
   toggleLayer: (key) =>
     set((s) => ({ layers: { ...s.layers, [key]: !s.layers[key] } })),
 
-  // Explode and slice are mutually exclusive, and the exclusion is enforced
-  // here rather than in the two controls: whichever one the user reaches for
-  // wins, and no component has to remember to switch the other off.
+  // Explode, slice and 2D GIS are mutually exclusive, and the exclusion is
+  // enforced here rather than in the three controls: whichever one the user
+  // reaches for wins, and no component has to remember to switch the others
+  // off. Turning explode or slice ON therefore leaves 2D GIS the same way the
+  // toggle would, restoring the basemap and the mode it took over.
   setExplode: (t) =>
     set((s) => {
       const explodeT = Math.max(0, Math.min(100, t));
-      return explodeT > 0 && s.slice.enabled
-        ? { explodeT, slice: { ...s.slice, enabled: false } }
-        : { explodeT };
+      if (explodeT === 0) return { explodeT };
+      return {
+        explodeT,
+        ...(s.slice.enabled ? { slice: { ...s.slice, enabled: false } } : {}),
+        ...leaveGis2d(s),
+      };
     }),
 
   setSlice: (patch) =>
     set((s) => {
       const slice = { ...s.slice, ...patch };
       slice.offset = Math.max(-100, Math.min(100, slice.offset));
-      return slice.enabled ? { slice, explodeT: 0 } : { slice };
+      return slice.enabled
+        ? { slice, explodeT: 0, ...leaveGis2d(s) }
+        : { slice };
     }),
+
+  setGis2d: (on) =>
+    set((s) => {
+      if (on === s.gis2d) return {};
+      if (!on) return leaveGis2d(s);
+      return {
+        gis2d: true,
+        preGis2d: {
+          mode: s.mode,
+          imageryProvider: s.imageryProvider,
+          imageryTreatment: s.imageryTreatment,
+          activeBuildingId: s.activeBuildingId,
+        },
+        // The cadastral stack stays SELECTED -- activeBuildingId, isolatedFloor
+        // and selectedUnitId are untouched -- but the mode drops to city so
+        // that nothing downstream is asked to draw a floor stack in a
+        // top-down 2D map. Leaving them selected is what makes the exit able
+        // to put the user back exactly where they were.
+        mode: 'city',
+        imageryProvider: GIS2D_PROVIDER,
+        imageryTreatment: GIS2D_TREATMENT,
+        explodeT: 0,
+        slice: { ...s.slice, enabled: false },
+        activeSurveyParcelId: null,
+      };
+    }),
+
+  setActiveSurveyParcel: (id) => set({ activeSurveyParcelId: id }),
 
   setTransparency: (t) => set({ transparency: Math.max(0, Math.min(100, t)) }),
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
@@ -501,6 +650,11 @@ export const useViewStore = create<ViewState>((set) => ({
 
   resetView: () =>
     set((s) => ({
+      // FIRST, so the explicit fields below win. leaveGis2d puts the basemap
+      // and tone back, which Reset must do or it leaves a 3D scene drawn over
+      // a street map; the mode it would restore is not wanted here, because
+      // Reset has always meant city view and nothing selected.
+      ...leaveGis2d(s),
       mode: 'city', activeBuildingId: null, isolatedFloor: null,
       selectedUnitId: null, selectedUtilityId: null, selectedRoadId: null,
       hoveredBuildingId: null, hoveredRoadId: null,
@@ -518,6 +672,17 @@ export const useViewStore = create<ViewState>((set) => ({
 export interface DataState {
   buildings: GeoFC<EnrichedBuilding> | null;
   parcels: GeoFC<ParcelInfo> | null;
+  /**
+   * The 2D cadastral layer. Null until the 2D GIS view is first opened.
+   *
+   * NOT fetched at boot, unlike the five collections above. It is a few
+   * hundred kilobytes that nobody who never presses the toggle will look at,
+   * and the boot path is already the slowest thing this application does.
+   * useEnsureSurveyParcels() fetches it once, on demand.
+   */
+  surveyParcels: GeoFC<SurveyParcelProps> | null;
+  /** True while that one fetch is in flight, so it is not issued twice. */
+  pendingSurveyParcels: boolean;
   utilities: GeoFC<UtilityProps> | null;
   roads: GeoFC<RoadProps> | null;
   conflicts: ConflictRow[];
@@ -574,6 +739,8 @@ export interface DataState {
 
   setBuildings: (fc: GeoFC<EnrichedBuilding>) => void;
   setParcels: (fc: GeoFC<ParcelInfo>) => void;
+  setSurveyParcels: (fc: GeoFC<SurveyParcelProps> | null) => void;
+  beginSurveyParcels: () => void;
   setUtilities: (fc: GeoFC<UtilityProps>) => void;
   setRoads: (fc: GeoFC<RoadProps>) => void;
   setConflicts: (rows: ConflictRow[]) => void;
@@ -610,6 +777,8 @@ const DETAIL_CACHE_LIMIT = 48;
 export const useDataStore = create<DataState>((set) => ({
   buildings: null,
   parcels: null,
+  surveyParcels: null,
+  pendingSurveyParcels: false,
   utilities: null,
   roads: null,
   conflicts: [],
@@ -628,6 +797,8 @@ export const useDataStore = create<DataState>((set) => ({
   setBuildings: (fc) =>
     set((st) => ({ buildings: fc, buildingsEpoch: st.buildingsEpoch + 1 })),
   setParcels: (fc) => set({ parcels: fc }),
+  setSurveyParcels: (fc) => set({ surveyParcels: fc, pendingSurveyParcels: false }),
+  beginSurveyParcels: () => set({ pendingSurveyParcels: true }),
   setUtilities: (fc) => set({ utilities: fc }),
   setRoads: (fc) => set({ roads: fc }),
   setConflicts: (rows) => set({ conflicts: rows }),
@@ -1090,6 +1261,69 @@ export function useSiteIndex(): SiteIndexEntry[] {
  * clicking between sites faster than the network answers should not leave a
  * queue of specifications to parse.
  */
+/**
+ * Fetch the survey parcels once, the first time the 2D GIS view is opened.
+ *
+ * The same shape as useEnsureSite: an in-flight flag on the store so a
+ * re-render cannot issue a second request, and an AbortController so leaving
+ * the mode mid-flight does not settle into a store that has moved on.
+ *
+ * A FAILURE IS AN EMPTY COLLECTION, not a retry loop and not an error banner.
+ * The endpoint already answers with an empty FeatureCollection for a project
+ * seeded before this layer existed (lib/db.ts getSurveyParcels), so "no
+ * parcels" is a real, expected state that the legend and the panel say out
+ * loud. A transport failure lands in the same place, and pressing the toggle
+ * again re-issues it, because the store still holds null.
+ */
+export function useEnsureSurveyParcels(
+  enabled: boolean,
+): GeoFC<SurveyParcelProps> | null {
+  const fc = useDataStore((s) => s.surveyParcels);
+  const slug = useViewStore((s) => s.projectSlug);
+
+  useEffect(() => {
+    if (!enabled || slug === null) return undefined;
+    const st = useDataStore.getState();
+    if (st.surveyParcels !== null || st.pendingSurveyParcels) return undefined;
+    st.beginSurveyParcels();
+
+    const abort = new AbortController();
+    let settled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/p/${encodeURIComponent(slug)}/survey-parcels`,
+          { signal: abort.signal },
+        );
+        const body = res.ok
+          ? ((await res.json()) as GeoFC<SurveyParcelProps>)
+          : null;
+        settled = true;
+        useDataStore.getState().setSurveyParcels(
+          body && Array.isArray(body.features)
+            ? body
+            : { type: 'FeatureCollection', features: [] },
+        );
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        settled = true;
+        useDataStore.getState().setSurveyParcels(null);
+      }
+    })();
+    return () => {
+      abort.abort();
+      // Clear the in-flight flag ONLY if this request never landed. Without
+      // this, leaving the mode mid-fetch leaves `pendingSurveyParcels` true
+      // with nothing to clear it, and the parcels never load again for the
+      // life of the page -- a stuck flag looks exactly like a project that
+      // has no parcels, which is the one wrong thing this layer can say.
+      if (!settled) useDataStore.setState({ pendingSurveyParcels: false });
+    };
+  }, [enabled, slug]);
+
+  return fc;
+}
+
 export function useEnsureSite(id: string | null): SiteSpec | null {
   const specs = useDataStore((s) => s.siteSpecs);
   const isCached = useDataStore((s) => id !== null && Boolean(s.siteSpecs[id]));

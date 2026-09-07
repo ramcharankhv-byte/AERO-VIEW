@@ -146,6 +146,37 @@ const REGISTRY: Record<Exclude<ProviderId, 'none'>, ProviderEntry> = {
         maximumLevel: 20,
       }),
   },
+
+  /**
+   * CARTO Voyager: the light vector basemap the 2D GIS view swaps to.
+   *
+   * NOT tile.openstreetmap.org. OSM's tile usage policy does not permit an
+   * application to consume its tiles, and the fact that they would render is
+   * not permission. CARTO serves its own rendering of the same ODbL data and
+   * both are credited below, which is the licence obligation and is why the
+   * credit names two parties.
+   *
+   * VOYAGER, NOT POSITRON, and the reason is measurable rather than
+   * aesthetic: scripts/shoot.mjs requires the scene to carry real chroma and
+   * fails below 3% of pixels whose max channel exceeds its min by more than 8.
+   * Positron is very nearly greyscale by design -- the check exists to catch a
+   * drained basemap and could not tell one from Positron. Voyager keeps green
+   * parks, blue water and tan carriageways over an off-white ground: a light
+   * cadastral basemap that is still, measurably, in colour.
+   */
+  cartoVoyager: {
+    create: async () =>
+      new Cesium.UrlTemplateImageryProvider({
+        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        subdomains: ['a', 'b', 'c'],
+        customTags: {
+          r: () =>
+            typeof window !== 'undefined' && window.devicePixelRatio > 1 ? '@2x' : '',
+        },
+        credit: new Cesium.Credit('© CARTO © OpenStreetMap contributors'),
+        maximumLevel: 20,
+      }),
+  },
 };
 
 /**
