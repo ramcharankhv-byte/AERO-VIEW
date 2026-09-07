@@ -63,7 +63,13 @@ export const ROAD_CORRIDOR_M: Record<RoadClass, number> = {
  * makes the same choice by inner-joining its VALUES list, which drops the row.
  */
 export function roadHalfWidthM(cls: string): number | null {
-  const w = (ROAD_CORRIDOR_M as Record<string, number | undefined>)[cls];
+  // OSM writes both `services` and `service` for the same thing.
+  // scripts/build_roads.mjs:102 folds them together before roads.json is
+  // written, and scripts/survey_parcels.sql folds them on its join, so this
+  // does too -- the argument is documented as a RAW tag value and a caller
+  // handing over an unfolded one should not silently get "not a street".
+  const key = cls === 'services' ? 'service' : cls;
+  const w = (ROAD_CORRIDOR_M as Record<string, number | undefined>)[key];
   return w === undefined ? null : w / 2;
 }
 

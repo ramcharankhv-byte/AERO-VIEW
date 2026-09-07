@@ -159,7 +159,18 @@ SELECT ST_UnaryUnion(ST_Collect(
           ('living_street',  7.0),
           ('service',        5.0)
        ) AS w(cls, corridor_m)
-    ON w.cls = h.doc -> 'properties' ->> 'highway';
+    -- OSM writes both `services` and `service` and they mean the same thing
+    -- here; scripts/build_roads.mjs:102 folds them together the same way, and
+    -- roads.json therefore carries the folded value. Without this the two
+    -- `services` ways in Siripuram are never buffered, and the parcels that
+    -- straddle them cross a street that the exported streets file says is
+    -- there -- which is exactly the disagreement lib/survey-parcel.test.ts
+    -- caught. The alias belongs on the JOIN rather than in the VALUES list
+    -- above, so that list stays a mirror of ROAD_CORRIDOR_M and the test that
+    -- compares them keeps working.
+    ON w.cls = CASE WHEN h.doc -> 'properties' ->> 'highway' = 'services'
+                    THEN 'service'
+                    ELSE h.doc -> 'properties' ->> 'highway' END;
 
 -- ---------------------------------------------------------------------------
 -- 4. Landuse areas

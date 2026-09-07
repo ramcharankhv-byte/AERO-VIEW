@@ -28,7 +28,8 @@
         "streets": 131,
         "buildings": 385,
         "conflicts": 0,
-        "utilities": 304
+        "utilities": 304,
+        "survey_parcels": 325
       }
     },
     {
