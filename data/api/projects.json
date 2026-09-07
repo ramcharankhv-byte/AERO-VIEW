@@ -56,7 +56,8 @@
         "streets": 350,
         "buildings": 2213,
         "conflicts": 80,
-        "utilities": 1214
+        "utilities": 1214,
+        "survey_parcels": 1308
       }
     },
     {
