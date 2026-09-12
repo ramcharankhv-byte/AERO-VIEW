@@ -1,0 +1,9 @@
+{
+  "origin": {
+    "latitude_deg": 12.97,
+    "longitude_deg": 77.5935,
+    "elevation_m": 0.0
+  },
+  "frame": "local ENU meters relative to origin; +x=east, +y=north, +z=up",
+  "point_count": 3055044
+}
