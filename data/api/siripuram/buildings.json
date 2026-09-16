@@ -23291,7 +23291,7 @@
       "properties": {
         "id": 10901,
         "ulpin": "AP-VSP-3D26-0001-001",
-        "parcel_id": 9001,
+        "parcel_id": 3269,
         "height_m": 15,
         "floors": 4,
         "basements": 1,
@@ -23426,7 +23426,7 @@
       "properties": {
         "id": 10902,
         "ulpin": "AP-VSP-3D26-0002-002",
-        "parcel_id": 9002,
+        "parcel_id": 3270,
         "height_m": 15,
         "floors": 4,
         "basements": 1,
@@ -23549,7 +23549,7 @@
       "properties": {
         "id": 10903,
         "ulpin": "AP-VSP-3D26-0003-003",
-        "parcel_id": 9003,
+        "parcel_id": 3271,
         "height_m": 15,
         "floors": 4,
         "basements": 1,
