@@ -806,20 +806,7 @@ npm run check:volumetric
   neutral off-white massing, with Cesium's attribution logo — which may not be
   restyled — excluded from the count
 
-### Not implemented
 
-**Measurements, Share and Split view** are rendered visibly disabled rather than
-hidden, so their absence is explicit rather than implied.
-
-**Editing a storey count does not regenerate floor and unit records.** Those are
-cadastral child rows; fabricating them would be a far larger invention than a
-name. The panel says so whenever the two disagree.
-
-**Streets are snapshot-only.** `db/01_schema.sql` has no road table, so unlike
-buildings and parcels there is no PostGIS path for `lib/db.ts` to prefer;
-`GET /api/roads` sends `x-ulpin-roads: derived` to say so on the wire.
-
----
 
 ## Data licence
 
