@@ -114,7 +114,7 @@ export function toSceneZ(
 /**
  * Vertical shift that aligns utilities stored against the (possibly placeholder)
  * DB datum with the real terrain surface sampled at boot. Same formula in
- * UtilitiesLayer and ConflictLayer — kept here so the two cannot drift.
+ * UtilitiesLayer and TopologyLayer — kept here so the two cannot drift.
  */
 export function datumShift(
   buildings: GeoFC<BuildingProps> | null,

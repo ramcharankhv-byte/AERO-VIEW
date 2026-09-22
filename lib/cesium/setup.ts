@@ -13,7 +13,7 @@ import { applyGisDarkScene } from './imagery';
 import { SCENE_BACKGROUND } from './materials';
 import { sampleGroundHeights, type GroundMap, type SamplePoint } from './terrain';
 import type {
-  ConflictRow, EnrichedBuilding, GeoFC, ParcelInfo, RoadProps, UtilityProps,
+  EnrichedBuilding, GeoFC, ParcelInfo, RoadProps, UtilityProps,
 } from '@/lib/types';
 
 /**
@@ -143,15 +143,13 @@ export async function fetchInitialData(slug: string): Promise<{
   parcels: GeoFC<ParcelInfo>;
   utilities: GeoFC<UtilityProps>;
   roads: GeoFC<RoadProps>;
-  conflicts: ConflictRow[];
 }> {
   const EMPTY_ROADS: GeoFC<RoadProps> = { type: 'FeatureCollection', features: [] };
   const base = `/api/p/${encodeURIComponent(slug)}`;
-  const [bRes, pRes, uRes, cRes, rRes] = await Promise.all([
+  const [bRes, pRes, uRes, rRes] = await Promise.all([
     fetch(`${base}/buildings`),
     fetch(`${base}/parcels`),
     fetch(`${base}/utilities`),
-    fetch(`${base}/conflicts`),
     // Caught on its own rather than inside the Promise.all: a rejection there
     // fails the whole boot and CesiumRoot renders an empty scene. Footprints
     // are the application; streets are orientation context, and losing them
@@ -161,7 +159,6 @@ export async function fetchInitialData(slug: string): Promise<{
   const buildings = (await bRes.json()) as GeoFC<EnrichedBuilding>;
   const parcels = (await pRes.json()) as GeoFC<ParcelInfo>;
   const utilities = (await uRes.json()) as GeoFC<UtilityProps>;
-  const rawConflicts = (await cRes.json()) as ConflictRow[];
   const roads = rRes && rRes.ok
     ? ((await rRes.json()) as GeoFC<RoadProps>)
     : EMPTY_ROADS;
@@ -170,7 +167,6 @@ export async function fetchInitialData(slug: string): Promise<{
     parcels,
     utilities,
     roads: Array.isArray(roads?.features) ? roads : EMPTY_ROADS,
-    conflicts: Array.isArray(rawConflicts) ? rawConflicts : [],
   };
 }
 

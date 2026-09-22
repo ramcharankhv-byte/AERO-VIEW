@@ -96,9 +96,8 @@ export default function UtilitiesLayer() {
    *
    * Sampled lazily, on the first request for any category, for the same reason
    * the categories are mounted lazily: a session that never goes underground
-   * should not pay for it. Shared with ConflictLayer through the hook's cache,
-   * so the pulsing overlay lands exactly on the pipe it is flagging -- which
-   * is also why both compute the domain the same way.
+   * should not pay for it. Shared with InfraSiteLayer through the hook's
+   * cache, which is why both compute the domain the same way.
    */
   const fieldBbox = useMemo(
     () => fieldBboxFor(project?.bbox, utilities?.features, buildings?.features),

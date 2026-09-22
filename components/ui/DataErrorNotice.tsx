@@ -39,7 +39,6 @@ export default function DataErrorNotice() {
       store.setParcels(data.parcels);
       store.setUtilities(data.utilities);
       store.setRoads(data.roads);
-      store.setConflicts(data.conflicts);
       store.setError(null);
     } catch (err) {
       store.setError(String(err));

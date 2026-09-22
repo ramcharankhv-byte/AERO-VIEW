@@ -2,16 +2,16 @@
 
 import { useMemo } from 'react';
 import { useDataStore, useViewStore } from '@/lib/store';
-import {
-  conflictsByAuthority, heightHistogram, provenanceMix, useTypeCounts,
-} from '@/lib/stats';
+import { heightHistogram, provenanceMix, useTypeCounts } from '@/lib/stats';
 
 /**
- * The mini-dashboard: three charts over the cadastre already in memory.
+ * The mini-dashboard: two charts over the cadastre already in memory.
  *
  * Every figure and every caption is computed from the loaded FeatureCollections
- * -- nothing here is written down. The boot fetch loads buildings, parcels,
- * utilities and conflicts together, so this panel never fetches anything.
+ * -- nothing here is written down. The boot fetch loads buildings, parcels and
+ * utilities together, so this panel never fetches anything. Conflicts are not
+ * charted here: Topology Validation is the one place that question is asked
+ * and answered (see TopologyBanner / DetailPanel's TopologyFindings).
  *
  * The bars are hand-rolled SVG. There is no chart library in this project and
  * three bar charts are not a reason to add one.
@@ -91,12 +91,10 @@ function Chart({
 export default function StatsPanel() {
   const statsOpen = useViewStore((s) => s.statsOpen);
   const buildings = useDataStore((s) => s.buildings);
-  const conflicts = useDataStore((s) => s.conflicts);
 
   const features = useMemo(() => buildings?.features ?? [], [buildings]);
   const heights = useMemo(() => heightHistogram(features, 8), [features]);
   const uses = useMemo(() => useTypeCounts(features), [features]);
-  const authorities = useMemo(() => conflictsByAuthority(conflicts), [conflicts]);
   const mix = useMemo(() => provenanceMix(features), [features]);
 
   if (!statsOpen) return null;
@@ -137,19 +135,6 @@ export default function StatsPanel() {
           }
         >
           <Bars rows={uses} />
-        </Chart>
-
-        <Chart
-          title="Conflicts by authority"
-          labels={authorities.map((a) => a.key)}
-          caption={
-            authorities.length === 0
-              ? 'No conflicts detected.'
-              : `${conflicts.length} basement encroachments from ST_3DIntersects, `
-                + 'grouped by the utility owner of record.'
-          }
-        >
-          <Bars rows={authorities} />
         </Chart>
       </div>
     </div>

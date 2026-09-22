@@ -21,7 +21,7 @@ export default function StatusBar({
   dense = false,
 }: { dense?: boolean } = {}) {
   const buildings = useDataStore((s) => s.buildings);
-  const conflicts = useDataStore((s) => s.conflicts);
+  const topology = useViewStore((s) => s.topology);
   const mode = useViewStore((s) => s.mode);
   const underground = useViewStore((s) => s.underground);
   const ionFallback = useViewStore((s) => s.ionFallback);
@@ -103,12 +103,20 @@ export default function StatusBar({
           >
             Height accuracy ±1 storey (est.)
           </span>
-          <Sep />
         </>
       )}
-      <span className={conflicts.length ? 'text-dangerInk' : ''}>
-        {conflicts.length} conflicts
-      </span>
+      {/* Absent until Topology Validation has actually been run: a status bar
+          that read "0 findings" before anyone asked would look like a
+          verified-clear result rather than an unchecked one. Conflicts are
+          reported in exactly one place now -- see TopologyBanner. */}
+      {topology.ranAt ? (
+        <>
+          <Sep />
+          <span className={topology.findings.length ? 'text-dangerInk' : ''}>
+            {topology.findings.length} topology finding{topology.findings.length === 1 ? '' : 's'}
+          </span>
+        </>
+      ) : null}
       {/* Absent for a citizen: the collection they are served carries the
           building without its identifier, and the bar says nothing rather
           than printing 'undefined'. */}
