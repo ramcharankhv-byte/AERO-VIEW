@@ -244,7 +244,6 @@ export default function CesiumRoot(
         store.setParcels(data.parcels);
         store.setUtilities(data.utilities);
         store.setRoads(data.roads);
-        store.setConflicts(data.conflicts);
 
         const ground = await sampleGroundUnder(terrainProvider, data.buildings);
         mark('ground-sampled');

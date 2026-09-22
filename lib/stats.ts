@@ -7,7 +7,7 @@
  */
 
 import type {
-  BuildingProps, ConflictRow, GeoFeature, Provenance, UseType,
+  BuildingProps, GeoFeature, Provenance, UseType,
 } from './types';
 
 export const USE_TYPES: UseType[] = [
@@ -70,19 +70,6 @@ export function useTypeCounts(
     tally.set(k, (tally.get(k) ?? 0) + 1);
   }
   return USE_TYPES.map((key) => ({ key, count: tally.get(key) ?? 0 }));
-}
-
-/** Conflict counts per utility authority, busiest first. */
-export function conflictsByAuthority(
-  rows: ConflictRow[],
-): Array<{ key: string; count: number }> {
-  const tally = new Map<string, number>();
-  for (const r of rows) {
-    tally.set(r.authority, (tally.get(r.authority) ?? 0) + 1);
-  }
-  return [...tally.entries()]
-    .map(([key, count]) => ({ key, count }))
-    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
 export interface ProvenanceMix {

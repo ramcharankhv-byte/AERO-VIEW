@@ -128,9 +128,10 @@ a corrected map becomes a corrected model.
 ## Notes
 
 - Siripuram carries **no utility/basement conflicts**. The two planted ones
-  were removed on request, so its conflict banner and the `ST_3DIntersects`
-  credit that belongs to it are gone with them. The conflict machinery is
-  untouched and still exercised — `hyderabad-banjara` has 80.
+  were removed on request. The seeded conflict machinery is untouched and
+  still exercised — `hyderabad-banjara` has 80 — but it is no longer
+  surfaced automatically anywhere; **Topology Validation** (Layers panel) is
+  now the one place a conflict is reported, on demand, for any project.
 - `npm run smoke` cannot pass on this branch: it has no session handling and
   the viewer redirects anonymous visitors to `/login`. Pre-existing, unrelated
   to this work.

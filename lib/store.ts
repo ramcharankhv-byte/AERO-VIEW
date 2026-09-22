@@ -7,7 +7,7 @@ import type { ProviderId, TreatmentId } from './cesium/imagery-catalog';
 import { SUN_DEFAULT_HOUR, SUN_MAX_HOUR, SUN_MIN_HOUR } from './sun';
 import type { BuildingEdit, FieldError } from './data/building-schema';
 import type {
-  BuildingDetail, BuildingStyle, ConflictRow, EnrichedBuilding, GeoFC, LayerKey,
+  BuildingDetail, BuildingStyle, EnrichedBuilding, GeoFC, LayerKey,
   Mode, ParcelInfo, Project, RoadProps, SliceState, SurveyParcelDetail,
   SurveyParcelProps, UtilityProps,
 } from './types';
@@ -849,7 +849,6 @@ export interface DataState {
   pendingSection22a: boolean;
   utilities: GeoFC<UtilityProps> | null;
   roads: GeoFC<RoadProps> | null;
-  conflicts: ConflictRow[];
   /**
    * The project's infrastructure sites, as an index. Null until fetched;
    * an empty array is the normal answer for a project that has none.
@@ -926,7 +925,6 @@ export interface DataState {
   beginSurveyParcelDetail: (id: number) => void;
   setUtilities: (fc: GeoFC<UtilityProps>) => void;
   setRoads: (fc: GeoFC<RoadProps>) => void;
-  setConflicts: (rows: ConflictRow[]) => void;
   setSites: (rows: SiteIndexEntry[]) => void;
   putSiteSpec: (id: string, spec: SiteSpec) => void;
   beginSite: (id: string) => void;
@@ -980,7 +978,6 @@ export const useDataStore = create<DataState>((set) => ({
   pendingSection22a: false,
   utilities: null,
   roads: null,
-  conflicts: [],
   sites: null,
   siteSpecs: {},
   pendingSites: {},
@@ -1015,7 +1012,6 @@ export const useDataStore = create<DataState>((set) => ({
   beginSection22A: () => set({ pendingSection22a: true }),
   setUtilities: (fc) => set({ utilities: fc }),
   setRoads: (fc) => set({ roads: fc }),
-  setConflicts: (rows) => set({ conflicts: rows }),
 
   setSites: (rows) => set({ sites: rows }),
   /**
@@ -1139,7 +1135,6 @@ export function useActiveDetail(): BuildingDetail | null {
 
 /** Other buildings on the same parcel as the active one. */
 const NO_BUILDINGS: EnrichedBuilding[] = [];
-const NO_CONFLICTS: ConflictRow[] = [];
 const NO_NEIGHBOURS: Array<{ b: EnrichedBuilding; distanceM: number }> = [];
 
 export function useParcelSiblings(activeBuildingId: number | null): EnrichedBuilding[] {
@@ -1152,15 +1147,6 @@ export function useParcelSiblings(activeBuildingId: number | null): EnrichedBuil
       .map((f) => f.properties)
       .filter((p) => p.parcel_id === me.parcel_id && p.id !== me.id);
   }, [buildings, activeBuildingId]);
-}
-
-/** Conflicts whose building matches the active selection. */
-export function useBuildingConflicts(activeBuildingId: number | null): ConflictRow[] {
-  const conflicts = useDataStore((s) => s.conflicts);
-  return useMemo(() => {
-    if (activeBuildingId === null) return NO_CONFLICTS;
-    return conflicts.filter((c) => c.building_id === activeBuildingId);
-  }, [conflicts, activeBuildingId]);
 }
 
 /** Other buildings within `radiusM` of the active centroid, sorted nearest first. */

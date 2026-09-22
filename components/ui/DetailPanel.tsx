@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useBuildingConflicts, useParcelSiblings, useEnsureLulc, useLulcPending, useEnsureSite, useEnsureSurveyParcelDetail } from '@/lib/store';
+import { useDataStore, useDetailPending, useEditStore, useEnsureDetail, useViewStore, useBuildingNeighbours, useParcelSiblings, useEnsureLulc, useLulcPending, useEnsureSite, useEnsureSurveyParcelDetail } from '@/lib/store';
 import { useUiStore } from '@/lib/ui-store';
 import { componentForRef } from '@/components/layers/InfraSiteLayer';
 import { LULC_SOURCE_SHORT, lulcClassLabel } from '@/lib/bhuvan';
@@ -575,7 +575,6 @@ export default function DetailPanel() {
   const topology = useViewStore((s) => s.topology);
   const selectFinding = useViewStore((s) => s.selectFinding);
   const selectBuilding = useViewStore((s) => s.selectBuilding);
-  const selectUtility = useViewStore((s) => s.selectUtility);
   const gis2d = useViewStore((s) => s.gis2d);
   const activeSurveyParcelId = useViewStore((s) => s.activeSurveyParcelId);
   const surveyParcels = useDataStore((s) => s.surveyParcels);
@@ -594,7 +593,6 @@ export default function DetailPanel() {
   const buildings = useDataStore((s) => s.buildings);
   const utilities = useDataStore((s) => s.utilities);
   const roads = useDataStore((s) => s.roads);
-  const conflicts = useDataStore((s) => s.conflicts);
   const loading = useDataStore((s) => s.loading);
   const detail = useEnsureDetail(activeBuildingId);
   const detailPending = useDetailPending(activeBuildingId);
@@ -647,7 +645,17 @@ export default function DetailPanel() {
   }, [savedRev, clearSaved]);
 
   const siblings = useParcelSiblings(activeBuildingId);
-  const buildingConflicts = useBuildingConflicts(activeBuildingId);
+  // Topology findings touching this building, on either side of the pair --
+  // replaces the old seeded-`conflict`-table lookup. Topology Validation is
+  // now the only place a conflict is reported, so this is a live-check
+  // result, not a permanent record; see the three-state render below.
+  const buildingFindings = useMemo(
+    () => topology.findings
+      .map((f, i) => ({ f, i }))
+      .filter(({ f }) => f.a.building_id === activeBuildingId
+        || f.b.building_id === activeBuildingId),
+    [topology.findings, activeBuildingId],
+  );
   const neighbours = useBuildingNeighbours(activeBuildingId, 50);
 
   // ---- Section 22A restricted land ---------------------------------------
@@ -870,7 +878,9 @@ export default function DetailPanel() {
     const feat = utilities?.features.find((f) => f.properties.id === selectedUtilityId);
     const u = feat?.properties as UtilityProps | undefined;
     if (u) {
-      const related = conflicts.filter((c) => c.utility_id === u.id);
+      const related = topology.findings.filter(
+        (f) => f.a.type === 'utility' && f.a.id === u.id,
+      );
       const category = categoryOfAssetType(u.asset_type);
       const layer = category ? UNDERGROUND_BY_KEY[category] : null;
 
@@ -947,11 +957,11 @@ export default function DetailPanel() {
           {related.length > 0 ? (
             <div className="mt-2 rounded border border-danger/50 bg-danger/10 p-2">
               <div className="text-[11px] font-semibold text-dangerInk">
-                {related.length} basement conflict{related.length > 1 ? 's' : ''}
+                {related.length} topology finding{related.length > 1 ? 's' : ''}
               </div>
-              {related.map((c) => (
-                <div key={c.id} className="mt-1 font-mono text-[10px] text-dangerInkInk/90">
-                  {c.building_ulpin} · level {c.level_no}
+              {related.map((f, i) => (
+                <div key={`${f.kind}-${i}`} className="mt-1 font-mono text-[10px] text-dangerInk/90">
+                  {f.b.label}
                 </div>
               ))}
             </div>
@@ -1087,9 +1097,9 @@ export default function DetailPanel() {
   // underground was on. (Underground is no longer switched on for them at
   // boot, so it is now only reachable by toggling it themselves; the rule
   // holds either way.) A deliberate selection outranks a view mode.
-  // The boot fetch writes buildings, parcels, utilities and conflicts as four
-  // separate stores, then clears `loading` -- so `loading` is the only signal
-  // that all four have landed.
+  // The boot fetch writes buildings, parcels and utilities as three separate
+  // stores, then clears `loading` -- so `loading` is the only signal that all
+  // three have landed.
   const aoiReady = !loading && buildings !== null;
 
   if (
@@ -1106,9 +1116,9 @@ export default function DetailPanel() {
         title={buildings?.aoi ?? 'Area of interest'}
         kicker="Area of interest"
       >
-        {/* All three figures wait on the same boot fetch, so they are gated
-            together: counting conflicts up to zero while that array is still
-            unset would animate a number that is not yet true. */}
+        {/* Both figures wait on the same boot fetch, so they are gated
+            together. Conflicts are not counted here -- Topology Validation,
+            below, is the one place that question is asked and answered. */}
         <Row
           label="Buildings"
           value={aoiReady ? <CountUp value={buildings.features.length} /> : '—'}
@@ -1116,10 +1126,6 @@ export default function DetailPanel() {
         <Row
           label="Utility runs"
           value={aoiReady ? <CountUp value={utilities?.features.length ?? 0} /> : '—'}
-        />
-        <Row
-          label="Flagged conflicts"
-          value={aoiReady ? <CountUp value={conflicts.length} /> : '—'}
         />
         <Row label="CRS" value="EPSG:4326 · Z in metres" />
         <p className="mt-3 text-[11px] leading-snug text-[rgb(var(--muted))]">
@@ -2040,26 +2046,34 @@ export default function DetailPanel() {
         </Section>
       ) : null}
 
-      {/* --- conflicts touching this building ----------------------------- */}
+      {/* --- topology findings touching this building ---------------------
+        Three states, matching TopologyFindings' own reassurance rule: "not
+        asked yet" must never collapse into the same "no encroachments" the
+        panel gives a building that was actually checked and found clear.
+      */}
       <Section title="Encroachments">
-        {buildingConflicts.length === 0 ? (
+        {!topology.ranAt ? (
+          <p className="text-[10px] leading-snug text-[rgb(var(--muted))]">
+            Not checked — run Topology Validation from the Layers panel.
+          </p>
+        ) : buildingFindings.length === 0 ? (
           <p className="text-[10px] text-[rgb(var(--muted))]">no encroachments</p>
         ) : (
-          buildingConflicts.map((c) => (
+          buildingFindings.map(({ f, i }) => (
             <button
-              key={c.id}
+              key={`${f.kind}-${i}`}
               type="button"
-              onClick={() => selectUtility(c.utility_id)}
+              onClick={() => selectFinding(topology.selected === i ? null : i)}
               className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-[2px] text-left tint-hover"
             >
               <span className="row-value text-left">
-                {utilityAssetLabel(c.asset_type)}
-                <span className="ml-1 text-[rgb(var(--muted))]">
-                  · {c.authority} · level {c.level_no}
-                </span>
+                {f.b.label}
+                <span className="ml-1 text-[rgb(var(--muted))]">· {f.a.label}</span>
               </span>
-              <span className={`text-[10px] ${c.status === 'operational' ? 'text-dangerInk' : 'text-dangerInk/80'}`}>
-                {c.status}
+              <span
+                className={`text-[10px] ${f.severity === 'critical' ? 'text-dangerInk' : 'text-dangerInk/80'}`}
+              >
+                {f.separation_m === 0 ? 'overlap' : `${f.separation_m.toFixed(2)} m`}
               </span>
             </button>
           ))

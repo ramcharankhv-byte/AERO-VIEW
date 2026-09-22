@@ -425,29 +425,15 @@ try {
   check('underground toggled', ug);
   await sleep(4500);
   const body = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' '));
-  // Siripuram no longer carries the two planted utility/basement conflicts, so
-  // the banner must be ABSENT rather than empty -- a callout with nothing to
-  // call out is worse than no callout. The conflict machinery itself is
-  // unchanged and still exercised: hyderabad-banjara has 80 of them.
-  const conflictCount = await page.evaluate(async () => {
-    const rows = await fetch('/api/p/siripuram/conflicts').then((r) => r.json());
-    return Array.isArray(rows) ? rows.length : -1;
-  });
-  check('the project reports no conflicts', conflictCount === 0, String(conflictCount));
-  check('and no conflict banner is shown',
-    !/utility\/basement conflict/i.test(body));
+  // Underground mode must stay clear by default: the seeded `conflict` table
+  // (still populated at seed time -- hyderabad-banjara has 80 rows) is no
+  // longer surfaced automatically anywhere. A conflict is reported in exactly
+  // one place now, Topology Validation, and only once it has been RUN -- so
+  // opening Underground mode alone must show no topology banner either.
+  check('and no topology banner is shown before a run',
+    !/topology finding.*detected/i.test(body));
   check('underground panel shown', /Underground infrastructure/i.test(body));
   check('depth section shown', /Depth section/i.test(body));
-  // The credit lives in the conflict banner, because it attributes the test
-  // that FOUND those conflicts. With none to attribute there is nothing to
-  // credit, so this is asserted only where it means something -- which keeps
-  // it a real check for hyderabad-banjara and for a re-seeded siripuram,
-  // rather than a string that has to stay on screen for its own sake.
-  if (conflictCount > 0) {
-    check('ST_3DIntersects credited', /ST_3DIntersects/i.test(body));
-  } else {
-    console.log('  SKIP  ST_3DIntersects credited — no conflicts to attribute');
-  }
   check('utility provenance disclosed',
     /not as-built utility records|No utility survey was consulted/i.test(body));
 
@@ -659,10 +645,13 @@ try {
   check('stats toggle present', statsClicked);
   await sleep(700);
   const statsText = await panelText(page);
-  check('stats panel opens with all three charts',
+  check('stats panel opens with both charts',
     /Building heights \(m\)/i.test(statsText)
-    && /Buildings by use type/i.test(statsText)
-    && /Conflicts by authority/i.test(statsText));
+    && /Buildings by use type/i.test(statsText));
+  // Conflicts are no longer charted here -- Topology Validation is the one
+  // place that question is asked and answered now.
+  check('conflicts chart retired from stats',
+    !/Conflicts by authority/i.test(statsText));
   // The caption must carry real percentages, not a placeholder.
   check('chart caption reports computed provenance',
     /Heights: \d+% OSM-tagged, \d+% estimated, \d+% plan/i.test(statsText),

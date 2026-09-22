@@ -6,7 +6,6 @@ import { useUiStore } from '@/lib/ui-store';
 import { useViewStore } from '@/lib/store';
 
 import ActionBar from '../ActionBar';
-import ConflictBanner from '../ConflictBanner';
 import DataErrorNotice from '../DataErrorNotice';
 import DetailPanel from '../DetailPanel';
 import FloorLadder from '../FloorLadder';
@@ -19,6 +18,7 @@ import PhotorealNotice from '../PhotorealNotice';
 import StatsPanel from '../StatsPanel';
 import StatusBar from '../StatusBar';
 import TopBar from '../TopBar';
+import TopologyBanner from '../TopologyBanner';
 import SiteNavigator from '../SiteNavigator';
 import UndergroundPanel from '../UndergroundPanel';
 
@@ -141,7 +141,7 @@ export default function OverlayRoot() {
         </div>
 
         <div className="absolute left-1/2 top-[60px] w-[calc(100%-16px)] -translate-x-1/2">
-          <ConflictBanner />
+          <TopologyBanner />
         </div>
 
         {/* Everything here rides on --sheet-height, which the Sheet measures and
@@ -254,7 +254,7 @@ export default function OverlayRoot() {
         </div>
 
         <div className="absolute left-3 right-[300px] top-[68px] flex justify-center">
-          <ConflictBanner />
+          <TopologyBanner />
         </div>
 
         <div className="absolute bottom-[46px] left-1/2 -translate-x-1/2">
@@ -302,7 +302,7 @@ export default function OverlayRoot() {
       </div>
 
       <div className="absolute left-1/2 top-[68px] flex -translate-x-1/2 justify-center">
-        <ConflictBanner />
+        <TopologyBanner />
       </div>
 
       <div className="absolute bottom-[46px] left-1/2 -translate-x-1/2">

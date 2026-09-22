@@ -16,7 +16,6 @@ import FloorStackLayer from '../layers/FloorStackLayer';
 import UnitsLayer from '../layers/UnitsLayer';
 import UtilitiesLayer from '../layers/UtilitiesLayer';
 import InfraSiteLayer from '../layers/InfraSiteLayer';
-import ConflictLayer from '../layers/ConflictLayer';
 import TopologyLayer from '../layers/TopologyLayer';
 import ElevationRuler from '../ui/ElevationRuler';
 import BuildingTooltip from './BuildingTooltip';
@@ -44,8 +43,8 @@ import type { Project } from '@/lib/types';
  * control.
  *
  *   hidden   Buildings (and the far, edge and model tiers of them), the floor
- *            stack, the units, the utilities, the conflicts, the streets, and
- *            the infrastructure site -- all of them solids, and there is no
+ *            stack, the units, the utilities, the streets, and the
+ *            infrastructure site -- all of them solids, and there is no
  *            honest way to draw a solid on a plan.
  *   hidden   ParcelsLayer, which is the exception to the rule: it is draped,
  *            but SurveyParcelsLayer replaces it here. Two parcel layers drawn
@@ -98,7 +97,6 @@ export default function Scene({ project }: { project: Project }) {
       <UtilitiesLayer />
       {/* The active named structure. Builds nothing until a site is opened. */}
       <InfraSiteLayer />
-      <ConflictLayer />
       <TopologyLayer />
 
       {/* DOM overlays that track the scene rather than the page layout. */}

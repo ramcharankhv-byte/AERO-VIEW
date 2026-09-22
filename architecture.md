@@ -26,9 +26,10 @@ ParcelsLayer.tsx ← surface parcel polygons, clamped to ground
 Section22ALayer.tsx ← the 22A restricted-land marking, over both parcel layers
 UtilitiesLayer.tsx ← one bucket grid PER CATEGORY, each built on demand
 InfraSiteLayer.tsx ← the active station / flyover, built on demand
-ConflictLayer.tsx ← pulsing red overlay on flagged segments
+TopologyLayer.tsx ← pin + stem per Topology Validation finding
 ui/
 TopBar.tsx ← brand, ULPIN search, tool menus
+TopologyBanner.tsx ← summary banner once a validation run finds something
 LayerPanel.tsx ← checkboxes, explode slider, transparency, theme
 UndergroundPanel.tsx ← per-category switches, generated from the registry
 SiteNavigator.tsx ← the named structures, as places to go

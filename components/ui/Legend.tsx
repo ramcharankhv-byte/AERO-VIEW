@@ -423,7 +423,7 @@ function DepthSection({ counts }: { counts: Map<UtilityCategory, number> }) {
 
       <div className="mt-2 flex items-center gap-2 border-t border-[rgb(var(--edge))]/50 pt-2">
         <span className="pulse-conflict h-2 w-4 shrink-0 rounded-full bg-danger" />
-        <span className="text-[11px] text-dangerInk">Basement conflict</span>
+        <span className="text-[11px] text-dangerInk">Topology finding</span>
       </div>
       <p className="mt-1.5 text-[9px] leading-snug text-[rgb(var(--muted))]">
         Strata are drawn at their recorded depth below the local ground surface,
