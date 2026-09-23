@@ -27,12 +27,13 @@ export default async function RoleGate({
   slug: string;
   children: ReactNode;
 }) {
-  const me = await currentSession();
-  if (!me) {
-    redirect(`/login?next=${encodeURIComponent(`/p/${slug}`)}`);
-  }
-  if (me.kind === 'citizen' && me.claims.slug !== slug) {
-    redirect(`/p/${me.claims.slug}`);
-  }
+  // LOGIN / CITIZEN PORTAL DISABLED: no session check, always the gov view.
+  // const me = await currentSession();
+  // if (!me) {
+  //   redirect(`/login?next=${encodeURIComponent(`/p/${slug}`)}`);
+  // }
+  // if (me.kind === 'citizen' && me.claims.slug !== slug) {
+  //   redirect(`/p/${me.claims.slug}`);
+  // }
   return <>{children}</>;
 }

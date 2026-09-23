@@ -42,9 +42,10 @@ export const metadata: Metadata = {
  * user has to make.
  */
 export default async function GalleryPage() {
-  const me = await currentSession();
-  if (!me) redirect('/login');
-  if (me.kind === 'citizen') redirect(`/p/${me.claims.slug}`);
+  // LOGIN / CITIZEN PORTAL DISABLED: open straight into the government view.
+  // const me = await currentSession();
+  // if (!me) redirect('/login');
+  // if (me.kind === 'citizen') redirect(`/p/${me.claims.slug}`);
 
   const projects = await listProjects();
 

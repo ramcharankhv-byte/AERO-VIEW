@@ -38,14 +38,16 @@ export default function SessionChip() {
     return <span className="text-[10px] text-muted">…</span>;
   }
   if (me.role === null) {
-    return (
-      <a
-        href="/login"
-        className="rounded px-2 py-1 text-[11px] text-ink tint-hover"
-      >
-        Sign in
-      </a>
-    );
+    // LOGIN DISABLED: no "Sign in" link while the login page is off.
+    // return (
+    //   <a
+    //     href="/login"
+    //     className="rounded px-2 py-1 text-[11px] text-ink tint-hover"
+    //   >
+    //     Sign in
+    //   </a>
+    // );
+    return null;
   }
   if (me.role === 'gov') {
     return (
