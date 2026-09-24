@@ -446,14 +446,3 @@ as it was when I started (it is migrated now). No dev server is listening. The
 only untracked path is `data/projects/badslug/`.
 
 ---
-
-## What I would do next
-
-1. Chase the `check:edit` toast regression on the snapshot backend — instrument
-   the client between the PATCH response landing and `finishSave` painting; the
-   1.76 s click-to-toast latency is where it hides.
-2. Give the utility authorities and owner organisations a per-project source.
-   Naming GVMC and APEPDCL as the operators of pipes in Hyderabad is the one
-   remaining place this app says something confidently wrong about the world.
-3. Decide whether `data/api/*/detail.json` belongs in git at all — the second
-   project's is 17 MB, and a third would double that.
