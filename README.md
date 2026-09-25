@@ -3,7 +3,7 @@
 A three-dimensional cadastral viewer, one **project** per area of interest. The
 demo project is **Siripuram, Visakhapatnam**; a second, independently generated
 AOI (**Banjara Hills Ward, Hyderabad**) proves the pipeline isn't hardcoded to
-one place. See [Projects](#projects--data).
+one place. 
 
 Land records are normally drawn flat — one polygon per parcel. Rights are not
 flat: a flat on the ninth floor, a parking bay in the basement and a share of
