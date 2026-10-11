@@ -1,0 +1,13 @@
+rasterio
+mercantile
+pillow
+tqdm
+requests
+numpy
+shapely
+pyproj
+geopandas
+duckdb
+ultralytics
+opencv-python-headless
+laspy

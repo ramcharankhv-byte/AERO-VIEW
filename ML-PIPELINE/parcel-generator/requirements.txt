@@ -1,0 +1,5 @@
+shapely>=2.0
+pyproj>=3.5
+requests>=2.31
+numpy>=1.24
+tqdm>=4.66

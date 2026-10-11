@@ -176,3 +176,15 @@ deployment:
 
 See `.env.example` for the full list, including optional imagery tokens and
 the Redis cache URL.
+
+## ML Pipeline (SIH – Aero View ML)
+
+ML work by **Yellapu Someshwar** — lives in `ML-PIPELINE/`, app code untouched.
+
+- Notebook: `ML-PIPELINE/aeroview-ml.ipynb` ([Kaggle run](https://www.kaggle.com/code/yellapusomeshwar/aeroview-ml))
+- `ML-PIPELINE/tif-generator/` — drone imagery tiles (Esri fetch → GeoTIFF → 1024px windows)
+- `ML-PIPELINE/parcel-generator/` — OSM roads → blocks → Voronoi parcels
+- `ML-PIPELINE/elevation-engine/` — Copernicus + Overture height fusion, YOLOv8-seg footprints, PointNet LiDAR heights
+- Point clouds (`*.pcd`) stay on Kaggle — see `ML-PIPELINE/DATA_NOTES.md`
+
+Run order: tiles → parcels → elevation → footprints/heights. Details in `ML-PIPELINE/README.md`.
